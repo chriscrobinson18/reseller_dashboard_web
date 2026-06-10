@@ -1,10 +1,15 @@
 import { useState, useMemo, Fragment } from 'react'
-import { ChevronDown, ChevronRight, Plus } from 'lucide-react'
+import { useMutation, useQueryClient } from '@tanstack/react-query'
+import { ChevronDown, ChevronRight, Plus, Pencil, Trash2 } from 'lucide-react'
 import { formatUSD, formatDate } from '../lib/utils'
+import { deleteItem, deleteLot } from '../lib/mutations'
 import type { InventoryLot } from '../lib/types'
 import { useItems, type ItemWithLots } from '../lib/queries'
 import AddItemModal from '../components/modals/AddItemModal'
 import AddLotModal from '../components/modals/AddLotModal'
+import EditItemModal from '../components/modals/EditItemModal'
+import EditLotModal from '../components/modals/EditLotModal'
+import ConfirmDialog from '../components/ConfirmDialog'
 
 interface ItemSummary {
   unitsInStock: number
@@ -40,7 +45,12 @@ function AddLotRow({ onAddLot }: { onAddLot: () => void }) {
   )
 }
 
-function LotRows({ lots, onAddLot }: { lots: InventoryLot[]; onAddLot: () => void }) {
+function LotRows({ lots, onAddLot, onEditLot, onDeleteLot }: {
+  lots: InventoryLot[]
+  onAddLot: () => void
+  onEditLot: (lot: InventoryLot) => void
+  onDeleteLot: (lot: InventoryLot) => void
+}) {
   if (lots.length === 0) {
     return (
       <>
@@ -71,7 +81,7 @@ function LotRows({ lots, onAddLot }: { lots: InventoryLot[]; onAddLot: () => voi
           ? ((lot.quantity_purchased - lot.quantity_remaining) / lot.quantity_purchased) * 100
           : 0
         return (
-          <tr key={lot.id} className="bg-blue-50/20 border-b border-blue-50">
+          <tr key={lot.id} className="group bg-blue-50/20 border-b border-blue-50">
             <td className="pl-12 py-2 text-xs text-gray-600">{formatDate(lot.created_at)}</td>
             <td className="px-3 py-2 text-xs text-gray-700 text-center">{lot.quantity_purchased}</td>
             <td className="px-3 py-2 text-center">
@@ -97,13 +107,22 @@ function LotRows({ lots, onAddLot }: { lots: InventoryLot[]; onAddLot: () => voi
               )}
             </td>
             <td className="px-3 py-2">
-              <div className="w-16 bg-gray-200 rounded-full h-1.5">
-                <div
-                  className="bg-gray-500 h-1.5 rounded-full"
-                  style={{ width: `${pctSold}%` }}
-                />
+              <div className="flex items-center gap-2">
+                <div className="flex-1">
+                  <div className="w-16 bg-gray-200 rounded-full h-1.5">
+                    <div className="bg-gray-500 h-1.5 rounded-full" style={{ width: `${pctSold}%` }} />
+                  </div>
+                  <div className="text-xs text-gray-400 mt-0.5">{pctSold.toFixed(0)}% sold</div>
+                </div>
+                <div className="flex gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
+                  <button onClick={() => onEditLot(lot)} className="p-1 text-gray-400 hover:text-gray-700" title="Edit lot">
+                    <Pencil size={12} />
+                  </button>
+                  <button onClick={() => onDeleteLot(lot)} className="p-1 text-gray-400 hover:text-red-500" title="Delete lot">
+                    <Trash2 size={12} />
+                  </button>
+                </div>
               </div>
-              <div className="text-xs text-gray-400 mt-0.5">{pctSold.toFixed(0)}% sold</div>
             </td>
           </tr>
         )
@@ -120,8 +139,22 @@ export default function InventoryPage() {
   const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set())
   const [showAddItem, setShowAddItem] = useState(false)
   const [addLotFor, setAddLotFor] = useState<ItemWithLots | null>(null)
+  const [editItem, setEditItem] = useState<ItemWithLots | null>(null)
+  const [deleteItemTarget, setDeleteItemTarget] = useState<ItemWithLots | null>(null)
+  const [editLot, setEditLot] = useState<InventoryLot | null>(null)
+  const [deleteLotTarget, setDeleteLotTarget] = useState<InventoryLot | null>(null)
+  const qc = useQueryClient()
 
   const { data: items = [], isLoading } = useItems()
+
+  const delItemMutation = useMutation({
+    mutationFn: (id: string) => deleteItem(id),
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ['items'] }); setDeleteItemTarget(null) },
+  })
+  const delLotMutation = useMutation({
+    mutationFn: (id: string) => deleteLot(id),
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ['items'] }); setDeleteLotTarget(null) },
+  })
 
   const filtered = useMemo(() => {
     if (!search) return items
@@ -205,14 +238,26 @@ export default function InventoryPage() {
                 return (
                   <Fragment key={item.id}>
                     <tr
-                      className={`data-row border-b border-gray-100 ${isExpanded ? 'bg-blue-50/30' : ''}`}
+                      className={`group data-row border-b border-gray-100 ${isExpanded ? 'bg-blue-50/30' : ''}`}
                       onClick={() => toggleExpand(item.id)}
                     >
                       <td className="px-4 py-3">
-                        <div className="font-medium text-gray-900">{item.name}</div>
-                        {summary.unitsInStock === 0 && (
-                          <span className="text-xs text-gray-400">Sold out</span>
-                        )}
+                        <div className="flex items-center gap-2">
+                          <div>
+                            <div className="font-medium text-gray-900">{item.name}</div>
+                            {summary.unitsInStock === 0 && (
+                              <span className="text-xs text-gray-400">Sold out</span>
+                            )}
+                          </div>
+                          <div className="flex gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity" onClick={e => e.stopPropagation()}>
+                            <button onClick={() => setEditItem(item)} className="p-1 text-gray-400 hover:text-gray-700" title="Edit item">
+                              <Pencil size={12} />
+                            </button>
+                            <button onClick={() => setDeleteItemTarget(item)} className="p-1 text-gray-400 hover:text-red-500" title="Delete item">
+                              <Trash2 size={12} />
+                            </button>
+                          </div>
+                        </div>
                       </td>
                       <td className="px-4 py-3 text-xs text-gray-500">{item.category || '—'}</td>
                       <td className="px-4 py-3 text-center">
@@ -238,7 +283,14 @@ export default function InventoryPage() {
                         }
                       </td>
                     </tr>
-                    {isExpanded && <LotRows lots={lots} onAddLot={() => setAddLotFor(item)} />}
+                    {isExpanded && (
+                      <LotRows
+                        lots={lots}
+                        onAddLot={() => setAddLotFor(item)}
+                        onEditLot={setEditLot}
+                        onDeleteLot={setDeleteLotTarget}
+                      />
+                    )}
                   </Fragment>
                 )
               })}
@@ -260,6 +312,28 @@ export default function InventoryPage() {
           itemName={addLotFor.name}
         />
       )}
+      {editItem && (
+        <EditItemModal open={!!editItem} onClose={() => setEditItem(null)} item={editItem} />
+      )}
+      {editLot && (
+        <EditLotModal open={!!editLot} onClose={() => setEditLot(null)} lot={editLot} />
+      )}
+      <ConfirmDialog
+        open={!!deleteItemTarget}
+        title="Delete item?"
+        message={`"${deleteItemTarget?.name}" and its inventory lots will be removed (soft delete). Past sales referencing it are kept.`}
+        loading={delItemMutation.isPending}
+        onConfirm={() => deleteItemTarget && delItemMutation.mutate(deleteItemTarget.id)}
+        onCancel={() => setDeleteItemTarget(null)}
+      />
+      <ConfirmDialog
+        open={!!deleteLotTarget}
+        title="Delete lot?"
+        message="This purchase lot will be removed (soft delete). Inventory counts and value will update."
+        loading={delLotMutation.isPending}
+        onConfirm={() => deleteLotTarget && delLotMutation.mutate(deleteLotTarget.id)}
+        onCancel={() => setDeleteLotTarget(null)}
+      />
     </div>
   )
 }

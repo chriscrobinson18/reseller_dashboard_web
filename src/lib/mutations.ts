@@ -148,6 +148,36 @@ export async function updateTransactionNotes(id: string, notes: string) {
   if (error) throw error
 }
 
+/** Full edit of an editable transaction (date, amount, merchant, category, notes). */
+export async function updateTransaction(params: {
+  id: string
+  date: string
+  amount: number
+  merchant: string | null
+  type: string
+  scheduleCCategory: string | null
+  notes: string | null
+}) {
+  const { error } = await supabase
+    .from('transactions')
+    .update({
+      date: params.date,
+      amount: params.amount,
+      merchant: params.merchant,
+      type: params.type,
+      schedule_c_category: params.scheduleCCategory,
+      notes: params.notes,
+    })
+    .eq('id', params.id)
+  if (error) throw error
+}
+
+/** Hard-deletes a transaction (mirrors iOS deleteTransaction). FK ON DELETE SET NULL unlinks lots. */
+export async function deleteTransaction(id: string) {
+  const { error } = await supabase.from('transactions').delete().eq('id', id)
+  if (error) throw error
+}
+
 /** Net-zero pairs two transactions by giving them a shared pair UUID. */
 export async function pairTransactions(id1: string, id2: string) {
   const pairId = crypto.randomUUID()
@@ -283,6 +313,63 @@ export async function createSaleTransactions(params: {
 export async function linkSaleToItem(saleId: string, itemId: string) {
   const { error } = await supabase.from('sales').update({ item_id: itemId }).eq('id', saleId)
   if (error) throw error
+}
+
+/**
+ * Full edit of a sale (mirrors iOS updateSale). Updates the sale row, recomputes
+ * net_payout, and for manual sales keeps the linked payout/fee/shipping transaction
+ * rows in sync (amount + date) so Schedule C stays correct.
+ */
+export async function updateSale(params: {
+  id: string
+  source: string
+  platform: string
+  quantity: number
+  salePrice: number
+  soldAt: string // 'yyyy-MM-dd'
+  externalOrderId: string | null
+  fees: number | null
+  shippingCost: number | null
+}) {
+  const netPayout = params.salePrice - (params.fees ?? 0) - (params.shippingCost ?? 0)
+  const { error } = await supabase
+    .from('sales')
+    .update({
+      platform: params.platform,
+      quantity: params.quantity,
+      sale_price: params.salePrice,
+      sold_at: new Date(params.soldAt + 'T12:00:00').toISOString(),
+      external_order_id: params.externalOrderId,
+      fees: params.fees ?? 0,
+      shipping_cost: params.shippingCost ?? null,
+      net_payout: netPayout,
+    })
+    .eq('id', params.id)
+  if (error) throw error
+
+  // For manual sales, keep linked transaction rows in sync.
+  if (params.source !== 'manual') return
+  const { data: linked, error: fetchErr } = await supabase
+    .from('transactions')
+    .select('id, schedule_c_category')
+    .eq('related_sale_id', params.id)
+    .eq('source', 'manual')
+  if (fetchErr) throw fetchErr
+
+  for (const tx of linked ?? []) {
+    let newAmount: number | null = null
+    switch (tx.schedule_c_category) {
+      case 'payout': newAmount = params.salePrice; break
+      case 'commissions_fees': newAmount = params.fees != null ? -params.fees : null; break
+      case 'shipping_postage': newAmount = params.shippingCost != null ? -params.shippingCost : null; break
+      default: continue
+    }
+    if (newAmount == null) continue
+    await supabase
+      .from('transactions')
+      .update({ amount: newAmount, date: params.soldAt })
+      .eq('id', tx.id)
+  }
 }
 
 /** Deletes linked manual transaction rows then soft-deletes the sale. */

@@ -1,12 +1,15 @@
 import { useState, useMemo } from 'react'
-import { useQuery } from '@tanstack/react-query'
-import { Plus, Link2 } from 'lucide-react'
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
+import { Plus, Link2, Pencil, Trash2 } from 'lucide-react'
 import { supabase } from '../lib/supabase'
 import { getPeriodRange, type PeriodPreset } from '../lib/periods'
 import { formatUSD, formatDate } from '../lib/utils'
+import { deleteSale } from '../lib/mutations'
 import PeriodPicker from '../components/PeriodPicker'
 import SlideOver from '../components/SlideOver'
+import ConfirmDialog from '../components/ConfirmDialog'
 import RecordSaleModal from '../components/modals/RecordSaleModal'
+import EditSaleModal from '../components/modals/EditSaleModal'
 import LinkSaleToItemModal from '../components/modals/LinkSaleToItemModal'
 import type { Sale } from '../lib/types'
 
@@ -67,7 +70,12 @@ function StatusBadge({ status, type }: { status: string; type: 'inventory' | 're
 
 // ─── Sale detail ──────────────────────────────────────────────────────────────
 
-function SaleDetail({ sale, onLinkItem }: { sale: Sale; onLinkItem: () => void }) {
+function SaleDetail({ sale, onLinkItem, onEdit, onDelete }: {
+  sale: Sale
+  onLinkItem: () => void
+  onEdit: () => void
+  onDelete: () => void
+}) {
   const cogs = (sale.inventory_movements ?? []).reduce((s, m) =>
     s + m.quantity * (m.inventory_lots?.unit_cost ?? 0), 0)
   const netRevenue = sale.sale_price - (sale.return_status === 'partial' ? (sale.refunded_amount ?? 0) : 0)
@@ -76,6 +84,22 @@ function SaleDetail({ sale, onLinkItem }: { sale: Sale; onLinkItem: () => void }
 
   return (
     <div className="space-y-4">
+      {/* Action buttons */}
+      <div className="flex gap-2">
+        <button
+          onClick={onEdit}
+          className="flex-1 flex items-center justify-center gap-1.5 border border-gray-200 rounded-lg py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 transition-colors"
+        >
+          <Pencil size={13} /> Edit
+        </button>
+        <button
+          onClick={onDelete}
+          className="flex items-center justify-center gap-1.5 border border-red-200 text-red-600 rounded-lg py-2 px-3 text-sm font-medium hover:bg-red-50 transition-colors"
+        >
+          <Trash2 size={13} /> Delete
+        </button>
+      </div>
+
       {/* Header */}
       <div className="bg-gray-50 rounded-xl p-4">
         <div className="text-2xl font-bold text-gray-900 tabular-nums">{formatUSD(sale.sale_price)}</div>
@@ -208,7 +232,20 @@ export default function SalesPage() {
   const [selected, setSelected] = useState<Sale | null>(null)
   const [showRecordSale, setShowRecordSale] = useState(false)
   const [linkSale, setLinkSale] = useState<Sale | null>(null)
+  const [editSale, setEditSale] = useState<Sale | null>(null)
+  const [deleteSaleTarget, setDeleteSaleTarget] = useState<Sale | null>(null)
+  const qc = useQueryClient()
   const range = getPeriodRange(period)
+
+  const deleteMutation = useMutation({
+    mutationFn: (id: string) => deleteSale(id),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['sales'] })
+      qc.invalidateQueries({ queryKey: ['transactions'] })
+      setDeleteSaleTarget(null)
+      setSelected(null)
+    },
+  })
 
   const { data: sales = [], isLoading } = useQuery({
     queryKey: ['sales', range.start, range.end],
@@ -342,7 +379,9 @@ export default function SalesPage() {
           <SaleDetail
             key={selected.id}
             sale={selected}
-            onLinkItem={() => { setLinkSale(selected); }}
+            onLinkItem={() => setLinkSale(selected)}
+            onEdit={() => setEditSale(selected)}
+            onDelete={() => setDeleteSaleTarget(selected)}
           />
         )}
       </SlideOver>
@@ -355,6 +394,21 @@ export default function SalesPage() {
           sale={linkSale}
         />
       )}
+      {editSale && (
+        <EditSaleModal
+          open={!!editSale}
+          onClose={() => setEditSale(null)}
+          sale={editSale}
+        />
+      )}
+      <ConfirmDialog
+        open={!!deleteSaleTarget}
+        title="Delete sale?"
+        message="This removes the sale and its linked payout/fee/shipping transactions. Inventory already depleted is not restored."
+        loading={deleteMutation.isPending}
+        onConfirm={() => deleteSaleTarget && deleteMutation.mutate(deleteSaleTarget.id)}
+        onCancel={() => setDeleteSaleTarget(null)}
+      />
     </div>
   )
 }

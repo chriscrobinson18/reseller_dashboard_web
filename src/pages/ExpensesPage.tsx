@@ -1,15 +1,18 @@
 import { useState, useMemo } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { Search, Filter, ChevronDown, Plus } from 'lucide-react'
+import { Search, Filter, ChevronDown, Plus, Pencil, Trash2 } from 'lucide-react'
 import { supabase } from '../lib/supabase'
 import { getPeriodRange, type PeriodPreset } from '../lib/periods'
 import { CATEGORIES, getCategoryDef } from '../lib/categories'
 import { formatUSD, formatDate } from '../lib/utils'
+import { updateTransaction, deleteTransaction } from '../lib/mutations'
 import PeriodPicker from '../components/PeriodPicker'
 import CategoryBadge from '../components/CategoryBadge'
 import SlideOver from '../components/SlideOver'
+import ConfirmDialog from '../components/ConfirmDialog'
 import AddTransactionModal from '../components/modals/AddTransactionModal'
 import TransactionInventorySection from '../components/TransactionInventorySection'
+import { Field, inputCls } from '../components/Modal'
 import type { Transaction } from '../lib/types'
 
 // ─── Data ────────────────────────────────────────────────────────────────────
@@ -80,10 +83,18 @@ function CategoryDropdown({ txId, current, onClose }: { txId: string; current?: 
 
 // ─── Transaction detail slide-over ───────────────────────────────────────────
 
-function TransactionDetail({ tx }: { tx: Transaction; onClose: () => void }) {
+function TransactionDetail({ tx, onClose }: { tx: Transaction; onClose: () => void }) {
   const qc = useQueryClient()
   const [notes, setNotes] = useState(tx.notes ?? '')
   const [editingCat, setEditingCat] = useState(false)
+  const [editing, setEditing] = useState(false)
+  const [confirmDelete, setConfirmDelete] = useState(false)
+
+  // Editable fields
+  const [eDate, setEDate] = useState(tx.date)
+  const [eAmount, setEAmount] = useState(String(Math.abs(tx.amount)))
+  const [eDirection, setEDirection] = useState<'expense' | 'income'>(tx.amount < 0 ? 'expense' : 'income')
+  const [eMerchant, setEMerchant] = useState(tx.merchant ?? '')
 
   const catMutation = useMutation({
     mutationFn: (cat: string | null) => updateCategory(tx.id, cat),
@@ -95,19 +106,105 @@ function TransactionDetail({ tx }: { tx: Transaction; onClose: () => void }) {
     onSuccess: () => qc.invalidateQueries({ queryKey: ['transactions'] }),
   })
 
+  const saveMutation = useMutation({
+    mutationFn: () => {
+      const raw = parseFloat(eAmount)
+      const signed = eDirection === 'expense' ? -Math.abs(raw) : Math.abs(raw)
+      return updateTransaction({
+        id: tx.id,
+        date: eDate,
+        amount: signed,
+        merchant: eMerchant.trim() || null,
+        type: tx.type ?? 'other',
+        scheduleCCategory: tx.schedule_c_category ?? null,
+        notes: tx.notes ?? null,
+      })
+    },
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ['transactions'] }); setEditing(false) },
+  })
+
+  const deleteMutation = useMutation({
+    mutationFn: () => deleteTransaction(tx.id),
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ['transactions'] }); onClose() },
+  })
+
   const isExpense = tx.amount < 0
   const cat = getCategoryDef(tx.schedule_c_category)
+  const isPlaid = tx.source === 'plaid'
 
   return (
     <div className="space-y-4">
-      {/* Amount + merchant */}
-      <div className="bg-gray-50 rounded-xl p-4">
-        <div className={`text-2xl font-bold tabular-nums ${isExpense ? 'text-red-500' : 'text-green-600'}`}>
-          {isExpense ? '-' : '+'}{formatUSD(Math.abs(tx.amount))}
-        </div>
-        <div className="text-sm font-medium text-gray-900 mt-1">{tx.merchant || '—'}</div>
-        <div className="text-xs text-gray-500 mt-0.5">{formatDate(tx.date)}</div>
+      {/* Action buttons */}
+      <div className="flex gap-2">
+        {!isPlaid && (
+          <button
+            onClick={() => setEditing(!editing)}
+            className="flex-1 flex items-center justify-center gap-1.5 border border-gray-200 rounded-lg py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 transition-colors"
+          >
+            <Pencil size={13} /> {editing ? 'Cancel Edit' : 'Edit'}
+          </button>
+        )}
+        <button
+          onClick={() => setConfirmDelete(true)}
+          className={`${isPlaid ? 'flex-1' : ''} flex items-center justify-center gap-1.5 border border-red-200 text-red-600 rounded-lg py-2 px-3 text-sm font-medium hover:bg-red-50 transition-colors`}
+        >
+          <Trash2 size={13} /> Delete
+        </button>
       </div>
+
+      {isPlaid && (
+        <p className="text-xs text-gray-400">
+          Bank-synced transaction — fields are read-only (editable: category &amp; notes). Deleting removes it locally.
+        </p>
+      )}
+
+      {/* Amount + merchant — editable when in edit mode */}
+      {editing ? (
+        <div className="bg-gray-50 rounded-xl p-4 space-y-3">
+          <div className="flex gap-1 bg-gray-100 rounded-lg p-1">
+            {(['expense', 'income'] as const).map(d => (
+              <button
+                key={d}
+                type="button"
+                onClick={() => setEDirection(d)}
+                className={`flex-1 py-1.5 rounded-md text-xs font-medium capitalize transition-colors ${
+                  eDirection === d
+                    ? d === 'expense' ? 'bg-white text-red-600 shadow-sm' : 'bg-white text-green-600 shadow-sm'
+                    : 'text-gray-500'
+                }`}
+              >
+                {d === 'expense' ? 'Money Out' : 'Money In'}
+              </button>
+            ))}
+          </div>
+          <div className="grid grid-cols-2 gap-2">
+            <Field label="Amount">
+              <input type="number" step="0.01" min="0" value={eAmount} onChange={e => setEAmount(e.target.value)} className={inputCls} />
+            </Field>
+            <Field label="Date">
+              <input type="date" value={eDate} onChange={e => setEDate(e.target.value)} className={inputCls} />
+            </Field>
+          </div>
+          <Field label="Merchant">
+            <input value={eMerchant} onChange={e => setEMerchant(e.target.value)} className={inputCls} />
+          </Field>
+          <button
+            onClick={() => saveMutation.mutate()}
+            disabled={saveMutation.isPending}
+            className="w-full bg-gray-900 text-white rounded-lg py-2 text-sm font-medium hover:bg-gray-700 disabled:opacity-50 transition-colors"
+          >
+            {saveMutation.isPending ? 'Saving…' : 'Save Changes'}
+          </button>
+        </div>
+      ) : (
+        <div className="bg-gray-50 rounded-xl p-4">
+          <div className={`text-2xl font-bold tabular-nums ${isExpense ? 'text-red-500' : 'text-green-600'}`}>
+            {isExpense ? '-' : '+'}{formatUSD(Math.abs(tx.amount))}
+          </div>
+          <div className="text-sm font-medium text-gray-900 mt-1">{tx.merchant || '—'}</div>
+          <div className="text-xs text-gray-500 mt-0.5">{formatDate(tx.date)}</div>
+        </div>
+      )}
 
       {/* Category */}
       <div>
@@ -204,6 +301,15 @@ function TransactionDetail({ tx }: { tx: Transaction; onClose: () => void }) {
           transactionTotal={Math.abs(tx.amount)}
         />
       )}
+
+      <ConfirmDialog
+        open={confirmDelete}
+        title="Delete transaction?"
+        message="This permanently removes the transaction. Any inventory lots linked to it will be unlinked but kept."
+        loading={deleteMutation.isPending}
+        onConfirm={() => deleteMutation.mutate()}
+        onCancel={() => setConfirmDelete(false)}
+      />
     </div>
   )
 }
