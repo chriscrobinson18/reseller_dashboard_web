@@ -1,0 +1,16 @@
+@import "tailwindcss";
+
+* { box-sizing: border-box; }
+
+body { margin: 0; font-family: system-ui, 'Segoe UI', Roboto, sans-serif; }
+
+#root { width: 100%; min-height: 100vh; }
+
+::-webkit-scrollbar { width: 6px; height: 6px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: #d1d5db; border-radius: 3px; }
+::-webkit-scrollbar-thumb:hover { background: #9ca3af; }
+
+.data-row { transition: background-color 0.1s; }
+.data-row:hover { background-color: #f9fafb; cursor: pointer; }
+.data-row.selected { background-color: #eff6ff !important; }
