@@ -357,7 +357,7 @@ export async function updateSale(params: {
   if (fetchErr) throw fetchErr
 
   for (const tx of linked ?? []) {
-    let newAmount: number | null = null
+    let newAmount: number | null
     switch (tx.schedule_c_category) {
       case 'payout': newAmount = params.salePrice; break
       case 'commissions_fees': newAmount = params.fees != null ? -params.fees : null; break
