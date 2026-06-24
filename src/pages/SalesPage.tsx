@@ -402,7 +402,7 @@ export default function SalesPage() {
       <ConfirmDialog
         open={!!deleteSaleTarget}
         title="Delete sale?"
-        message="This removes the sale and its linked payout/fee/shipping transactions. Inventory already depleted is not restored."
+        message="This removes the sale, restores any depleted inventory back to its original lots, and deletes the linked payout/fee/shipping transactions."
         loading={deleteMutation.isPending}
         onConfirm={() => deleteSaleTarget && deleteMutation.mutate(deleteSaleTarget.id)}
         onCancel={() => setDeleteSaleTarget(null)}

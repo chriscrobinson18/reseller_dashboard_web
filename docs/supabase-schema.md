@@ -2,7 +2,7 @@
 
 Project ref: `qmizmnbzergqbpgyqseg` — **shared with the sibling iOS app** (`reseller_dashboard`). Schema/RLS/edge-function changes affect both clients; there is one backend, two frontends.
 
-⚠️ **Neither client repo contains the schema, migrations, RLS policies, or edge function source.** Everything below is reverse-engineered from how the web client queries/inserts data (`src/lib/queries.ts`, `src/lib/mutations.ts`, `src/lib/types.ts`, page-level fetches). Treat this file as the best available map, not ground truth — when in doubt, check the actual Supabase dashboard/CLI. Setting up `supabase link` + committing `supabase/` (migrations + `functions/`) to a repo is an open TASKS.md item; once that happens, this file should defer to the committed SQL instead of restating it.
+⚠️ **Partial source of truth in-repo as of 2026-06-23.** The web repo's [`supabase/`](../supabase/) tree contains the migrations and edge functions touched in the P0 tax-correctness pass (`reverse_sale` RPC; `record_sale` / `record_return` / `reverse_sale` edge functions). Everything else (table DDL, RLS policies, the other edge functions, Plaid/CSV/marketplace functions) is still reverse-engineered from how the web client queries/inserts data (`src/lib/queries.ts`, `src/lib/mutations.ts`, `src/lib/types.ts`, page-level fetches). Treat this file as the best available map for those areas, not ground truth — when in doubt, check the actual Supabase dashboard/CLI. Backfilling the rest of `supabase/` (table migrations, untouched edge functions) into the repo is an ongoing TASKS.md item.
 
 ## Auth
 
@@ -45,7 +45,7 @@ The relational centerpiece — one row per sale event, FIFO-depletes inventory v
 | `net_payout` | computed client-side as `sale_price - fees - shipping_cost` and written back (see `recordSale`/`updateSale` in mutations.ts) — **not** server-computed |
 | `inventory_status` | `'ok' \| 'oversold' \| 'reconciled'` — set by `record_sale` edge function based on FIFO depletion result |
 | `return_status` | `'none' \| 'partial' \| 'full'` |
-| `refunded_quantity`, `refunded_amount` | populated by the (not-yet-built-UI) `record_return` edge function |
+| `refunded_quantity`, `refunded_amount` | populated by the `record_return` edge function (v21, no web UI yet — P1) |
 | `sold_at` | full ISO timestamp (not just a date) |
 
 Joins used: `items(id, name, category)`, `inventory_movements(id, quantity, inventory_lots(unit_cost, item_id))`.
@@ -60,7 +60,7 @@ A purchase batch of an item at a specific unit cost — FIFO unit of accounting.
 |---|---|
 | `id`, `user_id`, `item_id`, `created_at`, `deleted_at` | soft-deleted |
 | `transaction_id` | nullable FK to the COGS purchase transaction; `ON DELETE SET NULL` (deleting the transaction unlinks, doesn't delete, the lot) |
-| `quantity_purchased`, `quantity_remaining` | `quantity_remaining` is depleted FIFO by `record_sale`; restored... nowhere yet (see "Deleting a sale doesn't reverse FIFO depletion" in TASKS.md — known bug) |
+| `quantity_purchased`, `quantity_remaining` | `quantity_remaining` is depleted FIFO by `record_sale`, restored by `reverse_sale` (on sale delete) and by `record_return` v21 (on partial/full refund) |
 | `unit_cost` | |
 | **no `purchase_date`** | only `created_at` exists; TASKS.md flags this as blocking correct FIFO ordering for back-dated entries |
 
@@ -76,12 +76,18 @@ Audit trail row created by `record_sale` per lot depleted by a sale. Read-only f
 
 ## Edge functions
 
-Not committed in this repo (see warning above). Known by name/contract from client usage:
+Three are now committed in [`supabase/functions/`](../supabase/functions/) (the ones touched in the P0 pass). The rest are known by name/contract from client usage; they'll be backfilled into the repo as future passes touch them.
 
-- **`record_sale`** — `supabase.functions.invoke('record_sale', { body: { item_id, quantity, sale_price, platform, sold_at, source, external_order_id } })`. Inserts the `sales` row, FIFO-depletes `inventory_lots.quantity_remaining`, creates `inventory_movements` rows. Returns `{ sale_id, inventory_status, unfulfilled_quantity }`. Does **not** appear to persist `fees`/`shipping_cost` itself — the web client writes those onto the `sales` row in a follow-up `.update()` call (see `recordSale` in mutations.ts) — TASKS.md flags this as needing end-to-end verification.
-- **`record_return`** — not called from any web UI yet (no Return/Refund button exists). Per TASKS.md, mobile's version has known bugs (uses `salePrice` instead of lot `unit_cost` for cost restoration, doesn't insert a refund `transactions` row) — fix in the shared function once web UI ships, don't port the bug.
-- **`import_marketplace_csv`** — referenced in TASKS.md as already shared/working server-side (v16); no web UI calls it yet.
-- Plaid functions: `plaid_create_link_token`, `plaid_exchange_token`, `plaid_sync_transactions` — referenced in TASKS.md, not called from web yet (Plaid Link for Web is a P1 item).
+- **`record_sale`** ([source](../supabase/functions/record_sale/index.ts)) — `supabase.functions.invoke('record_sale', { body: { item_id, quantity, sale_price, platform, sold_at, source, external_order_id } })`. Inserts the `sales` row, FIFO-depletes `inventory_lots.quantity_remaining`, creates `inventory_movements` rows. Returns `{ sale_id, inventory_status, unfulfilled_quantity }`. **Does not persist `fees`/`shipping_cost`/`net_payout`** — the web client writes those onto the `sales` row in a follow-up `.update()` call (see `recordSale` in mutations.ts). Verified end-to-end in the P0 pass; the source has a contract header comment spelling this out.
+- **`record_return`** (v21, [source](../supabase/functions/record_return/index.ts)) — no web UI calls it yet (P1). Fixed in the P0 pass: reverses `inventory_movements` LIFO and restores `quantity_remaining` on the original source lots at the lots' original `unit_cost` (no more fake new-lot-at-sale-price), and inserts a `transactions` row for the refund with `amount: -refund_amount`, `schedule_c_category: 'returns_allowances'`, `related_sale_id`, `source: 'manual'`.
+- **`reverse_sale`** (v1, [source](../supabase/functions/reverse_sale/index.ts)) — thin wrapper around the `public.reverse_sale(uuid)` RPC. Invoked by the client's `deleteSale` mutation. Atomically restores depleted lots, deletes `inventory_movements`, deletes linked manual `transactions`, soft-deletes the sale. Errors mapped to 400/403/404/409 (404 = sale not found, 409 = already soft-deleted, replay guard).
+- **`import_marketplace_csv`** — referenced in TASKS.md as already shared/working server-side (v16); no web UI calls it yet. Not committed in-repo.
+- Plaid functions: `plaid_create_link_token`, `plaid_exchange_token`, `plaid_sync_transactions`, `plaid_sync_scheduled`, `plaid_remove_item`, `plaid_oauth_redirect`, `plaid_backfill_*` — not called from web yet (Plaid Link for Web is a P1 item). Not committed in-repo.
+- Marketplace OAuth: `marketplace_auth_url`, `marketplace_exchange_token` — referenced in TASKS.md as part of the eBay/Amazon connect flow; no web UI yet.
+
+## Postgres RPCs
+
+- **`public.reverse_sale(p_sale_id uuid) RETURNS json`** ([migration](../supabase/migrations/20260623120000_reverse_sale_rpc.sql)) — `SECURITY DEFINER`, granted to `authenticated`. Locks the sale row, verifies `auth.uid()` matches `sales.user_id`, FOR UPDATE-locks the affected lot rows, restores `quantity_remaining`, deletes movements + linked manual transactions, soft-deletes the sale. Raises `sale_not_found` / `forbidden` / `already_deleted` on edge cases. Called only by the `reverse_sale` edge function; not exposed to the JS client directly.
 
 ## Storage
 

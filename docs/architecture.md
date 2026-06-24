@@ -9,6 +9,7 @@
 - **Styling**: Tailwind v4 (via `@tailwindcss/vite`), no component library — bespoke Tailwind classes in every component.
 - **Charts**: Recharts (`BarChart` on the Dashboard).
 - **Icons**: `lucide-react`.
+- **Tests**: Vitest + happy-dom + Testing Library for the client (`npm run test`, files under `src/**/__tests__/`). Deno tests via local Supabase for the committed edge functions ([`supabase/functions/<name>/index.test.ts`](../supabase/functions/), see [`supabase/functions/README.md`](../supabase/functions/README.md)).
 
 ## App shell (`src/App.tsx`)
 
@@ -21,19 +22,29 @@
 ```
 src/
   lib/
-    supabase.ts    — Supabase client singleton (env: VITE_SUPABASE_URL, VITE_SUPABASE_ANON_KEY)
-    types.ts       — hand-written TS interfaces for Transaction, Sale, Item, InventoryLot (NOT generated from schema — keep in sync manually)
-    categories.ts  — CATEGORIES array + getCategoryDef() — see categories.md
-    periods.ts     — PeriodPreset union + getPeriodRange() — date math for the period picker, shared by every page
-    queries.ts     — only inventory reads live here (useItems, fetchItemsWithLots) + derived helpers (itemUnitsInStock, itemAvgCost)
-    mutations.ts   — ALL writes for items/lots/transactions/sales, mirrors iOS SupabaseClient.swift intentionally
-    utils.ts       — formatUSD, formatDate/formatShortDate/formatMonthYear, monthKey, clsx
+    supabase.ts     — Supabase client singleton (env: VITE_SUPABASE_URL, VITE_SUPABASE_ANON_KEY)
+    types.ts        — hand-written TS interfaces for Transaction, Sale, Item, InventoryLot (NOT generated from schema — keep in sync manually)
+    categories.ts   — CATEGORIES array + getCategoryDef() + bucketTransaction() — see categories.md
+    saleProfit.ts   — pure helper: COGS / netRevenue / profit for a single Sale (return-adjusted)
+    periods.ts      — PeriodPreset union + getPeriodRange() — date math for the period picker, shared by every page
+    queries.ts      — only inventory reads live here (useItems, fetchItemsWithLots) + derived helpers (itemUnitsInStock, itemAvgCost)
+    mutations.ts    — ALL writes for items/lots/transactions/sales, mirrors iOS SupabaseClient.swift intentionally
+    utils.ts        — formatUSD, formatDate/formatShortDate/formatMonthYear, monthKey, clsx
+    __tests__/      — Vitest unit tests (bucketTransaction, scheduleCMath, saleProfit, smoke)
   components/
     Layout.tsx, Modal.tsx, SlideOver.tsx, ConfirmDialog.tsx, PeriodPicker.tsx, CategoryBadge.tsx, ItemPicker.tsx
     TransactionInventorySection.tsx — COGS transaction ↔ inventory lot linking UI, used inside the Expenses detail panel
     modals/ — one modal per create/edit flow (AddItemModal, AddLotModal, AddTransactionModal, EditItemModal, EditLotModal, EditSaleModal, LinkSaleToItemModal, RecordSaleModal)
   pages/
     LoginPage.tsx, DashboardPage.tsx, ExpensesPage.tsx, SalesPage.tsx, InventoryPage.tsx
+
+supabase/             — partial source of truth, see supabase-schema.md
+  migrations/         — only those applied via the repo (e.g. reverse_sale RPC)
+  functions/
+    record_sale/      — index.ts + index.test.ts (Deno)
+    record_return/    — index.ts + index.test.ts (Deno)
+    reverse_sale/     — index.ts + index.test.ts (Deno)
+    README.md         — local-stack test workflow
 ```
 
 **Inconsistency to be aware of**: Dashboard and Expenses each define their *own* local `fetchTransactions`/`fetchSales` functions inline in the page file rather than importing from `queries.ts`. Sales page does the same. Only inventory reads are centralized in `queries.ts`. If you add a new transaction/sale query, check whether an equivalent already exists in the page you're editing before adding another — and consider migrating shared fetch logic into `queries.ts` rather than adding a fourth copy.

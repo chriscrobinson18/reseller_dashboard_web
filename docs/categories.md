@@ -49,11 +49,36 @@ interface CategoryDef {
 - **`mealsHalf`**: only `meals` has it. Every expense total multiplies by `0.5` when this flag is set, before taking `Math.abs()`. This is the *only* per-category math rule beyond inclusion/exclusion — if you add a category with special tax treatment (e.g. a future depreciation schedule), this is the pattern to extend, not a one-off `if (category === 'x')` somewhere else.
 - **`scheduleLine`**: purely a grouping/display key for the Dashboard's Schedule C breakdown (`partI`/`partII`/`partIII` filters in `DashboardPage.tsx`). Anything without a `scheduleLine` (the four `isExcluded` categories) never appears in that breakdown.
 
-## Known correctness gaps (see TASKS.md P0 for full detail — don't fix ad-hoc, read that list first)
+## `bucketTransaction` — single bucketing helper
 
-- `computeScheduleC` currently sums `Math.abs(amount) * mult` per category — refunds/credits in an expense category should *reduce* the category total, not add to it. Should sum signed amounts and `abs()` only at display time.
-- Custom categories (planned, stored per-user in Supabase rather than this static array) must flow into `computeScheduleC`, not just `CATEGORIES.find(...)`, once they ship.
-- Negative payout rows (returns) currently net silently into Part I gross revenue instead of a separate "Returns & Allowances" bucket — 1099-K mismatch risk.
+Added 2026-06-23 (P0 item 1). All three dashboard aggregates (`computeKPIs`, `computeMonthlyChart`, `computeScheduleC`) route every transaction through `bucketTransaction(t)` instead of branching on `t.amount > 0`. Returns:
+
+```ts
+{ bucket: 'income' | 'expense' | 'cogs' | null,
+  categoryValue: string | null,
+  signedAmount: number }   // sign preserved; meals × 0.5 already applied
+```
+
+Bucketing rules (in order — first match wins):
+
+| Condition | Result |
+|---|---|
+| `record_type === 'settlement'` | `null` |
+| `related_sale_id` set | `null` (sale-side handled by Profitability) |
+| `source === 'csv_import'` | `null` (same rationale) |
+| `net_zero_pair_id` set | `null` (cancels out) |
+| `schedule_c_category` null/undefined | `null` (uncategorized) |
+| Category `isExcluded === true` | `null` |
+| `scheduleLine === 'Part I'` | `'income'`, signed `amount` |
+| `scheduleLine === 'Part III'` | `'cogs'`, signed `amount` |
+| Otherwise (Part II) | `'expense'`, signed `amount * (mealsHalf ? 0.5 : 1)` |
+
+**Why signed:** a $50 refund posted to `supplies` arrives as `amount: +50`. Pre-fix this was bucketed as income and Math.abs'd back into expenses, inflating both. Now it lands as `{ bucket: 'expense', signedAmount: +50 }`, sums against the supplies expense total to reduce it, and the display layer takes `abs()` only at render. Same idea for refunds against income.
+
+## Known correctness gaps (see TASKS.md P0/P1 for full detail — don't fix ad-hoc, read that list first)
+
+- Custom categories (planned, stored per-user in Supabase rather than this static array) must flow into the dashboard render layer once they ship — see [Custom categories (planned — P1)](#custom-categories-planned--p1) below. `bucketTransaction` itself is already category-string-agnostic.
+- Negative payout rows (returns) net into Part I gross revenue today because no UI ships refunds via `returns_allowances` yet. Once the P1 return UI lands, the dashboard's Part I render must visually subtract Returns & Allowances from Gross Receipts (1099-K mismatch risk).
 
 ## Custom categories (planned — P1)
 
@@ -66,6 +91,6 @@ P0 item 3 calls this out specifically: if you ship `custom_categories` without u
 
 ## Returns & Allowances (added 2026-06-23)
 
-`returns_allowances` (Part I, displayed as a subtraction from Line 1 Gross Receipts on the IRS form) is in `CATEGORIES` now even though no UI ships refunds to it yet. The `record_return` edge function inserts refund transactions with this category once its fix lands.
+`returns_allowances` (Part I, displayed as a subtraction from Line 1 Gross Receipts on the IRS form) is in `CATEGORIES`. The `record_return` edge function (v21, deployed 2026-06-23) inserts a refund `transactions` row with `schedule_c_category: 'returns_allowances'` and `amount: -refund_amount` for every return. The dashboard's `bucketTransaction` routes those rows into the income bucket with a negative signed amount, so they already reduce Part I totals through the math.
 
-P0 item 4: when refund handling ships, the dashboard's Part I render must visually show returns_allowances as a subtraction below Gross Receipts (e.g., "Gross Receipts $X − Returns & Allowances $Y = Line 1 $Z"), not silently net into the `payout` total. This matters for 1099-K reconciliation: a 1099-K reports gross receipts, and our Line 1 must match before we subtract returns.
+P0 item 4 (display-layer follow-up, still pending until the P1 refund UI ships): the dashboard's Part I render must visually show `returns_allowances` as a separate subtraction line below Gross Receipts (e.g., "Gross Receipts $X − Returns & Allowances $Y = Line 1 $Z"), not silently net into the `payout` total. This matters for 1099-K reconciliation: a 1099-K reports gross receipts, and our Line 1 must match before we subtract returns. Inline `TODO(p1-returns)` markers in `DashboardPage.tsx` flag the exact render sites.

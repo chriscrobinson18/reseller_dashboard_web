@@ -9,10 +9,12 @@ Read-only overview page. No mutations — purely fetches `transactions` + `sales
 
 ## Derived sections (each a pure function over the fetched arrays — see [data-flows.md](../data-flows.md) for the shared exclusion-filter logic these all use)
 
-1. **KPI row** (`computeKPIs`) — Total Income, Total Expenses, Net. Filters out settlements, net-zero-paired, sale-linked/CSV-import rows, and `isExcluded` categories. Expenses apply the `mealsHalf` 0.5 multiplier.
+All three transaction-aggregating functions (KPI row, Schedule C breakdown, monthly chart) share a single bucketing helper — `bucketTransaction(t)` in [`src/lib/categories.ts`](../../src/lib/categories.ts) — which decides per-row what bucket the transaction belongs to and what signed amount to add. See [categories.md](../categories.md#buckettransaction--single-bucketing-helper) for the rules. The display layer takes `abs()` only at render, so refunds posted to expense categories now correctly *reduce* the category total instead of inflating both sides.
+
+1. **KPI row** (`computeKPIs`) — Total Income, Total Expenses, Net. Built on `bucketTransaction`: `income = Σ signedAmount over 'income' bucket`, `expenses = abs(Σ signedAmount over 'expense' bucket)`, `net = income − expenses`. Refunds-against-income subtract correctly; refunds-against-expense partially offset the expense total.
 2. **Sales Profitability card** (`computeProfitability`) — Gross Revenue (net of partial-return refunds, full returns excluded), COGS (FIFO via `inventory_movements`), Gross Profit, Platform Fees, Shipping, Selling Margin = `grossProfit - fees - shipping`, with margin % shown when revenue > 0.
-3. **Schedule C breakdown** (`computeScheduleC`) — sums `Math.abs(amount) * mult` per `schedule_c_category`, grouped into Part I / Part II / Part III by each category's `scheduleLine`. **Note**: unlike `computeKPIs`, this does NOT filter out `related_sale_id` rows — only settlements and csv_import. See the P0 sign-handling bug noted in [categories.md](../categories.md).
-4. **Monthly bar chart** (`computeMonthlyChart`, Recharts) — same exclusion filter as KPIs, bucketed by `monthKey(date)` (`'yyyy-MM'`), income vs. expenses bars per month.
+3. **Schedule C breakdown** (`computeScheduleC`) — sums `signedAmount` per `schedule_c_category` via `bucketTransaction`, grouped into Part I / Part II / Part III by each category's `scheduleLine`. Display takes `abs(total)` per expense line. Categories that hit the `null` bucket (settlements, sale-linked, csv_import, net-zero-paired, uncategorized, `isExcluded`) never appear.
+4. **Monthly bar chart** (`computeMonthlyChart`, Recharts) — same `bucketTransaction` rules as KPIs, summed per `monthKey(date)` (`'yyyy-MM'`); bars use `incomeSum` and `abs(expenseSum)`.
 5. **Uncategorized warning banner** — count of transactions with no `schedule_c_category` that aren't settlements/sale-linked/csv_import; links the user to Expenses to fix it (no direct categorize-from-Dashboard action).
 
 ## Period control

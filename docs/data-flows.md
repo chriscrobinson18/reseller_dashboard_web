@@ -2,21 +2,27 @@
 
 These rules are duplicated across multiple pages/functions rather than centralized — when you change one, grep for the others (each function below names its known siblings).
 
-## "Is this transaction real business income/expense?" — the exclusion filter
+## "Is this transaction real business income/expense?" — `bucketTransaction`
 
-Repeated (with slight variation) in `DashboardPage.tsx` (`computeKPIs`, `computeMonthlyChart`, `computeScheduleC`) and `ExpensesPage.tsx` (`uncategorized` count, `showSaleLinked` toggle). The shape is always:
+Centralized in [`src/lib/categories.ts`](../src/lib/categories.ts) as `bucketTransaction(t): { bucket, categoryValue, signedAmount }` (added 2026-06-23, P0 item 1). All three dashboard aggregates (`computeKPIs`, `computeMonthlyChart`, `computeScheduleC`) go through it. `ExpensesPage.tsx` still does its own inline `uncategorized` count and `showSaleLinked` filter.
 
-```ts
-if (t.record_type === 'settlement') return false      // settlements are a wrapper, not the real movement
-if (t.net_zero_pair_id) return false                   // dashboard KPIs only — paired transfers cancel out
-if (t.related_sale_id || t.source === 'csv_import') return false  // already counted via the Sale, don't double-count
-const cat = getCategoryDef(t.schedule_c_category)
-if (cat?.isExcluded) return false                      // transfer/personal/settlement/balance_adjustment categories
-```
+Rules — first match wins, anything that returns `bucket: null` is excluded:
 
-**Why `related_sale_id` / `csv_import` are excluded from transaction totals**: a sale's revenue/fees/shipping are already counted via `computeProfitability(sales)`. The payout/fee/shipping `transactions` rows that `recordSale` auto-creates (see below) exist so Expenses shows them and Schedule C category totals include them — but the Dashboard's *income/expense KPI* would double-count if it summed both the sale and its linked transactions, so it filters linked rows out. If you add a new aggregate, decide explicitly whether it should include sale-linked rows (Schedule C category totals: yes, via `computeScheduleC`, which only excludes settlements+csv_import — note it does NOT exclude `related_sale_id` rows) or KPI-style totals (no).
+| Condition | Bucket |
+|---|---|
+| `record_type === 'settlement'` | `null` |
+| `related_sale_id` set | `null` |
+| `source === 'csv_import'` | `null` |
+| `net_zero_pair_id` set | `null` |
+| `schedule_c_category` null/undefined | `null` |
+| Category `isExcluded === true` | `null` |
+| `scheduleLine === 'Part I'` | `'income'` |
+| `scheduleLine === 'Part III'` | `'cogs'` |
+| Otherwise (Part II) | `'expense'` (×0.5 if `mealsHalf`) |
 
-This inconsistency (KPIs exclude sale-linked rows by `related_sale_id`, but `computeScheduleC` doesn't) is the current actual behavior — verify against the live code before assuming one or the other when adding a new total.
+**Why `related_sale_id` / `csv_import` are excluded**: a sale's revenue/fees/shipping are already counted via `computeProfitability(sales)`. The payout/fee/shipping `transactions` rows that `recordSale` auto-creates (see below) exist so Expenses shows them, but a Dashboard aggregate that summed both the sale and its linked transactions would double-count.
+
+**Signed-amount semantics:** `bucketTransaction` returns `signedAmount` preserving the original sign (with the meals 0.5 multiplier already applied for the expense bucket). Consumers sum signed amounts per bucket/category, take `abs()` only at display time. A refund posted to an expense category now correctly *reduces* that expense total instead of inflating both income and expenses (the pre-2026-06-23 bug). See [categories.md](categories.md#buckettransaction--single-bucketing-helper) for the full description.
 
 ## Recording a sale (`recordSale` in `mutations.ts`)
 
@@ -35,17 +41,31 @@ Updates the `sales` row, recomputes `net_payout`. **Only for `source === 'manual
 
 ## Deleting a sale (`deleteSale`)
 
-Hard-deletes linked manual transactions (`related_sale_id = id AND source = 'manual'`), then soft-deletes the `sales` row (`deleted_at`). **Known bug** (TASKS.md P0): does not restore `quantity_remaining` on depleted lots or remove `inventory_movements` rows — stock counts become permanently understated after a sale is deleted. Don't copy this pattern for new delete flows; if you fix it, the fix belongs here and should also remove the matching `inventory_movements` rows.
+Invokes the `reverse_sale` edge function (committed at [`supabase/functions/reverse_sale/`](../supabase/functions/reverse_sale/)), which in turn calls the `public.reverse_sale(uuid)` Postgres RPC. The RPC runs all four steps in a single transaction with `FOR UPDATE` locks on the affected lot rows:
+
+1. Restore `quantity_remaining` on every lot the sale depleted (driven by `inventory_movements` rows for the sale).
+2. Delete those `inventory_movements` rows.
+3. Delete the linked manual `transactions` rows (`related_sale_id = id AND source = 'manual'`).
+4. Soft-delete the `sales` row (`deleted_at = now()`).
+
+Replay protection: a second call on an already soft-deleted sale raises `already_deleted` (→ HTTP 409 from the edge function), so client retries don't double-restore stock. Ownership: the RPC raises `forbidden` (→ 403) if `auth.uid()` doesn't match `sales.user_id`. Don't copy this directly into a different "undo" flow without re-thinking the lock scope — `record_sale` reads lot quantities before writing them, so anything new touching the same lots needs to participate in the same locking order to avoid races.
 
 ## FIFO COGS computation
 
-COGS for a sale = `sum(inventory_movements.quantity * inventory_movements.inventory_lots.unit_cost)` for that sale — computed identically in three places: `DashboardPage.computeProfitability`, `SalesPage.SaleDetail`, and (implicitly, lot-by-lot) the `TransactionInventorySection` component on the Expenses side. There is no single shared `computeCogs(sale)` helper — if you change the formula, update all three call sites or extract a shared helper into `mutations.ts`/`queries.ts` first.
+COGS for a sale = `sum(inventory_movements.quantity * inventory_movements.inventory_lots.unit_cost)` for that sale.
+
+[`src/lib/saleProfit.ts`](../src/lib/saleProfit.ts) (added 2026-06-23) is the shared helper that computes COGS, return-adjusted `netRevenue`, and `profit`. Used by `SalesPage.SaleDetail`. The remaining duplicates:
+
+- `DashboardPage.computeProfitability` still inlines the same COGS sum + return-adjustment because it aggregates across many sales rather than calling `saleProfit` per row — if you change the formula, update both call sites or refactor `computeProfitability` to call `saleProfit` per sale.
+- `TransactionInventorySection` on the Expenses side does the per-lot multiplication implicitly (lot-by-lot) and doesn't need `saleProfit`.
 
 `itemAvgCost` in `queries.ts` computes a **weighted-average** unit cost across an item's lots — this is for display only (Inventory page "Avg Cost" column); actual COGS accounting is always FIFO via `inventory_movements`, never the average.
 
 ## Revenue net of returns
 
-`netRevenue = sale_price - (return_status === 'partial' ? refunded_amount : 0)`. Sales with `return_status === 'full'` are excluded entirely from revenue/profitability sums (`active = sales.filter(s => s.return_status !== 'full')`). This logic is duplicated in `DashboardPage.computeProfitability`, `SalesPage.SaleDetail`, and the `totalRevenue` calc in `SalesPage`.
+`netRevenue = sale_price - (return_status === 'partial' ? refunded_amount : 0)`. Sales with `return_status === 'full'` are excluded entirely from revenue/profitability sums (`active = sales.filter(s => s.return_status !== 'full')`). Centralized in `saleProfit()` for per-sale callers; `DashboardPage.computeProfitability` and the `totalRevenue` calc in `SalesPage` still inline the same formula since they aggregate across many sales.
+
+Once the P1 refund UI ships, `record_return` (v21) also inserts a `transactions` row at `schedule_c_category: 'returns_allowances'` with `amount: -refund_amount`. Those rows land in the Part I bucket via `bucketTransaction`, so refunds reduce gross receipts in the Schedule C breakdown — see [categories.md](categories.md#returns--allowances-added-2026-06-23).
 
 ## Period filtering
 
