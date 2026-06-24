@@ -13,7 +13,29 @@
 import { serve } from "https://deno.land/std@0.224.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
+const corsHeaders = {
+  "Access-Control-Allow-Origin": "*",
+  "Access-Control-Allow-Headers":
+    "authorization, x-client-info, apikey, content-type",
+  "Access-Control-Allow-Methods": "POST, OPTIONS",
+};
+
+function json(status: number, body: unknown) {
+  return new Response(JSON.stringify(body), {
+    status,
+    headers: { ...corsHeaders, "Content-Type": "application/json" },
+  });
+}
+
 serve(async (req) => {
+  // CORS preflight: browsers send OPTIONS before the actual POST because the
+  // supabase-js client adds Authorization + apikey headers (non-simple).
+  // Reply 200 here without touching auth or the body — anything else makes
+  // the browser block the POST and the sale fails silently.
+  if (req.method === "OPTIONS") {
+    return new Response("ok", { headers: corsHeaders });
+  }
+
   try {
     const supabase = createClient(
       Deno.env.get("SUPABASE_URL")!,
@@ -33,10 +55,7 @@ serve(async (req) => {
     } = await supabase.auth.getUser();
 
     if (authError || !user) {
-      return new Response(
-        JSON.stringify({ error: "Unauthorized" }),
-        { status: 401 }
-      );
+      return json(401, { error: "Unauthorized" });
     }
 
     const body = await req.json();
@@ -51,10 +70,7 @@ serve(async (req) => {
     } = body;
 
     if (!item_id || !quantity || quantity <= 0 || sale_price == null) {
-      return new Response(
-        JSON.stringify({ error: "Invalid input" }),
-        { status: 400 }
-      );
+      return json(400, { error: "Invalid input" });
     }
 
     /* Insert sale */
@@ -122,19 +138,13 @@ serve(async (req) => {
         .eq("id", sale.id);
     }
 
-    return new Response(
-      JSON.stringify({
-        success: true,
-        sale_id: sale.id,
-        inventory_status: remaining > 0 ? "oversold" : "ok",
-        unfulfilled_quantity: remaining,
-      }),
-      { status: 200 }
-    );
+    return json(200, {
+      success: true,
+      sale_id: sale.id,
+      inventory_status: remaining > 0 ? "oversold" : "ok",
+      unfulfilled_quantity: remaining,
+    });
   } catch (err) {
-    return new Response(
-      JSON.stringify({ error: String(err) }),
-      { status: 500 }
-    );
+    return json(500, { error: String(err) });
   }
 });

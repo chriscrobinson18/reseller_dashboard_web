@@ -21,7 +21,25 @@
 import { serve } from "https://deno.land/std@0.224.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
+const corsHeaders = {
+  "Access-Control-Allow-Origin": "*",
+  "Access-Control-Allow-Headers":
+    "authorization, x-client-info, apikey, content-type",
+  "Access-Control-Allow-Methods": "POST, OPTIONS",
+};
+
+function json(status: number, body: unknown) {
+  return new Response(JSON.stringify(body), {
+    status,
+    headers: { ...corsHeaders, "Content-Type": "application/json" },
+  });
+}
+
 serve(async (req) => {
+  if (req.method === "OPTIONS") {
+    return new Response("ok", { headers: corsHeaders });
+  }
+
   try {
     const supabase = createClient(
       Deno.env.get("SUPABASE_URL")!,
@@ -41,10 +59,7 @@ serve(async (req) => {
     } = await supabase.auth.getUser();
 
     if (authError || !user) {
-      return new Response(
-        JSON.stringify({ error: "Unauthorized" }),
-        { status: 401 }
-      );
+      return json(401, { error: "Unauthorized" });
     }
 
     const body = await req.json();
@@ -57,10 +72,7 @@ serve(async (req) => {
     } = body;
 
     if (!sale_id || !quantity || quantity <= 0 || refund_amount == null) {
-      return new Response(
-        JSON.stringify({ error: "Invalid input" }),
-        { status: 400 }
-      );
+      return json(400, { error: "Invalid input" });
     }
 
     /* Fetch sale */
@@ -72,20 +84,14 @@ serve(async (req) => {
       .single();
 
     if (saleError || !sale) {
-      return new Response(
-        JSON.stringify({ error: "Sale not found" }),
-        { status: 404 }
-      );
+      return json(404, { error: "Sale not found" });
     }
 
     const refundedSoFar = sale.refunded_quantity ?? 0;
     const refundableQty = sale.quantity - refundedSoFar;
 
     if (quantity > refundableQty) {
-      return new Response(
-        JSON.stringify({ error: "Refund exceeds sold quantity" }),
-        { status: 400 }
-      );
+      return json(400, { error: "Refund exceeds sold quantity" });
     }
 
     /* Insert return record */
@@ -172,20 +178,14 @@ serve(async (req) => {
       related_sale_id: sale_id,
     });
 
-    return new Response(
-      JSON.stringify({
-        success: true,
-        sale_id,
-        refunded_quantity: newRefundedQty,
-        refunded_amount: newRefundedAmt,
-        units_restored: quantity - toRestore,
-      }),
-      { status: 200 }
-    );
+    return json(200, {
+      success: true,
+      sale_id,
+      refunded_quantity: newRefundedQty,
+      refunded_amount: newRefundedAmt,
+      units_restored: quantity - toRestore,
+    });
   } catch (err) {
-    return new Response(
-      JSON.stringify({ error: String(err) }),
-      { status: 500 }
-    );
+    return json(500, { error: String(err) });
   }
 });
