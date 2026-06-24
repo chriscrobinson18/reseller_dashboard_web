@@ -5,18 +5,22 @@ import { useItems, itemUnitsInStock, type ItemWithLots } from '../lib/queries'
 interface Props {
   selectedId: string | null
   onSelect: (item: ItemWithLots) => void
+  filter?: (item: ItemWithLots) => boolean
+  onCreateNew?: () => void                   // when provided, shows "+ Create new item" button at the top
+  createNewLabel?: string                    // defaults to "+ Create new item"
 }
 
 /** Searchable inventory item list. Shows units in stock so the user can avoid overselling. */
-export default function ItemPicker({ selectedId, onSelect }: Props) {
+export default function ItemPicker({ selectedId, onSelect, filter, onCreateNew, createNewLabel = '+ Create new item' }: Props) {
   const { data: items = [], isLoading } = useItems()
   const [search, setSearch] = useState('')
 
   const filtered = useMemo(() => {
-    if (!search) return items
+    const base = filter ? items.filter(filter) : items
+    if (!search) return base
     const q = search.toLowerCase()
-    return items.filter(i => i.name.toLowerCase().includes(q) || (i.category ?? '').toLowerCase().includes(q))
-  }, [items, search])
+    return base.filter(i => i.name.toLowerCase().includes(q) || (i.category ?? '').toLowerCase().includes(q))
+  }, [items, search, filter])
 
   return (
     <div className="border border-gray-200 rounded-lg overflow-hidden">
@@ -30,6 +34,18 @@ export default function ItemPicker({ selectedId, onSelect }: Props) {
         />
       </div>
       <div className="max-h-52 overflow-y-auto">
+        {onCreateNew && (
+          <button
+            type="button"
+            onClick={onCreateNew}
+            className="w-full flex items-center gap-2.5 px-3 py-2 text-left hover:bg-gray-50 transition-colors border-b border-gray-100"
+          >
+            <div className="w-7 h-7 rounded-full bg-blue-50 flex items-center justify-center shrink-0">
+              <span className="text-blue-600 text-sm">+</span>
+            </div>
+            <div className="flex-1 min-w-0 text-sm font-medium text-blue-700">{createNewLabel}</div>
+          </button>
+        )}
         {isLoading ? (
           <div className="p-4 text-center text-xs text-gray-400">Loading…</div>
         ) : filtered.length === 0 ? (
