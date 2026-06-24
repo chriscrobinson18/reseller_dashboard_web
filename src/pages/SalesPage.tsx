@@ -11,6 +11,7 @@ import ConfirmDialog from '../components/ConfirmDialog'
 import RecordSaleModal from '../components/modals/RecordSaleModal'
 import EditSaleModal from '../components/modals/EditSaleModal'
 import LinkSaleToItemModal from '../components/modals/LinkSaleToItemModal'
+import { saleProfit } from '../lib/saleProfit'
 import type { Sale } from '../lib/types'
 
 async function fetchSales(start: string | null, end: string | null): Promise<Sale[]> {
@@ -76,10 +77,7 @@ function SaleDetail({ sale, onLinkItem, onEdit, onDelete }: {
   onEdit: () => void
   onDelete: () => void
 }) {
-  const cogs = (sale.inventory_movements ?? []).reduce((s, m) =>
-    s + m.quantity * (m.inventory_lots?.unit_cost ?? 0), 0)
-  const netRevenue = sale.sale_price - (sale.return_status === 'partial' ? (sale.refunded_amount ?? 0) : 0)
-  const profit = netRevenue - cogs - (sale.fees ?? 0) - (sale.shipping_cost ?? 0)
+  const { cogs, netRevenue, profit } = saleProfit(sale)
   const hasCogsData = (sale.inventory_movements?.length ?? 0) > 0
 
   return (
