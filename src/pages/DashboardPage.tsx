@@ -6,7 +6,7 @@ import {
 import { supabase } from '../lib/supabase'
 import { getPeriodRange, PERIOD_LABELS, type PeriodPreset } from '../lib/periods'
 import { CATEGORIES, getCategoryDef } from '../lib/categories'
-import { computeScheduleC } from '../lib/scheduleCMath'
+import { computeScheduleC, computeKPIs } from '../lib/scheduleCMath'
 import { formatUSD, monthKey } from '../lib/utils'
 import PeriodPicker from '../components/PeriodPicker'
 import type { Transaction, Sale } from '../lib/types'
@@ -39,23 +39,6 @@ async function fetchSales(start: string | null, end: string | null): Promise<Sal
 }
 
 // ─── Computation helpers ──────────────────────────────────────────────────────
-
-function computeKPIs(transactions: Transaction[]) {
-  const business = transactions.filter(t => {
-    if (t.record_type === 'settlement') return false
-    if (t.net_zero_pair_id) return false
-    if (t.related_sale_id || t.source === 'csv_import') return false
-    const cat = getCategoryDef(t.schedule_c_category)
-    if (cat?.isExcluded) return false
-    return true
-  })
-  const income = business.filter(t => t.amount > 0).reduce((s, t) => s + t.amount, 0)
-  const expenses = business.filter(t => t.amount < 0).reduce((s, t) => {
-    const mult = getCategoryDef(t.schedule_c_category)?.mealsHalf ? 0.5 : 1
-    return s + Math.abs(t.amount) * mult
-  }, 0)
-  return { income, expenses, net: income - expenses, business }
-}
 
 function computeProfitability(sales: Sale[]) {
   const active = sales.filter(s => s.return_status !== 'full' && !s.deleted_at)

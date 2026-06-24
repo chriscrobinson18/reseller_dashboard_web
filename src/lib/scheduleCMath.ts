@@ -11,3 +11,25 @@ export function computeScheduleC(transactions: Transaction[]): Record<string, nu
   }
   return totals
 }
+
+export interface KPITotals {
+  income: number    // display value, always >= 0 in normal cases
+  expenses: number  // display value, always >= 0 in normal cases
+  net: number       // income - expenses
+}
+
+/** Period-scoped income, expenses, and net for the dashboard KPI row. Refunds against expenses reduce expenses. */
+export function computeKPIs(transactions: Transaction[]): KPITotals {
+  let incomeSum = 0
+  let expenseSum = 0  // negative in the normal case
+  for (const t of transactions) {
+    const b = bucketTransaction(t)
+    if (b.bucket === 'income') incomeSum += b.signedAmount
+    else if (b.bucket === 'expense' || b.bucket === 'cogs') expenseSum += b.signedAmount
+  }
+  return {
+    income: incomeSum,
+    expenses: Math.abs(expenseSum),
+    net: incomeSum + expenseSum, // expenseSum already negative
+  }
+}

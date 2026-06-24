@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { computeScheduleC } from '../scheduleCMath'
+import { computeScheduleC, computeKPIs } from '../scheduleCMath'
 import type { Transaction } from '../types'
 
 function tx(overrides: Partial<Transaction> = {}): Transaction {
@@ -62,5 +62,49 @@ describe('computeScheduleC', () => {
       tx({ id: 'a', amount: -100, schedule_c_category: undefined }),
     ])
     expect(totals).toEqual({})
+  })
+})
+
+describe('computeKPIs', () => {
+  it('sums income and expenses with signed amounts', () => {
+    const result = computeKPIs([
+      tx({ id: 'a', amount: 1000, schedule_c_category: 'payout' }),
+      tx({ id: 'b', amount: -200, schedule_c_category: 'supplies' }),
+      tx({ id: 'c', amount: -100, schedule_c_category: 'advertising' }),
+    ])
+    expect(result.income).toBe(1000)
+    expect(result.expenses).toBe(300)
+    expect(result.net).toBe(700)
+  })
+
+  it('refund in expense category reduces expenses, does not inflate income (regression)', () => {
+    const result = computeKPIs([
+      tx({ id: 'a', amount: 1000, schedule_c_category: 'payout' }),
+      tx({ id: 'b', amount: -200, schedule_c_category: 'supplies' }),
+      tx({ id: 'c', amount: 50, schedule_c_category: 'supplies' }), // refund
+    ])
+    expect(result.income).toBe(1000)
+    expect(result.expenses).toBe(150)
+    expect(result.net).toBe(850)
+  })
+
+  it('refund in income category reduces income', () => {
+    const result = computeKPIs([
+      tx({ id: 'a', amount: 1000, schedule_c_category: 'payout' }),
+      tx({ id: 'b', amount: -30, schedule_c_category: 'payout' }), // chargeback
+    ])
+    expect(result.income).toBe(970)
+    expect(result.expenses).toBe(0)
+    expect(result.net).toBe(970)
+  })
+
+  it('treats cogs bucket as expense in KPI display', () => {
+    const result = computeKPIs([
+      tx({ id: 'a', amount: 1000, schedule_c_category: 'payout' }),
+      tx({ id: 'b', amount: -400, schedule_c_category: 'cost_of_goods' }),
+    ])
+    expect(result.income).toBe(1000)
+    expect(result.expenses).toBe(400)
+    expect(result.net).toBe(600)
   })
 })
