@@ -230,7 +230,7 @@ Single-step modal using the existing `Modal` primitive (wider than `SlideOver`).
 **Header**
 - Trade date (defaults to today)
 - Counterparty (free text, optional)
-- FMV source notes (optional) — hint text: "e.g. 'eBay sold comps saved'. Recommended for IRS defensibility."
+- FMV source notes — not required, but nudged: placeholder `"e.g. 'eBay sold comps saved'"` and a subtle inline hint `"Recommended for IRS defensibility"`. Submit is not blocked if empty.
 - Notes (optional)
 
 **Section: "You gave"**
@@ -335,13 +335,13 @@ Per `CLAUDE.md` doc-maintenance rule:
 - **`docs/categories.md`** — note that `payout` and `cost_of_goods` totals may include non-cash trade legs; both are correct Schedule C inputs.
 - **`TASKS.md`** — add v2 follow-ups (atomic edge function for `recordTrade`; FIFO reversal on trade/sale delete; `updateTrade`).
 
-## Open questions for user review
+## Resolved design decisions (from brainstorm)
 
-1. **Item picker scope for "given" side:** spec restricts to items with `quantity_remaining > 0`. Acceptable, or allow giving away an oversold item (matching how the existing oversold sale flow works)?
-2. **Default platform for given-side sales:** spec uses `'trade'`. Acceptable, or use counterparty name, or leave null?
-3. **FMV source notes:** required, recommended, or fully optional? Spec has it as optional with a hint. CPA-defensibility argues for "recommended" (UI nudge) but not blocking.
-4. **Trade detail surface:** `SlideOver` chosen over `Modal` for the read-only drawer feel. Right call, or should it be a full page like sale detail?
-5. **`deleteTrade` abort threshold:** spec aborts if **any** received lot has been even partially depleted. Acceptable strictness, or should it allow delete with a warning if depletions are reversible (which they're currently not, per the inherited bug)?
+1. **Given-side item picker:** restricted to items with `quantity_remaining > 0`. No oversell via trade.
+2. **Default platform for given-side sales:** `'trade'`.
+3. **FMV source notes:** recommended via UI nudge (placeholder + inline hint), not required to submit.
+4. **Trade detail surface:** `SlideOver` (right-side drawer).
+5. **`deleteTrade` with depleted received lots:** **abort with clear message** directing the user to delete the downstream sales first. No edit flow in v1.
 
 ## Success criteria
 
