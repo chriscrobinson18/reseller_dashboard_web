@@ -44,3 +44,48 @@ export function getCategoryDef(value?: string | null): CategoryDef | undefined {
   if (!value) return undefined
   return CATEGORIES.find(c => c.value === value)
 }
+
+import type { Transaction } from './types'
+
+export type ScheduleCBucket = 'income' | 'expense' | 'cogs' | null
+
+export interface BucketedAmount {
+  bucket: ScheduleCBucket
+  categoryValue: string | null
+  signedAmount: number
+}
+
+/**
+ * Single source of truth for "does this transaction count toward Schedule C, and if so where?"
+ *
+ * Returns SIGNED amounts (a refund posted to an expense category comes back as positive,
+ * which correctly offsets the negative expense amounts when summed). Callers should sum
+ * signedAmount per categoryValue and only abs() at display time.
+ *
+ * Future work: when custom_categories ships, this function already handles arbitrary
+ * categoryValue strings — it's the dashboard display code (CATEGORIES.filter) that
+ * needs to become data-driven. See docs/categories.md "Custom categories".
+ */
+export function bucketTransaction(t: Transaction): BucketedAmount {
+  const none: BucketedAmount = { bucket: null, categoryValue: null, signedAmount: 0 }
+
+  if (t.record_type === 'settlement') return none
+  if (t.related_sale_id) return none
+  if (t.source === 'csv_import') return none
+  if (t.net_zero_pair_id) return none
+  if (!t.schedule_c_category) return none
+
+  const cat = getCategoryDef(t.schedule_c_category)
+  if (cat?.isExcluded) return none
+
+  const mult = cat?.mealsHalf ? 0.5 : 1
+  const signed = t.amount * mult
+
+  if (cat?.scheduleLine === 'Part I') {
+    return { bucket: 'income', categoryValue: t.schedule_c_category, signedAmount: signed }
+  }
+  if (cat?.scheduleLine === 'Part III') {
+    return { bucket: 'cogs', categoryValue: t.schedule_c_category, signedAmount: signed }
+  }
+  return { bucket: 'expense', categoryValue: t.schedule_c_category, signedAmount: signed }
+}
