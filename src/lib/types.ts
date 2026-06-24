@@ -86,9 +86,9 @@ export interface Trade {
   given_fmv: number
   received_fmv: number
   cash_boot: number                          // signed; + you received, − you paid, 0 pure swap
-  cash_transaction_id?: string
-  income_transaction_id: string
-  cogs_transaction_id: string
+  cash_transaction_id: string | null
+  income_transaction_id: string | null
+  cogs_transaction_id: string | null
   fmv_source_notes?: string
   notes?: string
 }
