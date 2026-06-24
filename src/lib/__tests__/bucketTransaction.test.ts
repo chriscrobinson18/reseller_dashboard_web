@@ -76,4 +76,9 @@ describe('bucketTransaction', () => {
     const result = bucketTransaction(tx({ schedule_c_category: 'transfer' }))
     expect(result.bucket).toBeNull()
   })
+
+  it('routes returns_allowances as income bucket (offsets Part I gross receipts)', () => {
+    const result = bucketTransaction(tx({ amount: -30, schedule_c_category: 'returns_allowances' }))
+    expect(result).toEqual({ bucket: 'income', categoryValue: 'returns_allowances', signedAmount: -30 })
+  })
 })

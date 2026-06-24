@@ -16,6 +16,7 @@ export const CATEGORIES: CategoryDef[] = [
   { value: 'balance_adjustment', label: 'Balance Adjustment', color: '#8b5cf6', bgColor: '#ede9fe', isExcluded: true },
   // Part I
   { value: 'payout', label: 'Payout / Income', color: '#059669', bgColor: '#d1fae5', isExcluded: false, scheduleLine: 'Part I' },
+  { value: 'returns_allowances', label: 'Returns & Allowances', color: '#dc2626', bgColor: '#fee2e2', isExcluded: false, scheduleLine: 'Part I' },
   // Part III
   { value: 'cost_of_goods', label: 'Cost of Goods', color: '#d97706', bgColor: '#fef3c7', isExcluded: false, scheduleLine: 'Part III' },
   // Part II
