@@ -12,6 +12,7 @@ function tx(overrides: Partial<Transaction> = {}): Transaction {
     record_type: 'transaction',
     schedule_c_category: 'supplies',
     created_at: '2026-01-15T00:00:00Z',
+    is_non_cash: false,
     ...overrides,
   }
 }

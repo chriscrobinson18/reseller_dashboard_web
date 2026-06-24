@@ -20,6 +20,8 @@ export interface Transaction {
   receipt_url?: string
   plaid_category?: string
   created_at: string
+  is_non_cash: boolean
+  trade_id?: string
 }
 
 export interface Sale {
@@ -27,7 +29,7 @@ export interface Sale {
   user_id: string
   item_id?: string
   platform?: string
-  source: string
+  source: 'manual' | 'csv_import' | 'plaid' | 'trade'
   quantity: number
   sale_price: number
   fees: number
@@ -38,6 +40,7 @@ export interface Sale {
   return_status: 'none' | 'partial' | 'full'
   refunded_quantity: number
   refunded_amount?: number
+  trade_id?: string
   sold_at: string
   created_at: string
   deleted_at?: string
@@ -65,9 +68,27 @@ export interface InventoryLot {
   user_id: string
   item_id: string
   transaction_id?: string
+  trade_id?: string
   quantity_purchased: number
   quantity_remaining: number
   unit_cost: number
   created_at: string
   deleted_at?: string
+}
+
+export interface Trade {
+  id: string
+  user_id: string
+  created_at: string
+  deleted_at?: string
+  traded_at: string                          // 'yyyy-MM-dd'
+  counterparty?: string
+  given_fmv: number
+  received_fmv: number
+  cash_boot: number                          // signed; + you received, − you paid, 0 pure swap
+  cash_transaction_id?: string
+  income_transaction_id: string
+  cogs_transaction_id: string
+  fmv_source_notes?: string
+  notes?: string
 }
