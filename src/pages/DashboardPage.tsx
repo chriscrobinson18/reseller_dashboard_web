@@ -6,6 +6,7 @@ import {
 import { supabase } from '../lib/supabase'
 import { getPeriodRange, PERIOD_LABELS, type PeriodPreset } from '../lib/periods'
 import { CATEGORIES, getCategoryDef } from '../lib/categories'
+import { computeScheduleC } from '../lib/scheduleCMath'
 import { formatUSD, monthKey } from '../lib/utils'
 import PeriodPicker from '../components/PeriodPicker'
 import type { Transaction, Sale } from '../lib/types'
@@ -92,19 +93,6 @@ function computeMonthlyChart(transactions: Transaction[]) {
     .map(m => ({ ...m, month: m.month.slice(0, 7) }))
 }
 
-function computeScheduleC(transactions: Transaction[]) {
-  const totals: Record<string, number> = {}
-  transactions.forEach(t => {
-    if (t.record_type === 'settlement') return
-    if (t.related_sale_id || t.source === 'csv_import') return
-    if (!t.schedule_c_category) return
-    const cat = getCategoryDef(t.schedule_c_category)
-    if (cat?.isExcluded) return
-    const mult = cat?.mealsHalf ? 0.5 : 1
-    totals[t.schedule_c_category] = (totals[t.schedule_c_category] ?? 0) + Math.abs(t.amount) * mult
-  })
-  return totals
-}
 
 // ─── Sub-components ───────────────────────────────────────────────────────────
 
@@ -174,14 +162,21 @@ export default function DashboardPage() {
   const monthlyData = useMemo(() => computeMonthlyChart(transactions), [transactions])
   const scheduleC = useMemo(() => computeScheduleC(transactions), [transactions])
 
-  const partI = CATEGORIES.filter(c => c.scheduleLine === 'Part I' && scheduleC[c.value])
+  // Note: scheduleC values are SIGNED. For Part I, positive = income (display as is).
+  // For Part II/III (expenses/COGS), values are negative; we display the absolute value
+  // and let the section total show as a positive expense magnitude.
+  // TODO(p1-custom-categories): merge CATEGORIES with custom_categories from useCustomCategories()
+  // hook when that ships, so user-defined categories appear here too.
+  // TODO(p1-returns): when record_return UI ships, returns_allowances entries below should
+  // visually appear as a subtraction from Gross Receipts (Line 1), not silently net into payout.
+  const partI = CATEGORIES.filter(c => c.scheduleLine === 'Part I' && scheduleC[c.value] !== undefined && scheduleC[c.value] !== 0)
     .map(c => ({ label: c.label, value: scheduleC[c.value] ?? 0 }))
 
-  const partIII = CATEGORIES.filter(c => c.scheduleLine === 'Part III' && scheduleC[c.value])
-    .map(c => ({ label: c.label, value: scheduleC[c.value] ?? 0 }))
+  const partIII = CATEGORIES.filter(c => c.scheduleLine === 'Part III' && scheduleC[c.value] !== undefined && scheduleC[c.value] !== 0)
+    .map(c => ({ label: c.label, value: Math.abs(scheduleC[c.value] ?? 0) }))
 
-  const partII = CATEGORIES.filter(c => c.scheduleLine && c.scheduleLine.startsWith('Line') && scheduleC[c.value])
-    .map(c => ({ label: c.label, value: scheduleC[c.value] ?? 0, line: c.scheduleLine }))
+  const partII = CATEGORIES.filter(c => c.scheduleLine && c.scheduleLine.startsWith('Line') && scheduleC[c.value] !== undefined && scheduleC[c.value] !== 0)
+    .map(c => ({ label: c.label, value: Math.abs(scheduleC[c.value] ?? 0), line: c.scheduleLine }))
 
   const uncategorized = transactions.filter(t =>
     !t.schedule_c_category &&
