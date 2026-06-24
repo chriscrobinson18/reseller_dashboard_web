@@ -54,3 +54,18 @@ interface CategoryDef {
 - `computeScheduleC` currently sums `Math.abs(amount) * mult` per category — refunds/credits in an expense category should *reduce* the category total, not add to it. Should sum signed amounts and `abs()` only at display time.
 - Custom categories (planned, stored per-user in Supabase rather than this static array) must flow into `computeScheduleC`, not just `CATEGORIES.find(...)`, once they ship.
 - Negative payout rows (returns) currently net silently into Part I gross revenue instead of a separate "Returns & Allowances" bucket — 1099-K mismatch risk.
+
+## Custom categories (planned — P1)
+
+When the `custom_categories` table ships (user_id, name, scheduleLine, mealsHalf, isExcluded), `bucketTransaction` in `src/lib/categories.ts` already handles arbitrary `schedule_c_category` strings — it doesn't depend on `CATEGORIES`. The work is in the **display layer**:
+
+- `DashboardPage.tsx` Part I / Part II / Part III row builders currently do `CATEGORIES.filter(...)`. They must merge `CATEGORIES` with the user's custom categories at render time (e.g., via a `useCustomCategories()` React Query hook).
+- `bucketTransaction`'s `scheduleLine` check must also pick up custom-category metadata; the cleanest approach is to inject custom categories into a combined `categories: CategoryDef[]` list and have `getCategoryDef` look in both.
+
+P0 item 3 calls this out specifically: if you ship `custom_categories` without updating the Schedule C breakdown render, all custom-categorized transactions silently disappear from the breakdown.
+
+## Returns & Allowances (added 2026-06-23)
+
+`returns_allowances` (Part I, displayed as a subtraction from Line 1 Gross Receipts on the IRS form) is in `CATEGORIES` now even though no UI ships refunds to it yet. The `record_return` edge function inserts refund transactions with this category once its fix lands.
+
+P0 item 4: when refund handling ships, the dashboard's Part I render must visually show returns_allowances as a subtraction below Gross Receipts (e.g., "Gross Receipts $X − Returns & Allowances $Y = Line 1 $Z"), not silently net into the `payout` total. This matters for 1099-K reconciliation: a 1099-K reports gross receipts, and our Line 1 must match before we subtract returns.

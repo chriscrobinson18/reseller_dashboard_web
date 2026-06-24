@@ -40,6 +40,14 @@ async function fetchSales(start: string | null, end: string | null): Promise<Sal
 
 // ─── Computation helpers ──────────────────────────────────────────────────────
 
+/**
+ * Period-scoped profitability for the dashboard's Sales Profitability card.
+ *
+ * IMPORTANT: This MUST NOT be reused to compute the Schedule C Part III COGS line.
+ * Part III COGS uses `beginning + purchases − ending` over the FULL tax year,
+ * independent of any dashboard period filter. See docs/features/dashboard.md
+ * "Part III (Cost of Goods Sold) and inventory valuation".
+ */
 function computeProfitability(sales: Sale[]) {
   const active = sales.filter(s => s.return_status !== 'full' && !s.deleted_at)
   const revenue = active.reduce((s, sale) => {

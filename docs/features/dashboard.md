@@ -23,3 +23,19 @@ Read-only overview page. No mutations — purely fetches `transactions` + `sales
 
 - All money math here is duplicated from (or duplicated *into*) `SalesPage.tsx` and `ExpensesPage.tsx` — check [data-flows.md](../data-flows.md) before "fixing" a calculation only here.
 - This page has zero loading-state granularity beyond a single "Loading…" text next to the title; `loadingTx || loadingSales` gates nothing else (the page renders with empty arrays while loading, which can flash `$0.00` cards).
+
+## Part III (Cost of Goods Sold) and inventory valuation — important constraint
+
+The Sales Profitability card on the dashboard is **period-scoped**: it computes COGS by summing `inventory_movements.quantity × inventory_lots.unit_cost` for sales in the selected period. This is correct for "how profitable was Q1?" answers.
+
+**The Schedule C Part III line is different.** The IRS formula is:
+
+```
+COGS = Beginning Inventory + Purchases − Ending Inventory
+```
+
+All three inputs are **full-tax-year values regardless of any dashboard period filter**. Beginning Inventory is what was on hand on Jan 1; Ending is what's on hand on Dec 31; Purchases is the year's `cost_of_goods` transaction total.
+
+The planned `inventory_valuations(user_id, tax_year, beginning_inventory, ending_inventory)` table stores Beginning/Ending. A future "Part III card" on the dashboard must read from this table, NOT extend the period-scoped `computeProfitability` function.
+
+P0 item 2: do not reuse `computeProfitability` for the Schedule C Part III line. If you do, switching the dashboard to a "Last 30 Days" period will silently compute the WRONG COGS for the tax year.
