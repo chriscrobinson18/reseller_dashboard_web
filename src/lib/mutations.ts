@@ -372,19 +372,23 @@ export async function updateSale(params: {
   }
 }
 
-/** Deletes linked manual transaction rows then soft-deletes the sale. */
+/**
+ * Reverses a sale atomically via the reverse_sale edge function:
+ * restores `quantity_remaining` on every depleted lot, removes the
+ * `inventory_movements` audit rows, deletes linked manual transactions,
+ * and soft-deletes the sale — all in one Postgres transaction.
+ *
+ * Pre-rewrite, this function only deleted the linked transactions and
+ * soft-deleted the sale, leaving lots permanently understated. See
+ * docs/superpowers/specs/2026-06-23-p0-tax-correctness-design.md § B
+ * (P0 item 8) and supabase/functions/reverse_sale/.
+ */
 export async function deleteSale(id: string) {
-  const { error: txErr } = await supabase
-    .from('transactions')
-    .delete()
-    .eq('related_sale_id', id)
-    .eq('source', 'manual')
-  if (txErr) throw txErr
-  const { error } = await supabase
-    .from('sales')
-    .update({ deleted_at: new Date().toISOString() })
-    .eq('id', id)
+  const { data, error } = await supabase.functions.invoke('reverse_sale', {
+    body: { sale_id: id },
+  })
   if (error) throw error
+  if (data?.error) throw new Error(data.error)
 }
 
 export { todayStr }
