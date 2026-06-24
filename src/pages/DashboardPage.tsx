@@ -5,9 +5,9 @@ import {
 } from 'recharts'
 import { supabase } from '../lib/supabase'
 import { getPeriodRange, PERIOD_LABELS, type PeriodPreset } from '../lib/periods'
-import { CATEGORIES, getCategoryDef } from '../lib/categories'
-import { computeScheduleC, computeKPIs } from '../lib/scheduleCMath'
-import { formatUSD, monthKey } from '../lib/utils'
+import { CATEGORIES } from '../lib/categories'
+import { computeScheduleC, computeKPIs, computeMonthlyChart } from '../lib/scheduleCMath'
+import { formatUSD } from '../lib/utils'
 import PeriodPicker from '../components/PeriodPicker'
 import type { Transaction, Sale } from '../lib/types'
 
@@ -54,26 +54,6 @@ function computeProfitability(sales: Sale[]) {
   const fees = active.reduce((s, sale) => s + (sale.fees ?? 0), 0)
   const shipping = active.reduce((s, sale) => s + (sale.shipping_cost ?? 0), 0)
   return { revenue, cogs, grossProfit: revenue - cogs, fees, shipping, sellingMargin: revenue - cogs - fees - shipping }
-}
-
-function computeMonthlyChart(transactions: Transaction[]) {
-  const months: Record<string, { month: string; income: number; expenses: number }> = {}
-  transactions.forEach(t => {
-    if (t.record_type === 'settlement') return
-    if (t.related_sale_id || t.source === 'csv_import') return
-    const cat = getCategoryDef(t.schedule_c_category)
-    if (cat?.isExcluded) return
-    const key = monthKey(t.date)
-    if (!months[key]) months[key] = { month: key, income: 0, expenses: 0 }
-    if (t.amount > 0) months[key].income += t.amount
-    else {
-      const mult = cat?.mealsHalf ? 0.5 : 1
-      months[key].expenses += Math.abs(t.amount) * mult
-    }
-  })
-  return Object.values(months)
-    .sort((a, b) => a.month.localeCompare(b.month))
-    .map(m => ({ ...m, month: m.month.slice(0, 7) }))
 }
 
 

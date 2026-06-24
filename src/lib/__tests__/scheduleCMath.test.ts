@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { computeScheduleC, computeKPIs } from '../scheduleCMath'
+import { computeScheduleC, computeKPIs, computeMonthlyChart } from '../scheduleCMath'
 import type { Transaction } from '../types'
 
 function tx(overrides: Partial<Transaction> = {}): Transaction {
@@ -106,5 +106,38 @@ describe('computeKPIs', () => {
     expect(result.income).toBe(1000)
     expect(result.expenses).toBe(400)
     expect(result.net).toBe(600)
+  })
+})
+
+describe('computeMonthlyChart', () => {
+  it('groups income/expense by yyyy-MM', () => {
+    const result = computeMonthlyChart([
+      tx({ id: 'a', date: '2026-01-15', amount: 1000, schedule_c_category: 'payout' }),
+      tx({ id: 'b', date: '2026-01-20', amount: -200, schedule_c_category: 'supplies' }),
+      tx({ id: 'c', date: '2026-02-05', amount: 500, schedule_c_category: 'payout' }),
+    ])
+    expect(result).toEqual([
+      { month: '2026-01', income: 1000, expenses: 200 },
+      { month: '2026-02', income: 500, expenses: 0 },
+    ])
+  })
+
+  it('refund in expense category reduces expense bar, does not add to income bar (regression)', () => {
+    const result = computeMonthlyChart([
+      tx({ id: 'a', date: '2026-01-15', amount: -200, schedule_c_category: 'supplies' }),
+      tx({ id: 'b', date: '2026-01-20', amount: 50, schedule_c_category: 'supplies' }),
+    ])
+    expect(result).toEqual([
+      { month: '2026-01', income: 0, expenses: 150 },
+    ])
+  })
+
+  it('sorts months ascending', () => {
+    const result = computeMonthlyChart([
+      tx({ id: 'a', date: '2026-03-10', amount: 100, schedule_c_category: 'payout' }),
+      tx({ id: 'b', date: '2026-01-10', amount: 100, schedule_c_category: 'payout' }),
+      tx({ id: 'c', date: '2026-02-10', amount: 100, schedule_c_category: 'payout' }),
+    ])
+    expect(result.map(r => r.month)).toEqual(['2026-01', '2026-02', '2026-03'])
   })
 })

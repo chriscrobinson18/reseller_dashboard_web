@@ -1,5 +1,6 @@
 import { bucketTransaction } from './categories'
 import type { Transaction } from './types'
+import { monthKey } from './utils'
 
 /** Sum of signed amounts per Schedule C category. Sum is signed (refunds against expenses reduce expense totals). */
 export function computeScheduleC(transactions: Transaction[]): Record<string, number> {
@@ -32,4 +33,30 @@ export function computeKPIs(transactions: Transaction[]): KPITotals {
     expenses: Math.abs(expenseSum),
     net: incomeSum + expenseSum, // expenseSum already negative
   }
+}
+
+export interface MonthlyBar {
+  month: string   // 'yyyy-MM'
+  income: number  // >= 0 display value
+  expenses: number // >= 0 display value
+}
+
+/** Monthly income/expense bar chart data. Refunds against expenses reduce expenses, not income. */
+export function computeMonthlyChart(transactions: Transaction[]): MonthlyBar[] {
+  const months: Record<string, { income: number; expense: number }> = {}
+  for (const t of transactions) {
+    const b = bucketTransaction(t)
+    if (b.bucket === null) continue
+    const key = monthKey(t.date)
+    if (!months[key]) months[key] = { income: 0, expense: 0 }
+    if (b.bucket === 'income') months[key].income += b.signedAmount
+    else months[key].expense += b.signedAmount // negative in normal case
+  }
+  return Object.keys(months)
+    .sort()
+    .map(month => ({
+      month,
+      income: months[month].income,
+      expenses: Math.abs(months[month].expense),
+    }))
 }
