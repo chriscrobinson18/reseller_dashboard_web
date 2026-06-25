@@ -677,8 +677,9 @@ export async function deleteTrade(tradeId: string): Promise<void> {
 
   // 1. Reverse each given-side sale atomically.
   for (const s of givenSales ?? []) {
-    const { error } = await supabase.functions.invoke('reverse_sale', { body: { sale_id: s.id } })
+    const { data, error } = await supabase.functions.invoke('reverse_sale', { body: { sale_id: s.id } })
     if (error) throw error
+    if (data?.error) throw new Error(data.error)
   }
 
   // 2. Hard-delete trade transactions.
