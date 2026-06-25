@@ -568,10 +568,13 @@ export async function recordTrade(params: {
     if (saleData?.error) throw new Error(saleData.error)
     const saleId: string = saleData.sale_id
     if (!saleId) throw new Error('record_sale returned no sale_id')
-    if (saleData.inventory_status !== 'fulfilled') {
+    // record_sale returns inventory_status: 'ok' on success, 'oversold' on
+    // partial. We can't trade items we don't fully own, so we abort on any
+    // partial — the user must cancel and call deleteTrade to roll back.
+    if ((saleData.unfulfilled_quantity ?? 0) > 0) {
       throw new Error(
         `Insufficient stock for given item (${g.itemId}): ` +
-        `${saleData.unfulfilled_quantity ?? '?'} unit(s) could not be fulfilled. ` +
+        `${saleData.unfulfilled_quantity} unit(s) could not be fulfilled. ` +
         `Cancel and call deleteTrade('${tradeId}') to roll back.`
       )
     }
