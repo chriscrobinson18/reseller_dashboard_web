@@ -7,11 +7,11 @@ interface Props {
   onSelect: (item: ItemWithLots) => void
   filter?: (item: ItemWithLots) => boolean
   onCreateNew?: () => void                   // when provided, shows "+ Create new item" button at the top
-  createNewLabel?: string                    // defaults to "+ Create new item"
+  createNewLabel?: string                    // defaults to "Create new item"
 }
 
 /** Searchable inventory item list. Shows units in stock so the user can avoid overselling. */
-export default function ItemPicker({ selectedId, onSelect, filter, onCreateNew, createNewLabel = '+ Create new item' }: Props) {
+export default function ItemPicker({ selectedId, onSelect, filter, onCreateNew, createNewLabel = 'Create new item' }: Props) {
   const { data: items = [], isLoading } = useItems()
   const [search, setSearch] = useState('')
 
@@ -50,7 +50,11 @@ export default function ItemPicker({ selectedId, onSelect, filter, onCreateNew, 
           <div className="p-4 text-center text-xs text-gray-400">Loading…</div>
         ) : filtered.length === 0 ? (
           <div className="p-4 text-center text-xs text-gray-400">
-            {items.length === 0 ? 'No items yet — add one from the Inventory tab.' : 'No matches.'}
+            {items.length === 0
+                ? 'No items yet — add one from the Inventory tab.'
+                : search
+                  ? 'No matches.'
+                  : 'No items match the current filter.'}
           </div>
         ) : (
           filtered.map(item => {
