@@ -13,6 +13,7 @@ import ConfirmDialog from '../components/ConfirmDialog'
 import AddTransactionModal from '../components/modals/AddTransactionModal'
 import TransactionInventorySection from '../components/TransactionInventorySection'
 import { Field, inputCls } from '../components/Modal'
+import TradeDetailSlideOver from '../components/TradeDetailSlideOver'
 import type { Transaction } from '../lib/types'
 
 // ─── Data ────────────────────────────────────────────────────────────────────
@@ -83,7 +84,7 @@ function CategoryDropdown({ txId, current, onClose }: { txId: string; current?: 
 
 // ─── Transaction detail slide-over ───────────────────────────────────────────
 
-function TransactionDetail({ tx, onClose }: { tx: Transaction; onClose: () => void }) {
+function TransactionDetail({ tx, onClose, onOpenTrade }: { tx: Transaction; onClose: () => void; onOpenTrade: (id: string) => void }) {
   const qc = useQueryClient()
   const [notes, setNotes] = useState(tx.notes ?? '')
   const [editingCat, setEditingCat] = useState(false)
@@ -134,19 +135,35 @@ function TransactionDetail({ tx, onClose }: { tx: Transaction; onClose: () => vo
 
   return (
     <div className="space-y-4">
+      {tx.trade_id && (
+        <div className="mb-3 p-2.5 rounded-lg bg-purple-50 border border-purple-200 text-xs text-purple-800">
+          This transaction is part of a trade. Edit or delete it from the trade.
+          <button
+            type="button"
+            onClick={() => { onClose(); onOpenTrade(tx.trade_id!) }}
+            className="ml-2 underline font-medium"
+          >
+            Open trade
+          </button>
+        </div>
+      )}
       {/* Action buttons */}
       <div className="flex gap-2">
         {!isPlaid && (
           <button
             onClick={() => setEditing(!editing)}
-            className="flex-1 flex items-center justify-center gap-1.5 border border-gray-200 rounded-lg py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 transition-colors"
+            disabled={!!tx.trade_id}
+            title={tx.trade_id ? 'Locked — part of a trade' : undefined}
+            className="flex-1 flex items-center justify-center gap-1.5 border border-gray-200 rounded-lg py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
           >
             <Pencil size={13} /> {editing ? 'Cancel Edit' : 'Edit'}
           </button>
         )}
         <button
           onClick={() => setConfirmDelete(true)}
-          className={`${isPlaid ? 'flex-1' : ''} flex items-center justify-center gap-1.5 border border-red-200 text-red-600 rounded-lg py-2 px-3 text-sm font-medium hover:bg-red-50 transition-colors`}
+          disabled={!!tx.trade_id}
+          title={tx.trade_id ? 'Locked — part of a trade' : undefined}
+          className={`${isPlaid ? 'flex-1' : ''} flex items-center justify-center gap-1.5 border border-red-200 text-red-600 rounded-lg py-2 px-3 text-sm font-medium hover:bg-red-50 transition-colors disabled:opacity-40 disabled:cursor-not-allowed`}
         >
           <Trash2 size={13} /> Delete
         </button>
@@ -190,7 +207,8 @@ function TransactionDetail({ tx, onClose }: { tx: Transaction; onClose: () => vo
           </Field>
           <button
             onClick={() => saveMutation.mutate()}
-            disabled={saveMutation.isPending}
+            disabled={saveMutation.isPending || !!tx.trade_id}
+            title={tx.trade_id ? 'Locked — part of a trade' : undefined}
             className="w-full bg-gray-900 text-white rounded-lg py-2 text-sm font-medium hover:bg-gray-700 disabled:opacity-50 transition-colors"
           >
             {saveMutation.isPending ? 'Saving…' : 'Save Changes'}
@@ -324,6 +342,7 @@ export default function ExpensesPage() {
   const [selected, setSelected] = useState<Transaction | null>(null)
   const [ddTxId, setDdTxId] = useState<string | null>(null)
   const [showAddTx, setShowAddTx] = useState(false)
+  const [openTradeId, setOpenTradeId] = useState<string | null>(null)
 
   const range = getPeriodRange(period)
 
@@ -447,8 +466,15 @@ export default function ExpensesPage() {
                     >
                       <td className="px-4 py-2.5 text-xs text-gray-500 whitespace-nowrap">{tx.date}</td>
                       <td className="px-4 py-2.5">
-                        <div className="font-medium text-gray-900 text-sm truncate max-w-xs">
-                          {tx.merchant || <span className="text-gray-400">—</span>}
+                        <div className="flex items-center gap-1.5 font-medium text-gray-900 text-sm">
+                          <span className="truncate max-w-xs">
+                            {tx.merchant || <span className="text-gray-400">—</span>}
+                          </span>
+                          {tx.is_non_cash && (
+                            <span className="inline-block px-1.5 py-0.5 text-[10px] font-medium bg-gray-200 text-gray-700 rounded shrink-0">
+                              non-cash
+                            </span>
+                          )}
                         </div>
                         {tx.notes && (
                           <div className="text-xs text-gray-400 truncate max-w-xs">{tx.notes}</div>
@@ -502,11 +528,13 @@ export default function ExpensesPage() {
             key={selected.id}
             tx={selected}
             onClose={() => setSelected(null)}
+            onOpenTrade={(id) => setOpenTradeId(id)}
           />
         )}
       </SlideOver>
 
       <AddTransactionModal open={showAddTx} onClose={() => setShowAddTx(false)} />
+      <TradeDetailSlideOver tradeId={openTradeId} onClose={() => setOpenTradeId(null)} />
     </div>
   )
 }
