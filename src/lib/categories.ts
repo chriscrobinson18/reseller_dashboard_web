@@ -1,3 +1,43 @@
+import { PALETTE, type ColorKey } from './categoryPalette'
+
+export interface CustomCategory {
+  id: string
+  /** Stored on transactions.schedule_c_category. Format: 'cust_<uuid-no-hyphens>'. */
+  value: string
+  name: string
+  colorKey: ColorKey
+  /** If non-null, inherits scheduleLine/mealsHalf/isExcluded from this built-in CategoryDef.value. */
+  parentValue: string | null
+  /** If non-null, explicit Schedule C line (mutually exclusive with parentValue). */
+  scheduleLine: string | null
+  deletedAt: string | null
+}
+
+/** Construct the on-the-wire value string for a custom category row. */
+export function customCategoryValue(id: string): string {
+  return `cust_${id.replace(/-/g, '')}`
+}
+
+/**
+ * User-facing name for a Schedule C scheduleLine identifier.
+ * `'Line 18'` → `'Office Expense (Line 18)'`. The raw line number alone is
+ * not meaningful to a user choosing where their custom category lands.
+ *
+ * Most lines have exactly one built-in CategoryDef and we reuse its label.
+ * Part I / Part III / Line 27a are special-cased because they group multiple
+ * built-ins (e.g. Line 27a holds both shipping_postage and other_expense).
+ */
+export function describeScheduleLine(line: string): string {
+  const specialLabels: Record<string, string> = {
+    'Part I': 'Income / Gross Receipts',
+    'Part III': 'Cost of Goods Sold',
+    'Line 27a': 'Other Expenses',
+  }
+  if (specialLabels[line]) return `${specialLabels[line]} (${line})`
+  const builtIn = CATEGORIES.find(c => c.scheduleLine === line)
+  return builtIn ? `${builtIn.label} (${line})` : line
+}
+
 export interface CategoryDef {
   value: string
   label: string
@@ -41,9 +81,54 @@ export const CATEGORIES: CategoryDef[] = [
   { value: 'home_office', label: 'Home Office', color: '#059669', bgColor: '#d1fae5', isExcluded: false, scheduleLine: 'Line 30' },
 ]
 
-export function getCategoryDef(value?: string | null): CategoryDef | undefined {
+/**
+ * Resolves a schedule_c_category string to a CategoryDef-shaped record,
+ * checking built-ins first, then customs. Returns undefined for unknown values.
+ *
+ * For custom categories with parent_value set, inherits scheduleLine / mealsHalf /
+ * isExcluded from the parent built-in. Tombstoned customs are still resolved
+ * (label suffixed " (deleted)") so historical transactions render and bucket correctly.
+ *
+ * This is the only category lookup the codebase uses. Pure-built-in render paths
+ * (picker swatch loops, etc.) iterate the CATEGORIES array directly.
+ */
+export function resolveCategory(
+  value: string | null | undefined,
+  customs: CustomCategory[],
+): CategoryDef | undefined {
   if (!value) return undefined
-  return CATEGORIES.find(c => c.value === value)
+
+  const builtIn = CATEGORIES.find(c => c.value === value)
+  if (builtIn) return builtIn
+
+  const custom = customs.find(c => c.value === value)
+  if (!custom) return undefined
+
+  const swatch = PALETTE[custom.colorKey]
+  const labelSuffix = custom.deletedAt ? ' (deleted)' : ''
+
+  if (custom.parentValue) {
+    const parent = CATEGORIES.find(c => c.value === custom.parentValue)
+    if (!parent) return undefined
+    return {
+      value: custom.value,
+      label: custom.name + labelSuffix,
+      color: swatch.color,
+      bgColor: swatch.bgColor,
+      isExcluded: parent.isExcluded,
+      mealsHalf: parent.mealsHalf,
+      scheduleLine: parent.scheduleLine,
+    }
+  }
+
+  return {
+    value: custom.value,
+    label: custom.name + labelSuffix,
+    color: swatch.color,
+    bgColor: swatch.bgColor,
+    isExcluded: false,
+    scheduleLine: custom.scheduleLine ?? undefined,
+  }
 }
 
 import type { Transaction } from './types'
@@ -63,11 +148,10 @@ export interface BucketedAmount {
  * which correctly offsets the negative expense amounts when summed). Callers should sum
  * signedAmount per categoryValue and only abs() at display time.
  *
- * Future work: when custom_categories ships, this function already handles arbitrary
- * categoryValue strings — it's the dashboard display code (CATEGORIES.filter) that
- * needs to become data-driven. See docs/categories.md "Custom categories".
+ * Pass the user's custom categories array so custom-tagged transactions resolve correctly.
+ * Pass [] when no custom categories are available (all existing built-in tests stay valid).
  */
-export function bucketTransaction(t: Transaction): BucketedAmount {
+export function bucketTransaction(t: Transaction, customs: CustomCategory[]): BucketedAmount {
   const none: BucketedAmount = { bucket: null, categoryValue: null, signedAmount: 0 }
 
   if (t.record_type === 'settlement') return none
@@ -76,7 +160,7 @@ export function bucketTransaction(t: Transaction): BucketedAmount {
   if (t.net_zero_pair_id) return none
   if (!t.schedule_c_category) return none
 
-  const cat = getCategoryDef(t.schedule_c_category)
+  const cat = resolveCategory(t.schedule_c_category, customs)
   if (cat?.isExcluded) return none
 
   const mult = cat?.mealsHalf ? 0.5 : 1

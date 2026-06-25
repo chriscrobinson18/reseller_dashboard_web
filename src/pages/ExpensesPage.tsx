@@ -3,7 +3,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { Search, Filter, ChevronDown, Plus, Pencil, Trash2 } from 'lucide-react'
 import { supabase } from '../lib/supabase'
 import { getPeriodRange, type PeriodPreset } from '../lib/periods'
-import { CATEGORIES, getCategoryDef } from '../lib/categories'
+import { resolveCategory } from '../lib/categories'
 import { formatUSD, formatDate } from '../lib/utils'
 import { updateTransaction, deleteTransaction } from '../lib/mutations'
 import PeriodPicker from '../components/PeriodPicker'
@@ -11,10 +11,12 @@ import CategoryBadge from '../components/CategoryBadge'
 import SlideOver from '../components/SlideOver'
 import ConfirmDialog from '../components/ConfirmDialog'
 import AddTransactionModal from '../components/modals/AddTransactionModal'
+import ManageCategoriesModal from '../components/modals/ManageCategoriesModal'
 import TransactionInventorySection from '../components/TransactionInventorySection'
 import { Field, inputCls } from '../components/Modal'
 import TradeDetailSlideOver from '../components/TradeDetailSlideOver'
-import { useTrade } from '../lib/queries'
+import { useTrade, useCustomCategories } from '../lib/queries'
+import CategoryDropdown from '../components/CategoryDropdown'
 import type { Transaction } from '../lib/types'
 
 // ─── Data ────────────────────────────────────────────────────────────────────
@@ -47,45 +49,9 @@ async function updateNotes(id: string, notes: string) {
   if (error) throw error
 }
 
-// ─── Category picker dropdown ─────────────────────────────────────────────────
-
-function CategoryDropdown({ txId, current, onClose }: { txId: string; current?: string | null; onClose: () => void }) {
-  const qc = useQueryClient()
-  const mutation = useMutation({
-    mutationFn: ({ id, cat }: { id: string; cat: string | null }) => updateCategory(id, cat),
-    onSuccess: () => { qc.invalidateQueries({ queryKey: ['transactions'] }); onClose() },
-  })
-
-  return (
-    <div
-      className="fixed z-50 bg-white border border-gray-200 rounded-xl shadow-xl py-1 overflow-y-auto max-h-72 w-56"
-      style={{ top: 'var(--dd-top)', left: 'var(--dd-left)' }}
-      onMouseDown={e => e.preventDefault()}
-    >
-      <div
-        className="px-3 py-1.5 text-xs text-gray-400 hover:bg-gray-50 cursor-pointer"
-        onClick={() => mutation.mutate({ id: txId, cat: null })}
-      >
-        — Clear category
-      </div>
-      {CATEGORIES.map(c => (
-        <div
-          key={c.value}
-          className={`px-3 py-1.5 text-xs cursor-pointer hover:bg-gray-50 flex items-center gap-2 ${current === c.value ? 'bg-gray-50 font-medium' : ''}`}
-          onClick={() => mutation.mutate({ id: txId, cat: c.value })}
-        >
-          <span className="w-2 h-2 rounded-full shrink-0" style={{ backgroundColor: c.color }} />
-          <span className="text-gray-700">{c.label}</span>
-          {c.scheduleLine && <span className="text-gray-400 ml-auto">{c.scheduleLine}</span>}
-        </div>
-      ))}
-    </div>
-  )
-}
-
 // ─── Transaction detail slide-over ───────────────────────────────────────────
 
-function TransactionDetail({ tx, onClose, onOpenTrade }: { tx: Transaction; onClose: () => void; onOpenTrade: (id: string) => void }) {
+function TransactionDetail({ tx, onClose, onOpenTrade, onManage }: { tx: Transaction; onClose: () => void; onOpenTrade: (id: string) => void; onManage: () => void }) {
   const qc = useQueryClient()
   const [notes, setNotes] = useState(tx.notes ?? '')
   const [editingCat, setEditingCat] = useState(false)
@@ -131,7 +97,8 @@ function TransactionDetail({ tx, onClose, onOpenTrade }: { tx: Transaction; onCl
   })
 
   const isExpense = tx.amount < 0
-  const cat = getCategoryDef(tx.schedule_c_category)
+  const { data: customsInDetail = [] } = useCustomCategories()
+  const cat = resolveCategory(tx.schedule_c_category, customsInDetail)
   const isPlaid = tx.source === 'plaid'
   const tradeQ = useTrade(tx.trade_id ?? null)
 
@@ -270,24 +237,12 @@ function TransactionDetail({ tx, onClose, onOpenTrade }: { tx: Transaction; onCl
             {!tx.trade_id && <ChevronDown size={14} className="text-gray-400 ml-auto" />}
           </button>
           {!tx.trade_id && editingCat && (
-            <div className="absolute top-full left-0 right-0 z-10 bg-white border border-gray-200 rounded-xl shadow-xl mt-1 py-1 overflow-y-auto max-h-56">
-              <div
-                className="px-3 py-1.5 text-xs text-gray-400 hover:bg-gray-50 cursor-pointer"
-                onClick={() => { catMutation.mutate(null); setEditingCat(false) }}
-              >
-                — Clear category
-              </div>
-              {CATEGORIES.map(c => (
-                <div
-                  key={c.value}
-                  className="px-3 py-1.5 text-xs cursor-pointer hover:bg-gray-50 flex items-center gap-2"
-                  onClick={() => { catMutation.mutate(c.value); setEditingCat(false) }}
-                >
-                  <span className="w-2 h-2 rounded-full shrink-0" style={{ backgroundColor: c.color }} />
-                  <span className="text-gray-700">{c.label}</span>
-                  {c.scheduleLine && <span className="text-gray-400 ml-auto">{c.scheduleLine}</span>}
-                </div>
-              ))}
+            <div className="absolute top-full left-0 right-0 z-10 mt-1">
+              <CategoryDropdown
+                current={tx.schedule_c_category}
+                onSelect={(v) => { catMutation.mutate(v); setEditingCat(false) }}
+                onManage={() => { setEditingCat(false); onManage() }}
+              />
             </div>
           )}
         </div>
@@ -373,6 +328,16 @@ export default function ExpensesPage() {
   const [ddTxId, setDdTxId] = useState<string | null>(null)
   const [showAddTx, setShowAddTx] = useState(false)
   const [openTradeId, setOpenTradeId] = useState<string | null>(null)
+  const [showManage, setShowManage] = useState(false)
+  const [showCatFilter, setShowCatFilter] = useState(false)
+
+  const qc = useQueryClient()
+  const { data: customsAll = [] } = useCustomCategories()
+
+  const updateCategoryMutation = useMutation({
+    mutationFn: ({ id, cat }: { id: string; cat: string | null }) => updateCategory(id, cat),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['transactions'] }),
+  })
 
   const range = getPeriodRange(period)
 
@@ -440,16 +405,29 @@ export default function ExpensesPage() {
                 className="w-full pl-8 pr-3 py-1.5 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-gray-900"
               />
             </div>
-            <select
-              value={catFilter ?? ''}
-              onChange={e => setCatFilter(e.target.value || null)}
-              className="border border-gray-200 rounded-lg px-2 py-1.5 text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-gray-900 bg-white"
-            >
-              <option value="">All Categories</option>
-              {CATEGORIES.map(c => (
-                <option key={c.value} value={c.value}>{c.label}</option>
-              ))}
-            </select>
+            <div className="relative">
+              <button
+                type="button"
+                onClick={() => setShowCatFilter(s => !s)}
+                className="border border-gray-200 rounded-lg px-2 py-1.5 text-sm text-gray-700 bg-white flex items-center gap-1 min-w-[10rem]"
+              >
+                <span className="truncate">
+                  {catFilter
+                    ? (resolveCategory(catFilter, customsAll)?.label ?? catFilter)
+                    : 'All categories'}
+                </span>
+                <ChevronDown size={12} className="ml-auto text-gray-400 shrink-0" />
+              </button>
+              {showCatFilter && (
+                <div className="absolute right-0 top-full mt-1 z-50">
+                  <CategoryDropdown
+                    current={catFilter}
+                    onSelect={(v) => { setCatFilter(v); setShowCatFilter(false) }}
+                    onManage={() => { setShowCatFilter(false); setShowManage(true) }}
+                  />
+                </div>
+              )}
+            </div>
             <button
               onClick={() => setShowSaleLinked(!showSaleLinked)}
               className={`flex items-center gap-1.5 border rounded-lg px-3 py-1.5 text-xs font-medium transition-colors ${
@@ -519,11 +497,20 @@ export default function ExpensesPage() {
                           onClick={tx.trade_id ? undefined : e => openDropdown(tx.id, e)}
                         />
                         {!tx.trade_id && ddTxId === tx.id && (
-                          <CategoryDropdown
-                            txId={tx.id}
-                            current={tx.schedule_c_category}
-                            onClose={() => setDdTxId(null)}
-                          />
+                          <div
+                            className="fixed z-50"
+                            style={{ top: 'var(--dd-top)', left: 'var(--dd-left)' }}
+                            onMouseDown={e => e.preventDefault()}
+                          >
+                            <CategoryDropdown
+                              current={tx.schedule_c_category}
+                              onSelect={(v) => {
+                                updateCategoryMutation.mutate({ id: tx.id, cat: v })
+                                setDdTxId(null)
+                              }}
+                              onManage={() => { setDdTxId(null); setShowManage(true) }}
+                            />
+                          </div>
                         )}
                       </td>
                       <td className="px-4 py-2.5 text-xs text-gray-500 truncate max-w-[7rem]">
@@ -559,12 +546,14 @@ export default function ExpensesPage() {
             tx={selected}
             onClose={() => setSelected(null)}
             onOpenTrade={(id) => setOpenTradeId(id)}
+            onManage={() => setShowManage(true)}
           />
         )}
       </SlideOver>
 
       <AddTransactionModal open={showAddTx} onClose={() => setShowAddTx(false)} />
       <TradeDetailSlideOver tradeId={openTradeId} onClose={() => setOpenTradeId(null)} />
+      <ManageCategoriesModal open={showManage} onClose={() => setShowManage(false)} />
     </div>
   )
 }

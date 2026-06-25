@@ -1,8 +1,12 @@
 import { useState, type FormEvent } from 'react'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
+import { ChevronDown } from 'lucide-react'
 import Modal, { Field, inputCls, ModalActions } from '../Modal'
 import { insertTransaction, todayStr } from '../../lib/mutations'
-import { CATEGORIES } from '../../lib/categories'
+import { resolveCategory } from '../../lib/categories'
+import { useCustomCategories } from '../../lib/queries'
+import CategoryDropdown from '../CategoryDropdown'
+import ManageCategoriesModal from './ManageCategoriesModal'
 
 export default function AddTransactionModal({ open, onClose }: { open: boolean; onClose: () => void }) {
   const qc = useQueryClient()
@@ -13,6 +17,9 @@ export default function AddTransactionModal({ open, onClose }: { open: boolean; 
   const [category, setCategory] = useState('')
   const [notes, setNotes] = useState('')
   const [error, setError] = useState<string | null>(null)
+  const [catOpen, setCatOpen] = useState(false)
+  const [showManage, setShowManage] = useState(false)
+  const { data: customs = [] } = useCustomCategories()
 
   const mutation = useMutation({
     mutationFn: () => {
@@ -86,14 +93,29 @@ export default function AddTransactionModal({ open, onClose }: { open: boolean; 
           <input value={merchant} onChange={e => setMerchant(e.target.value)} className={inputCls} placeholder="e.g. USPS, Goodwill" />
         </Field>
         <Field label="Schedule C Category">
-          <select value={category} onChange={e => setCategory(e.target.value)} className={inputCls + ' bg-white'}>
-            <option value="">— Uncategorized</option>
-            {CATEGORIES.map(c => (
-              <option key={c.value} value={c.value}>
-                {c.label}{c.scheduleLine ? ` (${c.scheduleLine})` : ''}
-              </option>
-            ))}
-          </select>
+          <div className="relative">
+            <button
+              type="button"
+              onClick={() => setCatOpen(o => !o)}
+              className={inputCls + ' bg-white flex items-center text-left'}
+            >
+              <span className={category ? 'text-gray-900' : 'text-gray-400'}>
+                {category
+                  ? (resolveCategory(category, customs)?.label ?? category)
+                  : '— Uncategorized'}
+              </span>
+              <ChevronDown size={12} className="ml-auto text-gray-400" />
+            </button>
+            {catOpen && (
+              <div className="absolute left-0 right-0 top-full z-20 mt-1">
+                <CategoryDropdown
+                  current={category || null}
+                  onSelect={(v) => { setCategory(v ?? ''); setCatOpen(false) }}
+                  onManage={() => { setCatOpen(false); setShowManage(true) }}
+                />
+              </div>
+            )}
+          </div>
         </Field>
         <Field label="Notes" hint="Optional">
           <textarea value={notes} onChange={e => setNotes(e.target.value)} rows={2} className={inputCls + ' resize-none'} />
@@ -102,6 +124,7 @@ export default function AddTransactionModal({ open, onClose }: { open: boolean; 
         {error && <div className="text-xs text-red-600 bg-red-50 border border-red-200 rounded-lg px-3 py-2">{error}</div>}
         <ModalActions onCancel={() => { reset(); onClose() }} submitLabel="Add Transaction" loading={mutation.isPending} />
       </form>
+      <ManageCategoriesModal open={showManage} onClose={() => setShowManage(false)} />
     </Modal>
   )
 }

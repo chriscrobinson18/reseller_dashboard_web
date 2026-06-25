@@ -1,5 +1,7 @@
 import { supabase } from './supabase'
 import type { Item, InventoryLot } from './types'
+import { CATEGORIES } from './categories'
+import { isColorKey, type ColorKey } from './categoryPalette'
 
 // ─────────────────────────────────────────────────────────────────────────────
 // All write/relational operations, mirroring iOS SupabaseClient.swift.
@@ -720,3 +722,145 @@ export async function deleteTrade(tradeId: string): Promise<void> {
 }
 
 export { todayStr }
+
+// ─── Custom categories ────────────────────────────────────────────────────────
+
+interface CustomCategoryInput {
+  name: string
+  colorKey: ColorKey
+  parentValue: string | null  // exactly one of parentValue / scheduleLine must be non-null
+  scheduleLine: string | null
+}
+
+const ALLOWED_SCHEDULE_LINES: string[] = (() => {
+  const lines = new Set<string>(['Part I', 'Part III'])
+  for (const c of CATEGORIES) {
+    if (c.scheduleLine?.startsWith('Line ') && c.scheduleLine !== 'Line 24b') {
+      lines.add(c.scheduleLine)
+    }
+  }
+  return Array.from(lines)
+})()
+
+function validateCustomCategoryInput(input: Partial<CustomCategoryInput>): void {
+  if (input.name !== undefined) {
+    const trimmed = input.name.trim()
+    if (trimmed.length === 0) throw new Error('Name is required')
+    if (trimmed.length > 40) throw new Error('Name must be 40 characters or fewer')
+  }
+  if (input.colorKey !== undefined && !isColorKey(input.colorKey)) {
+    throw new Error('Invalid color')
+  }
+  if (input.parentValue !== undefined && input.scheduleLine !== undefined) {
+    const hasParent = input.parentValue !== null
+    const hasLine = input.scheduleLine !== null
+    if (hasParent === hasLine) {
+      throw new Error('Pick either a parent category or a Schedule C line, not both')
+    }
+  }
+  if (input.parentValue) {
+    if (!CATEGORIES.find(c => c.value === input.parentValue)) {
+      throw new Error(`Unknown parent category: ${input.parentValue}`)
+    }
+  }
+  if (input.scheduleLine) {
+    if (!ALLOWED_SCHEDULE_LINES.includes(input.scheduleLine)) {
+      throw new Error(`Invalid Schedule C line: ${input.scheduleLine}`)
+    }
+  }
+}
+
+export async function createCustomCategory(input: CustomCategoryInput): Promise<string> {
+  validateCustomCategoryInput(input)
+  const user_id = await getUserId()
+
+  // Soft uniqueness — block creating a second active row with the same name.
+  const { data: existing } = await supabase
+    .from('custom_categories')
+    .select('id')
+    .eq('user_id', user_id)
+    .is('deleted_at', null)
+    .ilike('name', input.name.trim())
+    .limit(1)
+  if (existing && existing.length > 0) {
+    throw new Error(`A category named "${input.name.trim()}" already exists`)
+  }
+
+  const { data, error } = await supabase
+    .from('custom_categories')
+    .insert({
+      user_id,
+      name: input.name.trim(),
+      color_key: input.colorKey,
+      parent_value: input.parentValue,
+      schedule_line: input.scheduleLine,
+    })
+    .select('id')
+    .single()
+  if (error) throw error
+  return data.id as string
+}
+
+export async function updateCustomCategory(
+  id: string,
+  patch: Partial<CustomCategoryInput>,
+): Promise<void> {
+  validateCustomCategoryInput(patch)
+
+  // The DB CHECK enforces parent_value XOR schedule_line. The patch-level XOR
+  // check inside validateCustomCategoryInput only fires when BOTH fields are
+  // present; a one-sided patch (only parentValue, only scheduleLine) would
+  // sneak past and only fail at the DB with an opaque constraint error.
+  // Require callers to send both together (or neither — name/colorKey-only is fine).
+  const touchesParent = patch.parentValue !== undefined
+  const touchesLine = patch.scheduleLine !== undefined
+  if (touchesParent !== touchesLine) {
+    throw new Error(
+      'updateCustomCategory: parentValue and scheduleLine must be patched together (or neither)',
+    )
+  }
+
+  // If patching name, recheck soft-uniqueness against the user's other active rows.
+  if (patch.name !== undefined) {
+    const user_id = await getUserId()
+    const { data: existing } = await supabase
+      .from('custom_categories')
+      .select('id')
+      .eq('user_id', user_id)
+      .is('deleted_at', null)
+      .neq('id', id)
+      .ilike('name', patch.name.trim())
+      .limit(1)
+    if (existing && existing.length > 0) {
+      throw new Error(`A category named "${patch.name.trim()}" already exists`)
+    }
+  }
+
+  const row: Record<string, unknown> = {}
+  if (patch.name !== undefined) row.name = patch.name.trim()
+  if (patch.colorKey !== undefined) row.color_key = patch.colorKey
+  if (patch.parentValue !== undefined) row.parent_value = patch.parentValue
+  if (patch.scheduleLine !== undefined) row.schedule_line = patch.scheduleLine
+
+  const { error } = await supabase.from('custom_categories').update(row).eq('id', id)
+  if (error) throw error
+}
+
+export async function deleteCustomCategory(id: string): Promise<void> {
+  const { error } = await supabase
+    .from('custom_categories')
+    .update({ deleted_at: new Date().toISOString() })
+    .eq('id', id)
+  if (error) throw error
+}
+
+/** Counts transactions referencing the custom category — used by the delete confirmation dialog. */
+export async function countTransactionsUsingCustomCategory(customCategoryId: string): Promise<number> {
+  const value = `cust_${customCategoryId.replace(/-/g, '')}`
+  const { count, error } = await supabase
+    .from('transactions')
+    .select('id', { count: 'exact', head: true })
+    .eq('schedule_c_category', value)
+  if (error) throw error
+  return count ?? 0
+}
