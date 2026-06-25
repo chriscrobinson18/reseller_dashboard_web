@@ -41,7 +41,7 @@ The relational centerpiece — one row per sale event, FIFO-depletes inventory v
 |---|---|
 | `id`, `user_id`, `created_at`, `deleted_at` | soft-deleted |
 | `item_id` | nullable — sales can arrive unlinked (e.g. from CSV import) and get linked later via `linkSaleToItem` |
-| `platform`, `source`, `external_order_id` | `source` values: `'plaid' \| 'manual' \| 'csv_import' \| 'trade'`. Trade-leg sales set `source = 'trade'`. |
+| `platform`, `source`, `external_order_id` | `source` values gated by the `sales_source_check` CHECK constraint (DB-side): `'manual' \| 'amazon' \| 'ebay' \| 'tcgplayer' \| 'csv_import' \| 'trade'`. **Adding a new value requires a migration to extend the constraint** — the TS `Sale.source` union is not authoritative for the DB. Trade-leg sales set `source = 'trade'`. (Note: the TS union also lists `'plaid'`, but the DB constraint does not — pre-existing drift; plaid sales aren't yet written from the web client.) |
 | `quantity`, `sale_price` | `sale_price` is the **gross** unsigned sale amount |
 | `fees`, `shipping_cost` | unsigned magnitudes, stored separately from `sale_price` |
 | `net_payout` | computed client-side as `sale_price - fees - shipping_cost` and written back (see `recordSale`/`updateSale` in mutations.ts) — **not** server-computed |
