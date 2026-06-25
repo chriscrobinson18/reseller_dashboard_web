@@ -26,6 +26,9 @@ export default function TradeDetailSlideOver({ tradeId, onClose }: Props) {
       setConfirmDelete(false)
       onClose()
     },
+    onError: () => {
+      setConfirmDelete(false)
+    },
   })
 
   if (!tradeId) return null
@@ -126,7 +129,8 @@ export default function TradeDetailSlideOver({ tradeId, onClose }: Props) {
         title="Delete trade?"
         message="This reverses the given-side sales (restoring inventory), removes the trade transactions, and soft-deletes the received lots. If any received item has already been sold, deletion will be blocked."
         confirmLabel="Delete trade"
-        onCancel={() => setConfirmDelete(false)}
+        loading={del.isPending}
+        onCancel={() => { setConfirmDelete(false); del.reset() }}
         onConfirm={() => del.mutate()}
       />
     </>
