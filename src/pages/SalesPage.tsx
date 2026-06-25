@@ -13,6 +13,7 @@ import EditSaleModal from '../components/modals/EditSaleModal'
 import LinkSaleToItemModal from '../components/modals/LinkSaleToItemModal'
 import { saleProfit } from '../lib/saleProfit'
 import type { Sale } from '../lib/types'
+import TradeDetailSlideOver from '../components/TradeDetailSlideOver'
 
 async function fetchSales(start: string | null, end: string | null): Promise<Sale[]> {
   let q = supabase
@@ -232,6 +233,7 @@ export default function SalesPage() {
   const [linkSale, setLinkSale] = useState<Sale | null>(null)
   const [editSale, setEditSale] = useState<Sale | null>(null)
   const [deleteSaleTarget, setDeleteSaleTarget] = useState<Sale | null>(null)
+  const [openTradeId, setOpenTradeId] = useState<string | null>(null)
   const qc = useQueryClient()
   const range = getPeriodRange(period)
 
@@ -346,7 +348,18 @@ export default function SalesPage() {
                         </button>
                       )}
                     </td>
-                    <td className="px-4 py-2.5"><PlatformBadge platform={sale.platform} /></td>
+                    <td className="px-4 py-2.5">
+                      {sale.trade_id ? (
+                        <span
+                          className="inline-block px-1.5 py-0.5 text-[10px] font-medium bg-purple-100 text-purple-700 rounded cursor-pointer hover:bg-purple-200"
+                          onClick={(e) => { e.stopPropagation(); setOpenTradeId(sale.trade_id!) }}
+                        >
+                          Trade
+                        </span>
+                      ) : (
+                        <PlatformBadge platform={sale.platform} />
+                      )}
+                    </td>
                     <td className="px-4 py-2.5 text-center text-gray-700">{sale.quantity}</td>
                     <td className="px-4 py-2.5 text-right font-medium tabular-nums text-gray-900">
                       {formatUSD(sale.sale_price)}
@@ -407,6 +420,7 @@ export default function SalesPage() {
         onConfirm={() => deleteSaleTarget && deleteMutation.mutate(deleteSaleTarget.id)}
         onCancel={() => setDeleteSaleTarget(null)}
       />
+      <TradeDetailSlideOver tradeId={openTradeId} onClose={() => setOpenTradeId(null)} />
     </div>
   )
 }
