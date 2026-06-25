@@ -451,6 +451,12 @@ export async function recordTrade(params: {
 
   // Non-cash leg amount = given_fmv − max(cash_received, 0). See spec § Canonical rule.
   const nonCashLegAmount = givenFmv - cashReceived
+  if (nonCashLegAmount <= 0) {
+    throw new Error(
+      'Trade has no non-cash exchange (all consideration is cash). ' +
+      'Use Record Sale for pure cash transactions instead of Record Trade.'
+    )
+  }
 
   // ── 2. Insert trades row (FKs back-filled in step 6) ─────────────────────
   const { data: tradeRow, error: tradeErr } = await supabase
@@ -562,6 +568,13 @@ export async function recordTrade(params: {
     if (saleData?.error) throw new Error(saleData.error)
     const saleId: string = saleData.sale_id
     if (!saleId) throw new Error('record_sale returned no sale_id')
+    if (saleData.inventory_status !== 'fulfilled') {
+      throw new Error(
+        `Insufficient stock for given item (${g.itemId}): ` +
+        `${saleData.unfulfilled_quantity ?? '?'} unit(s) could not be fulfilled. ` +
+        `Cancel and call deleteTrade('${tradeId}') to roll back.`
+      )
+    }
 
     const { error: stampErr } = await supabase
       .from('sales')
