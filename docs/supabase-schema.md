@@ -88,8 +88,22 @@ Barter exchange record — one row per trade event. See [`docs/superpowers/specs
 | `fmv_source_notes` | nullable; IRS defensibility breadcrumb (e.g. "eBay sold comps saved 2026-06-23") |
 | `notes` | nullable free text |
 
+### `custom_categories`
+Per-user, tax-aware Schedule C categories. See [`docs/superpowers/specs/2026-06-25-custom-categories-design.md`](superpowers/specs/2026-06-25-custom-categories-design.md) for the full design.
+
+| column | notes |
+|---|---|
+| `id`, `user_id`, `created_at`, `deleted_at` | soft-deleted; tombstoned rows are still SELECT-able so transactions referencing them resolve correctly |
+| `name` | display label, ≤ 40 chars, soft-uniqueness scoped to the user's active rows (enforced client-side) |
+| `color_key` | references one of 12 swatches in [`src/lib/categoryPalette.ts`](../src/lib/categoryPalette.ts); DB CHECK constrains the value set |
+| `parent_value` | nullable text; when set, points to a built-in `CATEGORIES[].value` (e.g. `'commissions_fees'`). Inherits `scheduleLine`/`mealsHalf`/`isExcluded` from the parent at resolution time. Validated client-side against `CATEGORIES` (no DB CHECK — keeps migrations decoupled from the built-in list) |
+| `schedule_line` | nullable text; mutually exclusive with `parent_value`. Allowed values: `'Part I' \| 'Part III' \| 'Line 8'…'Line 30'` excluding `'Line 24b'` (Line 24b must go via `parent_value = 'meals'` so the 50% deduction is inherited). Validated client-side |
+
+**CHECK:** `(parent_value IS NOT NULL) <> (schedule_line IS NOT NULL)` — exactly one of `parent_value` / `schedule_line` is non-null.
+
+`transactions.schedule_c_category` stores `cust_<uuid-no-hyphens>` for rows tagged with a custom category. No schema change to `transactions`.
+
 ## Tables referenced but not yet built on (per TASKS.md)
-- `custom_categories` (planned — user-defined Schedule C categories, web-only improvement over mobile's UserDefaults approach)
 - `category_rules` (planned — merchant auto-categorization)
 - `inventory_valuations` (planned — Beginning/Ending inventory for Part III, must NOT be period-scoped)
 - `tax_profiles` (planned — Schedule C header fields, home office sqft, vehicle method)

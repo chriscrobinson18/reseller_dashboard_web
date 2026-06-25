@@ -83,17 +83,22 @@ The `is_non_cash` flag exists so a future bank-reconciliation or cash-flow view 
 
 ## Known correctness gaps (see TASKS.md P0/P1 for full detail — don't fix ad-hoc, read that list first)
 
-- Custom categories (planned, stored per-user in Supabase rather than this static array) must flow into the dashboard render layer once they ship — see [Custom categories (planned — P1)](#custom-categories-planned--p1) below. `bucketTransaction` itself is already category-string-agnostic.
 - Negative payout rows (returns) net into Part I gross revenue today because no UI ships refunds via `returns_allowances` yet. Once the P1 return UI lands, the dashboard's Part I render must visually subtract Returns & Allowances from Gross Receipts (1099-K mismatch risk).
 
-## Custom categories (planned — P1)
+## Custom categories (shipped 2026-06-25)
 
-When the `custom_categories` table ships (user_id, name, scheduleLine, mealsHalf, isExcluded), `bucketTransaction` in `src/lib/categories.ts` already handles arbitrary `schedule_c_category` strings — it doesn't depend on `CATEGORIES`. The work is in the **display layer**:
+Stored in the `custom_categories` table (see [`docs/supabase-schema.md`](supabase-schema.md)). Two modes, mutually exclusive (CHECK constraint at the DB):
 
-- `DashboardPage.tsx` Part I / Part II / Part III row builders currently do `CATEGORIES.filter(...)`. They must merge `CATEGORIES` with the user's custom categories at render time (e.g., via a `useCustomCategories()` React Query hook).
-- `bucketTransaction`'s `scheduleLine` check must also pick up custom-category metadata; the cleanest approach is to inject custom categories into a combined `categories: CategoryDef[]` list and have `getCategoryDef` look in both.
+- **`parent_value`** set: the custom is a refinement of a built-in. It inherits `scheduleLine` / `mealsHalf` / `isExcluded` from the parent. E.g. `"Stripe Fees"` with `parent_value = 'commissions_fees'` lands in Line 10.
+- **`schedule_line`** set: the custom maps directly to a Schedule C line (`'Part I' | 'Part III' | 'Line 8'…'Line 30'`, **excluding `'Line 24b'`** — Line 24b requires the 50% meals deduction, which is only inherited via `parent_value = 'meals'`).
 
-P0 item 3 calls this out specifically: if you ship `custom_categories` without updating the Schedule C breakdown render, all custom-categorized transactions silently disappear from the breakdown.
+Resolution lives in [`resolveCategory(value, customs)`](../src/lib/categories.ts) in `src/lib/categories.ts`. All code paths that touch real transaction data (`bucketTransaction`, the Dashboard `partI`/`partII`/`partIII` filter builders, `CategoryBadge`) call `resolveCategory` instead of `getCategoryDef`. `getCategoryDef` is kept for pure-built-in picker swatch loops.
+
+**Soft delete:** deleting a custom sets `deleted_at`. Historical transactions referencing the tombstone keep working — `resolveCategory` still returns the resolved def with `" (deleted)"` appended to the label. Pickers filter `!deletedAt` via `activeCustomCategories()`. Restoring deleted customs from a "Recently deleted" view is a v2 follow-up.
+
+**On-the-wire value:** `transactions.schedule_c_category` stores `cust_<uuid-no-hyphens>` for custom rows. The `cust_` prefix avoids collision with future built-in slugs.
+
+**Management UI:** [`ManageCategoriesModal`](../src/components/modals/ManageCategoriesModal.tsx), reachable via the "⚙ Manage categories…" footer in every category-picker dropdown (Expenses filter, Expenses inline category cell, transaction detail-pane category, AddTransactionModal). No dedicated Settings page.
 
 ## Returns & Allowances (added 2026-06-23)
 
