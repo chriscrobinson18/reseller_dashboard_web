@@ -1,3 +1,23 @@
+import { PALETTE, type ColorKey } from './categoryPalette'
+
+export interface CustomCategory {
+  id: string
+  /** Stored on transactions.schedule_c_category. Format: 'cust_<uuid-no-hyphens>'. */
+  value: string
+  name: string
+  colorKey: ColorKey
+  /** If non-null, inherits scheduleLine/mealsHalf/isExcluded from this built-in CategoryDef.value. */
+  parentValue: string | null
+  /** If non-null, explicit Schedule C line (mutually exclusive with parentValue). */
+  scheduleLine: string | null
+  deletedAt: string | null
+}
+
+/** Construct the on-the-wire value string for a custom category row. */
+export function customCategoryValue(id: string): string {
+  return `cust_${id.replace(/-/g, '')}`
+}
+
 export interface CategoryDef {
   value: string
   label: string
@@ -44,6 +64,57 @@ export const CATEGORIES: CategoryDef[] = [
 export function getCategoryDef(value?: string | null): CategoryDef | undefined {
   if (!value) return undefined
   return CATEGORIES.find(c => c.value === value)
+}
+
+/**
+ * Resolves a schedule_c_category string to a CategoryDef-shaped record,
+ * checking built-ins first, then customs. Returns undefined for unknown values.
+ *
+ * For custom categories with parent_value set, inherits scheduleLine / mealsHalf /
+ * isExcluded from the parent built-in. Tombstoned customs are still resolved
+ * (label suffixed " (deleted)") so historical transactions render and bucket correctly.
+ *
+ * This is the ONLY lookup used by code paths that touch real transaction data
+ * (bucketTransaction, dashboard render, badges). getCategoryDef remains for
+ * pure-built-in render paths (e.g. iterating CATEGORIES for picker swatches).
+ */
+export function resolveCategory(
+  value: string | null | undefined,
+  customs: CustomCategory[],
+): CategoryDef | undefined {
+  if (!value) return undefined
+
+  const builtIn = CATEGORIES.find(c => c.value === value)
+  if (builtIn) return builtIn
+
+  const custom = customs.find(c => c.value === value)
+  if (!custom) return undefined
+
+  const swatch = PALETTE[custom.colorKey]
+  const labelSuffix = custom.deletedAt ? ' (deleted)' : ''
+
+  if (custom.parentValue) {
+    const parent = CATEGORIES.find(c => c.value === custom.parentValue)
+    if (!parent) return undefined
+    return {
+      value: custom.value,
+      label: custom.name + labelSuffix,
+      color: swatch.color,
+      bgColor: swatch.bgColor,
+      isExcluded: parent.isExcluded,
+      mealsHalf: parent.mealsHalf,
+      scheduleLine: parent.scheduleLine,
+    }
+  }
+
+  return {
+    value: custom.value,
+    label: custom.name + labelSuffix,
+    color: swatch.color,
+    bgColor: swatch.bgColor,
+    isExcluded: false,
+    scheduleLine: custom.scheduleLine ?? undefined,
+  }
 }
 
 import type { Transaction } from './types'
