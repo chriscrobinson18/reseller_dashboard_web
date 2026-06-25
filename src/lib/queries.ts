@@ -79,13 +79,14 @@ export function useTrade(id: string | null) {
       if (txRes.error) throw txRes.error
 
       const txs = txRes.data ?? []
+      const typedTrade = trade as Trade
       return {
-        trade: trade as Trade,
-        givenSales: (givenRes.data ?? []) as never,
-        receivedLots: (lotsRes.data ?? []) as never,
-        incomeTransaction: txs.find(t => t.id === (trade as Trade).income_transaction_id) ?? null,
-        cogsTransaction: txs.find(t => t.id === (trade as Trade).cogs_transaction_id) ?? null,
-        cashTransaction: txs.find(t => t.id === (trade as Trade).cash_transaction_id) ?? null,
+        trade: typedTrade,
+        givenSales: (givenRes.data ?? []) as unknown as Array<{ id: string; quantity: number; sale_price: number; items: { id: string; name: string } | null }>,
+        receivedLots: (lotsRes.data ?? []) as unknown as Array<{ id: string; quantity_purchased: number; unit_cost: number; items: { id: string; name: string } | null }>,
+        incomeTransaction: txs.find(t => t.id === typedTrade.income_transaction_id) ?? null,
+        cogsTransaction: txs.find(t => t.id === typedTrade.cogs_transaction_id) ?? null,
+        cashTransaction: txs.find(t => t.id === typedTrade.cash_transaction_id) ?? null,
       }
     },
   })
