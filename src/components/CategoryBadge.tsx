@@ -1,4 +1,5 @@
-import { getCategoryDef } from '../lib/categories'
+import { resolveCategory } from '../lib/categories'
+import { useCustomCategories } from '../lib/queries'
 
 interface Props {
   value?: string | null
@@ -7,7 +8,8 @@ interface Props {
 }
 
 export default function CategoryBadge({ value, onClick, size = 'sm' }: Props) {
-  const def = getCategoryDef(value)
+  const { data: customs = [] } = useCustomCategories()
+  const def = resolveCategory(value, customs)
   const label = def?.label ?? (value ? value : '—')
   const style = def
     ? { color: def.color, backgroundColor: def.bgColor }
