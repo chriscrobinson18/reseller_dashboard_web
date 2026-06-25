@@ -11,6 +11,7 @@ import AddLotModal from '../components/modals/AddLotModal'
 import EditItemModal from '../components/modals/EditItemModal'
 import EditLotModal from '../components/modals/EditLotModal'
 import ConfirmDialog from '../components/ConfirmDialog'
+import TradeDetailSlideOver from '../components/TradeDetailSlideOver'
 
 interface ItemSummary {
   unitsInStock: number
@@ -143,9 +144,6 @@ function LotRows({ lots, onAddLot, onEditLot, onDeleteLot, onTradePillClick }: {
   )
 }
 
-// ─── Trade detail stub (Task 9 will replace with real component) ──────────────
-
-const TradeDetailSlideOver = (_: { tradeId: string | null; onClose: () => void }) => null
 
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
