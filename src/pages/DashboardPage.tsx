@@ -5,7 +5,8 @@ import {
 } from 'recharts'
 import { supabase } from '../lib/supabase'
 import { getPeriodRange, PERIOD_LABELS, type PeriodPreset } from '../lib/periods'
-import { CATEGORIES } from '../lib/categories'
+import { CATEGORIES, resolveCategory, type CustomCategory, type CategoryDef } from '../lib/categories'
+import { useCustomCategories } from '../lib/queries'
 import { computeScheduleC, computeKPIs, computeMonthlyChart } from '../lib/scheduleCMath'
 import { formatUSD } from '../lib/utils'
 import PeriodPicker from '../components/PeriodPicker'
@@ -128,25 +129,38 @@ export default function DashboardPage() {
     queryFn: () => fetchSales(range.start, range.end),
   })
 
-  const kpis = useMemo(() => computeKPIs(transactions, []), [transactions])
+  const { data: customs = [] } = useCustomCategories()
+
+  const kpis = useMemo(() => computeKPIs(transactions, customs), [transactions, customs])
   const profitability = useMemo(() => computeProfitability(sales), [sales])
-  const monthlyData = useMemo(() => computeMonthlyChart(transactions, []), [transactions])
-  const scheduleC = useMemo(() => computeScheduleC(transactions, []), [transactions])
+  const monthlyData = useMemo(() => computeMonthlyChart(transactions, customs), [transactions, customs])
+  const scheduleC = useMemo(() => computeScheduleC(transactions, customs), [transactions, customs])
 
   // Note: scheduleC values are SIGNED. For Part I, positive = income (display as is).
   // For Part II/III (expenses/COGS), values are negative; we display the absolute value
   // and let the section total show as a positive expense magnitude.
-  // TODO(p1-custom-categories): merge CATEGORIES with custom_categories from useCustomCategories()
-  // hook when that ships, so user-defined categories appear here too.
   // TODO(p1-returns): when record_return UI ships, returns_allowances entries below should
   // visually appear as a subtraction from Gross Receipts (Line 1), not silently net into payout.
-  const partI = CATEGORIES.filter(c => c.scheduleLine === 'Part I' && scheduleC[c.value] !== undefined && scheduleC[c.value] !== 0)
+  const allCategories = useMemo<CategoryDef[]>(() => {
+    const customsResolved = customs
+      .map((c: CustomCategory) => resolveCategory(c.value, customs))
+      .filter((c): c is CategoryDef => !!c)
+    return [...CATEGORIES, ...customsResolved]
+  }, [customs])
+
+  const partI = allCategories
+    .filter(c => c.scheduleLine === 'Part I'
+      && scheduleC[c.value] !== undefined && scheduleC[c.value] !== 0)
     .map(c => ({ label: c.label, value: scheduleC[c.value] ?? 0 }))
 
-  const partIII = CATEGORIES.filter(c => c.scheduleLine === 'Part III' && scheduleC[c.value] !== undefined && scheduleC[c.value] !== 0)
+  const partIII = allCategories
+    .filter(c => c.scheduleLine === 'Part III'
+      && scheduleC[c.value] !== undefined && scheduleC[c.value] !== 0)
     .map(c => ({ label: c.label, value: Math.abs(scheduleC[c.value] ?? 0) }))
 
-  const partII = CATEGORIES.filter(c => c.scheduleLine && c.scheduleLine.startsWith('Line') && scheduleC[c.value] !== undefined && scheduleC[c.value] !== 0)
+  const partII = allCategories
+    .filter(c => c.scheduleLine?.startsWith('Line')
+      && scheduleC[c.value] !== undefined && scheduleC[c.value] !== 0)
     .map(c => ({ label: c.label, value: Math.abs(scheduleC[c.value] ?? 0), line: c.scheduleLine }))
 
   const uncategorized = transactions.filter(t =>
