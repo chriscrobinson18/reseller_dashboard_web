@@ -4,7 +4,8 @@ import { Plus, Pencil, Trash2 } from 'lucide-react'
 import Modal, { Field, inputCls, ModalActions } from '../Modal'
 import ConfirmDialog from '../ConfirmDialog'
 import CategoryBadge from '../CategoryBadge'
-import { CATEGORIES, type CustomCategory } from '../../lib/categories'
+import InfoPopover from '../InfoPopover'
+import { CATEGORIES, describeScheduleLine, type CustomCategory } from '../../lib/categories'
 import { PALETTE, PALETTE_KEYS, type ColorKey } from '../../lib/categoryPalette'
 import { useCustomCategories } from '../../lib/queries'
 import {
@@ -50,6 +51,11 @@ export default function ManageCategoriesModal({ open, onClose }: { open: boolean
   return (
     <Modal open={open} onClose={close} title="Manage categories">
       <div className="space-y-4">
+        <div className="flex justify-end -mt-2 mb-2">
+          <InfoPopover label="How custom categories work" width="w-[360px]">
+            <HelpContent />
+          </InfoPopover>
+        </div>
         {mode === 'list' && (
           <>
             <button
@@ -292,7 +298,9 @@ function CategoryForm({
                     onChange={e => setScheduleLine(e.target.value)}
                     className={inputCls + ' bg-white mt-1'}
                   >
-                    {SCHEDULE_LINES.map(l => <option key={l} value={l}>{l}</option>)}
+                    {SCHEDULE_LINES.map(l => (
+                      <option key={l} value={l}>{describeScheduleLine(l)}</option>
+                    ))}
                   </select>
                   {showPartIIIWarning && (
                     <div className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded px-2 py-1.5 mt-1">
@@ -352,5 +360,60 @@ function CategoryForm({
         onCancel={() => setConfirmDelete(false)}
       />
     </form>
+  )
+}
+
+function HelpContent() {
+  return (
+    <div className="space-y-3 leading-relaxed">
+      <div>
+        <h3 className="text-sm font-semibold text-gray-900 mb-1">Custom Schedule C categories</h3>
+        <p>
+          Add your own labels for transactions when the built-in list doesn't fit. Every custom
+          category still rolls up to a real Schedule C line, so totals stay tax-correct.
+        </p>
+      </div>
+
+      <div>
+        <p>
+          <strong>Refine an existing category</strong> — pick a built-in (e.g. <em>Commissions &amp;
+          Fees</em>) and your custom acts as a sub-label of it. Inherits the line, the
+          50% meals deduction if applicable, and the "non-business" flag for Transfer / Personal etc.
+        </p>
+        <p className="mt-1 text-gray-500">
+          Use this when you want finer reporting under an existing bucket — e.g. "Stripe Fees"
+          under Commissions &amp; Fees.
+        </p>
+      </div>
+
+      <div>
+        <p>
+          <strong>Map to a Schedule C line directly</strong> — pick a line by its IRS form name
+          (e.g. <em>Utilities (Line 25)</em>) and your custom becomes a fresh entry under it.
+        </p>
+        <p className="mt-1 text-gray-500">
+          Use this when nothing in the built-in list is close enough — e.g. a recurring
+          "Reseller Subscription" you want to track under Utilities.
+        </p>
+      </div>
+
+      <div>
+        <h3 className="text-sm font-semibold text-gray-900 mb-1">A few notes</h3>
+        <ul className="list-disc pl-4 space-y-1">
+          <li>
+            Deleting a custom hides it from pickers but historical transactions keep showing
+            the tag with "(deleted)" and still count toward the right Schedule C line.
+          </li>
+          <li>
+            Line 24b (Meals, 50% deductible) isn't in the explicit-line picker — use
+            <em> Refine an existing</em> with parent <em>Meals (50%)</em> so the half-deduction
+            is inherited automatically.
+          </li>
+          <li>
+            Names must be unique among your active categories. Up to 40 characters.
+          </li>
+        </ul>
+      </div>
+    </div>
   )
 }

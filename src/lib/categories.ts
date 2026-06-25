@@ -18,6 +18,26 @@ export function customCategoryValue(id: string): string {
   return `cust_${id.replace(/-/g, '')}`
 }
 
+/**
+ * User-facing name for a Schedule C scheduleLine identifier.
+ * `'Line 18'` → `'Office Expense (Line 18)'`. The raw line number alone is
+ * not meaningful to a user choosing where their custom category lands.
+ *
+ * Most lines have exactly one built-in CategoryDef and we reuse its label.
+ * Part I / Part III / Line 27a are special-cased because they group multiple
+ * built-ins (e.g. Line 27a holds both shipping_postage and other_expense).
+ */
+export function describeScheduleLine(line: string): string {
+  const specialLabels: Record<string, string> = {
+    'Part I': 'Income / Gross Receipts',
+    'Part III': 'Cost of Goods Sold',
+    'Line 27a': 'Other Expenses',
+  }
+  if (specialLabels[line]) return `${specialLabels[line]} (${line})`
+  const builtIn = CATEGORIES.find(c => c.scheduleLine === line)
+  return builtIn ? `${builtIn.label} (${line})` : line
+}
+
 export interface CategoryDef {
   value: string
   label: string
