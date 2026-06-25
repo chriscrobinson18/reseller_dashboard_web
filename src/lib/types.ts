@@ -92,3 +92,32 @@ export interface Trade {
   fmv_source_notes?: string
   notes?: string
 }
+
+export interface PlaidItem {
+  id: string
+  user_id: string | null
+  item_id: string
+  access_token: string
+  institution_name: string | null
+  institution_id: string | null
+  last_synced_at: string | null
+  cursor: string | null
+  transactions_cursor: string | null
+  created_at: string | null
+  /** Added by the plaid_item_status migration. Treat absent column as 'active'. */
+  status?: 'active' | 'login_required' | 'error'
+  error_message?: string | null
+}
+
+export interface PlaidAccount {
+  id: string
+  user_id: string | null
+  item_id: string
+  account_id: string
+  name: string | null
+  mask: string | null
+  subtype: string | null
+  display_name: string | null
+  sync_enabled: boolean
+  created_at: string | null
+}
