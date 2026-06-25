@@ -1,8 +1,17 @@
 # Custom Schedule C Categories
 
-**Status:** Draft — awaiting user review
+**Status:** Shipped 2026-06-25 (merge commit `c246ee9`)
 **Date:** 2026-06-25
 **Author:** Brainstormed with Claude
+
+## Post-merge additions (commit `76c9982`)
+
+Two UX refinements landed after the initial merge and are now part of the shipped feature:
+
+- **In-modal `InfoPopover` on ManageCategoriesModal** — matches the trades modal pattern. The `(i)` icon in the header opens a panel that explains the two mapping modes, the soft-delete tombstone behavior, the Line 24b workaround, and the name-uniqueness rule. Implementation: `<InfoPopover>` wrapping a local `HelpContent` component.
+- **Friendly Schedule C line labels** in the explicit-line picker. The raw line identifiers (`'Line 18'`, `'Part I'`, etc.) are mapped to user-meaningful names (`'Office Expense (Line 18)'`, `'Income / Gross Receipts (Part I)'`, `'Other Expenses (Line 27a)'`) via a new `describeScheduleLine(line)` helper exported from [`src/lib/categories.ts`](../../../src/lib/categories.ts). Most labels are derived from the first matching `CATEGORIES[].label`; three lines that aggregate multiple built-ins (Part I, Part III, Line 27a) are hardcoded.
+
+The data model, mutation layer, and resolution logic below are unchanged. Update this section if either piece is touched again.
 
 ## Background
 

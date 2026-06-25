@@ -98,7 +98,9 @@ Resolution lives in [`resolveCategory(value, customs)`](../src/lib/categories.ts
 
 **On-the-wire value:** `transactions.schedule_c_category` stores `cust_<uuid-no-hyphens>` for custom rows. The `cust_` prefix avoids collision with future built-in slugs.
 
-**Management UI:** [`ManageCategoriesModal`](../src/components/modals/ManageCategoriesModal.tsx), reachable via the "⚙ Manage categories…" footer in every category-picker dropdown (Expenses filter, Expenses inline category cell, transaction detail-pane category, AddTransactionModal). No dedicated Settings page.
+**Management UI:** [`ManageCategoriesModal`](../src/components/modals/ManageCategoriesModal.tsx), reachable via the "⚙ Manage categories…" footer in every category-picker dropdown (Expenses filter, Expenses inline category cell, transaction detail-pane category, AddTransactionModal). No dedicated Settings page. The modal carries an in-header `InfoPopover` (`(i)` icon) that explains the two mapping modes, tombstone behavior, and the Line 24b workaround — matches the trades modal help pattern.
+
+**Friendly Schedule C line labels:** raw line identifiers (`'Line 18'`, `'Part I'`, etc.) aren't meaningful to a user picking a destination. `describeScheduleLine(line)` in [`src/lib/categories.ts`](../src/lib/categories.ts) maps each to a user-facing name (e.g. `'Office Expense (Line 18)'`, `'Income / Gross Receipts (Part I)'`, `'Other Expenses (Line 27a)'`). Most names are derived from the first matching `CATEGORIES[].label`; three lines that aggregate multiple built-ins (Part I, Part III, Line 27a) are special-cased so they read like the IRS form rather than the first-found category. Used by the explicit-line `<select>` in `ManageCategoriesModal` today; reuse here when other surfaces need friendly line labels.
 
 ## Returns & Allowances (added 2026-06-23)
 

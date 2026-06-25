@@ -20,6 +20,13 @@ Every category picker on this page (top-of-page filter, inline category cell, de
 
 The same dropdown is also used by [`AddTransactionModal`](../../src/components/modals/AddTransactionModal.tsx). Deleted custom categories don't appear in pickers but historical transactions tagged with them still render as `"Name (deleted)"` and continue to roll up to their resolved `scheduleLine` in the Dashboard Schedule C breakdown — see [`docs/categories.md`](../categories.md#custom-categories-shipped-2026-06-25).
 
+### Manage Categories modal
+
+[`ManageCategoriesModal`](../../src/components/modals/ManageCategoriesModal.tsx) (opened via the dropdown's "Manage categories…" footer) is the single CRUD surface for custom categories. Two things worth noting:
+
+- **In-modal help.** An `InfoPopover` in the modal header explains the two mapping modes (`Refine an existing category` vs. `Map to a Schedule C line directly`), tombstone behavior, and why Line 24b is excluded from the explicit-line picker. Pattern matches the trades modal.
+- **Friendly line labels in the explicit-line picker.** The `<select>` shows `"Office Expense (Line 18)"`, `"Utilities (Line 25)"`, `"Income / Gross Receipts (Part I)"`, etc. — never raw `"Line 18"` / `"Part I"`. Labels come from `describeScheduleLine()` in `src/lib/categories.ts`. If you add another category-picker surface that exposes Schedule C line choices, route it through the same helper so the language stays consistent.
+
 ## Detail panel (`TransactionDetail`, inside a `SlideOver`)
 
 - **Plaid-sourced transactions** (`source === 'plaid'`) are read-only except category and notes — no Edit button, edit-mode amount/date/merchant fields don't render. Delete still works (removes the row).
