@@ -1,6 +1,9 @@
 import { useQuery } from '@tanstack/react-query'
 import { supabase } from './supabase'
 import type { Item, InventoryLot, Trade } from './types'
+import type { CustomCategory } from './categories'
+import { customCategoryValue } from './categories'
+import type { ColorKey } from './categoryPalette'
 
 export interface ItemWithLots extends Item {
   inventory_lots: InventoryLot[]
@@ -91,4 +94,36 @@ export function useTrade(id: string | null) {
       }
     },
   })
+}
+
+/**
+ * Fetches the user's custom Schedule C categories, including tombstoned rows.
+ * Resolution helpers (resolveCategory) need tombstoned rows to render historical
+ * transactions; pickers should filter via activeCustomCategories(customs).
+ */
+export function useCustomCategories() {
+  return useQuery({
+    queryKey: ['custom_categories'],
+    queryFn: async (): Promise<CustomCategory[]> => {
+      const { data, error } = await supabase
+        .from('custom_categories')
+        .select('id, name, color_key, parent_value, schedule_line, deleted_at')
+        .order('name')
+      if (error) throw error
+      return (data ?? []).map(r => ({
+        id: r.id,
+        value: customCategoryValue(r.id),
+        name: r.name,
+        colorKey: r.color_key as ColorKey,
+        parentValue: r.parent_value,
+        scheduleLine: r.schedule_line,
+        deletedAt: r.deleted_at,
+      }))
+    },
+  })
+}
+
+/** Active (non-tombstoned) custom categories for picker UIs. */
+export function activeCustomCategories(customs: CustomCategory[]): CustomCategory[] {
+  return customs.filter(c => !c.deletedAt)
 }
