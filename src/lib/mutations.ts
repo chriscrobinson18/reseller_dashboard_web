@@ -391,4 +391,230 @@ export async function deleteSale(id: string) {
   if (data?.error) throw new Error(data.error)
 }
 
+/**
+ * Records a barter trade: creates a trades row, posts two non-cash transactions
+ * (income + COGS, always equal and washing), optionally posts one cash boot
+ * transaction, invokes record_sale per given line (FIFO depletes), and creates
+ * new inventory_lots per received line with allocated FMV as unit_cost.
+ *
+ * Non-atomic in v1 — partial failure leaves partial state. On error the caller
+ * should pass the returned tradeId (if any) to deleteTrade to roll back.
+ *
+ * See docs/superpowers/specs/2026-06-23-trades-design.md for the accounting model.
+ */
+export async function recordTrade(params: {
+  tradedAt: string                              // 'yyyy-MM-dd'
+  counterparty?: string | null
+  notes?: string | null
+  fmvSourceNotes?: string | null
+  cashBoot: number                              // signed; + you received, − you paid, 0 pure swap
+  given: Array<{
+    itemId: string
+    quantity: number
+    fmv: number                                 // per-unit
+    platform?: string | null
+  }>
+  received: Array<{
+    itemId?: string | null                      // null => create new item
+    newItemName?: string | null
+    newItemCategory?: string | null
+    quantity: number
+    fmv: number                                 // per-unit (becomes lot.unit_cost)
+  }>
+}): Promise<{
+  tradeId: string
+  saleIds: string[]
+  lotIds: string[]
+  incomeTransactionId: string
+  cogsTransactionId: string
+  cashTransactionId: string | null
+}> {
+  const user_id = await getUserId()
+
+  // ── 1. Validate ──────────────────────────────────────────────────────────
+  if (params.given.length === 0) throw new Error('Trade must include at least one item given')
+  if (params.received.length === 0) throw new Error('Trade must include at least one item received')
+
+  const givenFmv = params.given.reduce((s, l) => s + l.fmv * l.quantity, 0)
+  const receivedFmv = params.received.reduce((s, l) => s + l.fmv * l.quantity, 0)
+  const cashPaid = Math.max(-params.cashBoot, 0)
+  const cashReceived = Math.max(params.cashBoot, 0)
+  if (Math.abs((givenFmv + cashPaid) - (receivedFmv + cashReceived)) > 0.01) {
+    throw new Error(
+      `Trade is unbalanced: given $${givenFmv.toFixed(2)} + cash paid $${cashPaid.toFixed(2)} ` +
+      `≠ received $${receivedFmv.toFixed(2)} + cash received $${cashReceived.toFixed(2)}`
+    )
+  }
+  for (const r of params.received) {
+    if (!r.itemId && !r.newItemName) throw new Error('Each received line needs an itemId or a newItemName')
+  }
+
+  // Non-cash leg amount = given_fmv − max(cash_received, 0). See spec § Canonical rule.
+  const nonCashLegAmount = givenFmv - cashReceived
+
+  // ── 2. Insert trades row (FKs back-filled in step 6) ─────────────────────
+  const { data: tradeRow, error: tradeErr } = await supabase
+    .from('trades')
+    .insert({
+      user_id,
+      traded_at: params.tradedAt,
+      counterparty: params.counterparty ?? null,
+      given_fmv: givenFmv,
+      received_fmv: receivedFmv,
+      cash_boot: params.cashBoot,
+      fmv_source_notes: params.fmvSourceNotes ?? null,
+      notes: params.notes ?? null,
+    })
+    .select()
+    .single()
+  if (tradeErr || !tradeRow) throw tradeErr ?? new Error('Failed to create trade row')
+  const tradeId: string = tradeRow.id
+
+  const merchant = params.counterparty?.trim() || 'Trade'
+
+  // ── 3 & 4. Non-cash income + COGS transactions ──────────────────────────
+  const { data: txRows, error: txErr } = await supabase
+    .from('transactions')
+    .insert([
+      {
+        user_id,
+        date: params.tradedAt,
+        amount: nonCashLegAmount,
+        merchant,
+        type: 'other',
+        source: 'manual',
+        record_type: 'transaction',
+        schedule_c_category: 'payout',
+        is_non_cash: true,
+        trade_id: tradeId,
+        notes: 'Trade — non-cash income leg',
+      },
+      {
+        user_id,
+        date: params.tradedAt,
+        amount: -nonCashLegAmount,
+        merchant,
+        type: 'other',
+        source: 'manual',
+        record_type: 'transaction',
+        schedule_c_category: 'cost_of_goods',
+        is_non_cash: true,
+        trade_id: tradeId,
+        notes: 'Trade — non-cash COGS leg',
+      },
+    ])
+    .select()
+  if (txErr || !txRows || txRows.length !== 2) throw txErr ?? new Error('Failed to create non-cash trade transactions')
+  const incomeTx = txRows.find(r => r.amount > 0)!
+  const cogsTx = txRows.find(r => r.amount < 0)!
+
+  // ── 5. Cash boot transaction (if any) ───────────────────────────────────
+  let cashTransactionId: string | null = null
+  if (params.cashBoot !== 0) {
+    const { data: cashRow, error: cashErr } = await supabase
+      .from('transactions')
+      .insert({
+        user_id,
+        date: params.tradedAt,
+        amount: params.cashBoot,
+        merchant,
+        type: params.cashBoot > 0 ? 'other' : 'expense',
+        source: 'manual',
+        record_type: 'transaction',
+        schedule_c_category: params.cashBoot > 0 ? 'payout' : 'cost_of_goods',
+        is_non_cash: false,
+        trade_id: tradeId,
+        notes: 'Trade — cash boot',
+      })
+      .select()
+      .single()
+    if (cashErr || !cashRow) throw cashErr ?? new Error('Failed to create cash boot transaction')
+    cashTransactionId = cashRow.id
+  }
+
+  // ── 6. Back-fill transaction FKs on the trades row ──────────────────────
+  const { error: updTradeErr } = await supabase
+    .from('trades')
+    .update({
+      income_transaction_id: incomeTx.id,
+      cogs_transaction_id: cogsTx.id,
+      cash_transaction_id: cashTransactionId,
+    })
+    .eq('id', tradeId)
+  if (updTradeErr) throw updTradeErr
+
+  // ── 7. Given-side sales (via record_sale; skip createSaleTransactions) ──
+  const saleIds: string[] = []
+  for (const g of params.given) {
+    const soldAtIso = new Date(params.tradedAt + 'T12:00:00').toISOString()
+    const { data: saleData, error: saleErr } = await supabase.functions.invoke('record_sale', {
+      body: {
+        item_id: g.itemId,
+        quantity: g.quantity,
+        sale_price: String(g.fmv * g.quantity),       // line total to match recordSale convention
+        platform: g.platform ?? 'trade',
+        sold_at: soldAtIso,
+        source: 'trade',
+        external_order_id: null,
+      },
+    })
+    if (saleErr) throw saleErr
+    if (saleData?.error) throw new Error(saleData.error)
+    const saleId: string = saleData.sale_id
+    if (!saleId) throw new Error('record_sale returned no sale_id')
+
+    const { error: stampErr } = await supabase
+      .from('sales')
+      .update({
+        trade_id: tradeId,
+        fees: 0,
+        shipping_cost: null,
+        net_payout: g.fmv * g.quantity,
+      })
+      .eq('id', saleId)
+    if (stampErr) throw stampErr
+
+    saleIds.push(saleId)
+  }
+
+  // ── 8. Received-side lots ───────────────────────────────────────────────
+  const lotIds: string[] = []
+  for (const r of params.received) {
+    let itemId = r.itemId
+    if (!itemId) {
+      const { data: newItem, error: newItemErr } = await supabase
+        .from('items')
+        .insert({ user_id, name: r.newItemName!, category: r.newItemCategory ?? null })
+        .select()
+        .single()
+      if (newItemErr || !newItem) throw newItemErr ?? new Error('Failed to create item')
+      itemId = newItem.id
+    }
+    const { data: lotRow, error: lotErr } = await supabase
+      .from('inventory_lots')
+      .insert({
+        user_id,
+        item_id: itemId,
+        transaction_id: cogsTx.id,
+        trade_id: tradeId,
+        quantity_purchased: r.quantity,
+        quantity_remaining: r.quantity,
+        unit_cost: r.fmv,
+      })
+      .select()
+      .single()
+    if (lotErr || !lotRow) throw lotErr ?? new Error('Failed to create received lot')
+    lotIds.push(lotRow.id)
+  }
+
+  return {
+    tradeId,
+    saleIds,
+    lotIds,
+    incomeTransactionId: incomeTx.id,
+    cogsTransactionId: cogsTx.id,
+    cashTransactionId,
+  }
+}
+
 export { todayStr }
