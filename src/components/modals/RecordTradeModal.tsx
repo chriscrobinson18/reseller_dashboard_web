@@ -26,6 +26,12 @@ interface ReceivedLine {
 const emptyGiven = (): GivenLine => ({ itemId: null, itemName: null, quantity: 1, fmv: 0 })
 const emptyReceived = (): ReceivedLine => ({ itemId: null, itemName: null, isNew: false, newItemCategory: null, quantity: 1, fmv: 0 })
 
+// Fix 1: guard against NaN from partial numeric input (e.g. "-" or ".")
+const safeNum = (v: string): number => {
+  const n = parseFloat(v)
+  return isNaN(n) ? 0 : n
+}
+
 interface Props {
   open: boolean
   onClose: () => void
@@ -97,9 +103,30 @@ export default function RecordTradeModal({ open, onClose }: Props) {
       qc.invalidateQueries({ queryKey: ['sales'] })
       qc.invalidateQueries({ queryKey: ['transactions'] })
       qc.invalidateQueries({ queryKey: ['trade'] })
+      reset()
       onClose()
     },
   })
+
+  // Fix 2: reset all state on close so reopening the modal starts fresh
+  const reset = () => {
+    setTradedAt(todayStr())
+    setCounterparty('')
+    setFmvSourceNotes('')
+    setNotes('')
+    setGiven([emptyGiven()])
+    setReceived([emptyReceived()])
+    setBootOpen(false)
+    setBootDirection('paid')
+    setBootAmount(0)
+    setPickerOpenIdx(null)
+    m.reset()
+  }
+
+  const handleClose = () => {
+    reset()
+    onClose()
+  }
 
   const submit = (e: FormEvent) => {
     e.preventDefault()
@@ -113,7 +140,7 @@ export default function RecordTradeModal({ open, onClose }: Props) {
     setReceived(prev => prev.map((r, idx) => idx === i ? { ...r, ...patch } : r))
 
   return (
-    <Modal open={open} onClose={onClose} title="Record Trade" width="max-w-2xl">
+    <Modal open={open} onClose={handleClose} title="Record Trade" width="max-w-2xl">
       <form onSubmit={submit}>
         <div className="grid grid-cols-2 gap-3">
           <Field label="Trade date">
@@ -140,12 +167,15 @@ export default function RecordTradeModal({ open, onClose }: Props) {
             <div key={i} className="border border-gray-200 rounded-lg p-3">
               <div className="grid grid-cols-[1fr_70px_90px_28px] gap-2 items-start">
                 <div>
-                  <button type="button" onClick={() => setPickerOpenIdx({ side: 'given', idx: i })} className={`${inputCls} text-left`}>
+                  {/* Fix 4: aria-label on given-side picker trigger */}
+                  <button type="button" onClick={() => setPickerOpenIdx({ side: 'given', idx: i })} className={`${inputCls} text-left`} aria-label="Select item to give">
                     {g.itemName ?? <span className="text-gray-400">Pick item with stock…</span>}
                   </button>
                 </div>
-                <input type="number" min="1" step="1" value={g.quantity} onChange={e => updateGiven(i, { quantity: Number(e.target.value) })} className={inputCls} title="Quantity" />
-                <input type="number" min="0" step="0.01" value={g.fmv} onChange={e => updateGiven(i, { fmv: Number(e.target.value) })} className={inputCls} title="FMV per unit" placeholder="$/unit" />
+                {/* Fix 1: safeNum for given quantity */}
+                <input type="number" min="1" step="1" value={g.quantity} onChange={e => updateGiven(i, { quantity: safeNum(e.target.value) })} className={inputCls} title="Quantity" />
+                {/* Fix 1: safeNum for given fmv */}
+                <input type="number" min="0" step="0.01" value={g.fmv} onChange={e => updateGiven(i, { fmv: safeNum(e.target.value) })} className={inputCls} title="FMV per unit" placeholder="$/unit" />
                 <button type="button" onClick={() => setGiven(prev => prev.filter((_, idx) => idx !== i))} className="text-gray-400 hover:text-red-500 p-1.5" disabled={given.length === 1}>
                   <Trash2 size={14} />
                 </button>
@@ -181,12 +211,32 @@ export default function RecordTradeModal({ open, onClose }: Props) {
             <div key={i} className="border border-gray-200 rounded-lg p-3">
               <div className="grid grid-cols-[1fr_70px_90px_28px] gap-2 items-start">
                 <div>
-                  <button type="button" onClick={() => setPickerOpenIdx({ side: 'received', idx: i })} className={`${inputCls} text-left`}>
-                    {r.itemName ?? <span className="text-gray-400">Pick or create item…</span>}
-                  </button>
+                  {/* Fix 3: inline input when isNew, otherwise picker trigger */}
+                  {r.isNew ? (
+                    <input
+                      type="text"
+                      value={r.itemName ?? ''}
+                      onChange={e => updateReceived(i, { itemName: e.target.value })}
+                      placeholder="New item name"
+                      autoFocus
+                      className={inputCls}
+                      aria-label="New received item name"
+                    />
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={() => setPickerOpenIdx({ side: 'received', idx: i })}
+                      className={`${inputCls} text-left`}
+                      aria-label="Select item to receive"
+                    >
+                      {r.itemName ?? <span className="text-gray-400">Pick or create item…</span>}
+                    </button>
+                  )}
                 </div>
-                <input type="number" min="1" step="1" value={r.quantity} onChange={e => updateReceived(i, { quantity: Number(e.target.value) })} className={inputCls} title="Quantity" />
-                <input type="number" min="0" step="0.01" value={r.fmv} onChange={e => updateReceived(i, { fmv: Number(e.target.value) })} className={inputCls} title="FMV per unit" placeholder="$/unit" />
+                {/* Fix 1: safeNum for received quantity */}
+                <input type="number" min="1" step="1" value={r.quantity} onChange={e => updateReceived(i, { quantity: safeNum(e.target.value) })} className={inputCls} title="Quantity" />
+                {/* Fix 1: safeNum for received fmv */}
+                <input type="number" min="0" step="0.01" value={r.fmv} onChange={e => updateReceived(i, { fmv: safeNum(e.target.value) })} className={inputCls} title="FMV per unit" placeholder="$/unit" />
                 <button type="button" onClick={() => setReceived(prev => prev.filter((_, idx) => idx !== i))} className="text-gray-400 hover:text-red-500 p-1.5" disabled={received.length === 1}>
                   <Trash2 size={14} />
                 </button>
@@ -202,9 +252,8 @@ export default function RecordTradeModal({ open, onClose }: Props) {
                       setPickerOpenIdx(null)
                     }}
                     onCreateNew={() => {
-                      const name = window.prompt('New item name')
-                      if (!name) return
-                      updateReceived(i, { itemId: null, itemName: name, isNew: true })
+                      // Fix 3: no window.prompt — set isNew and let user type inline
+                      updateReceived(i, { itemId: null, itemName: '', isNew: true })
                       setPickerOpenIdx(null)
                     }}
                   />
@@ -232,7 +281,8 @@ export default function RecordTradeModal({ open, onClose }: Props) {
                 </div>
               </Field>
               <Field label="Amount ($)">
-                <input type="number" min="0" step="0.01" value={bootAmount} onChange={e => setBootAmount(Number(e.target.value))} className={inputCls} />
+                {/* Fix 1: safeNum for boot amount */}
+                <input type="number" min="0" step="0.01" value={bootAmount} onChange={e => setBootAmount(safeNum(e.target.value))} className={inputCls} />
               </Field>
             </div>
           )}
@@ -247,7 +297,7 @@ export default function RecordTradeModal({ open, onClose }: Props) {
         {m.isError && <div className="mt-2 text-xs text-red-600">{(m.error as Error).message}</div>}
         {validationError && !m.isError && <div className="mt-2 text-xs text-gray-500">{validationError}</div>}
 
-        <ModalActions onCancel={onClose} submitLabel="Record trade" loading={m.isPending} disabled={!!validationError} />
+        <ModalActions onCancel={handleClose} submitLabel="Record trade" loading={m.isPending} disabled={!!validationError} />
       </form>
     </Modal>
   )
