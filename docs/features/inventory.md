@@ -35,6 +35,8 @@ Single-step modal (wider than a standard modal). Fields:
 - **"Cash boot" section** (collapsed by default): toggle "Cash changed hands?" expands a direction segmented control ("I paid" / "I received") + amount field.
 - **Footer — live balance:** `Given $X + Paid $Y = Received $Z + Received cash $W`. Green check when balanced (within $0.01); red warning with specific delta otherwise. "Record trade" submit button is disabled until balanced and both sides have at least one line.
 
+A small **info** button at the top-right of the modal opens an in-place help popover covering: the FMV-anchored barter rule, the balance equation (given + cash paid = received + cash received), the Schedule C wash for the two non-cash legs, FMV-source-note defensibility, and the delete-and-re-record edit path.
+
 ### Trade-acquired lot marker
 
 Lots with `trade_id != null` display a small purple **"Trade"** pill in the lot sub-row (same visual treatment as status badges). Clicking the pill opens `TradeDetailSlideOver` (`src/components/TradeDetailSlideOver.tsx`).
