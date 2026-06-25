@@ -61,11 +61,6 @@ export const CATEGORIES: CategoryDef[] = [
   { value: 'home_office', label: 'Home Office', color: '#059669', bgColor: '#d1fae5', isExcluded: false, scheduleLine: 'Line 30' },
 ]
 
-export function getCategoryDef(value?: string | null): CategoryDef | undefined {
-  if (!value) return undefined
-  return CATEGORIES.find(c => c.value === value)
-}
-
 /**
  * Resolves a schedule_c_category string to a CategoryDef-shaped record,
  * checking built-ins first, then customs. Returns undefined for unknown values.
@@ -74,9 +69,8 @@ export function getCategoryDef(value?: string | null): CategoryDef | undefined {
  * isExcluded from the parent built-in. Tombstoned customs are still resolved
  * (label suffixed " (deleted)") so historical transactions render and bucket correctly.
  *
- * This is the ONLY lookup used by code paths that touch real transaction data
- * (bucketTransaction, dashboard render, badges). getCategoryDef remains for
- * pure-built-in render paths (e.g. iterating CATEGORIES for picker swatches).
+ * This is the only category lookup the codebase uses. Pure-built-in render paths
+ * (picker swatch loops, etc.) iterate the CATEGORIES array directly.
  */
 export function resolveCategory(
   value: string | null | undefined,

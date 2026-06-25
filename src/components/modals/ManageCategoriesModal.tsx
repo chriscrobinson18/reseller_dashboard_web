@@ -4,7 +4,7 @@ import { Plus, Pencil, Trash2 } from 'lucide-react'
 import Modal, { Field, inputCls, ModalActions } from '../Modal'
 import ConfirmDialog from '../ConfirmDialog'
 import CategoryBadge from '../CategoryBadge'
-import { CATEGORIES, customCategoryValue, type CustomCategory } from '../../lib/categories'
+import { CATEGORIES, type CustomCategory } from '../../lib/categories'
 import { PALETTE, PALETTE_KEYS, type ColorKey } from '../../lib/categoryPalette'
 import { useCustomCategories } from '../../lib/queries'
 import {
@@ -207,8 +207,10 @@ function CategoryForm({
     saveMutation.mutate()
   }
 
-  // Live preview "fake" custom for the badge.
-  const previewValue = initial?.value ?? customCategoryValue('preview-00000000-0000-0000-0000-000000000000')
+  // Live preview is rendered inline below from form state — CategoryBadge can't
+  // see in-flight form values because it pulls from the useCustomCategories cache,
+  // and a synthetic cache write would race with React Query's lifecycle.
+  const previewSwatch = PALETTE[colorKey]
 
   return (
     <form onSubmit={submit} className="space-y-4">
@@ -306,7 +308,12 @@ function CategoryForm({
 
       <div>
         <div className="text-xs font-medium text-gray-500 mb-1.5">Preview</div>
-        <CategoryBadge value={previewValue} />
+        <span
+          className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium"
+          style={{ color: previewSwatch.color, backgroundColor: previewSwatch.bgColor }}
+        >
+          {name.trim() || 'Preview'}
+        </span>
       </div>
 
       {error && (

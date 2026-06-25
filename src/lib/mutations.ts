@@ -807,6 +807,19 @@ export async function updateCustomCategory(
 ): Promise<void> {
   validateCustomCategoryInput(patch)
 
+  // The DB CHECK enforces parent_value XOR schedule_line. The patch-level XOR
+  // check inside validateCustomCategoryInput only fires when BOTH fields are
+  // present; a one-sided patch (only parentValue, only scheduleLine) would
+  // sneak past and only fail at the DB with an opaque constraint error.
+  // Require callers to send both together (or neither — name/colorKey-only is fine).
+  const touchesParent = patch.parentValue !== undefined
+  const touchesLine = patch.scheduleLine !== undefined
+  if (touchesParent !== touchesLine) {
+    throw new Error(
+      'updateCustomCategory: parentValue and scheduleLine must be patched together (or neither)',
+    )
+  }
+
   // If patching name, recheck soft-uniqueness against the user's other active rows.
   if (patch.name !== undefined) {
     const user_id = await getUserId()

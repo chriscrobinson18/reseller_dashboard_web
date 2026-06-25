@@ -16,10 +16,12 @@ create table public.custom_categories (
   created_at timestamptz not null default now(),
   deleted_at timestamptz,
   name text not null check (length(trim(name)) > 0 and length(name) <= 40),
-  color_key text not null check (color_key in (
-    'emerald','sky','rose','amber','violet','slate',
-    'orange','teal','indigo','pink','lime','cyan'
-  )),
+  -- color_key CHECK is added by the follow-up migration 20260625130000
+  -- (the original deployment of this file went out without it). Keeping
+  -- the column un-constrained here so a fresh apply doesn't end up with
+  -- two equivalent CHECK constraints — the named one in the follow-up is
+  -- the single source of truth.
+  color_key text not null,
   -- parent_value and schedule_line are validated client-side against
   -- CATEGORIES[].value (resp. CATEGORIES[].scheduleLine). No DB CHECK
   -- here so adding a new built-in to src/lib/categories.ts does not
