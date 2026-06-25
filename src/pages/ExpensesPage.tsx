@@ -14,6 +14,7 @@ import AddTransactionModal from '../components/modals/AddTransactionModal'
 import TransactionInventorySection from '../components/TransactionInventorySection'
 import { Field, inputCls } from '../components/Modal'
 import TradeDetailSlideOver from '../components/TradeDetailSlideOver'
+import { useTrade } from '../lib/queries'
 import type { Transaction } from '../lib/types'
 
 // ─── Data ────────────────────────────────────────────────────────────────────
@@ -132,19 +133,46 @@ function TransactionDetail({ tx, onClose, onOpenTrade }: { tx: Transaction; onCl
   const isExpense = tx.amount < 0
   const cat = getCategoryDef(tx.schedule_c_category)
   const isPlaid = tx.source === 'plaid'
+  const tradeQ = useTrade(tx.trade_id ?? null)
 
   return (
     <div className="space-y-4">
       {tx.trade_id && (
-        <div className="mb-3 p-2.5 rounded-lg bg-purple-50 border border-purple-200 text-xs text-purple-800">
-          This transaction is part of a trade. Edit or delete it from the trade.
-          <button
-            type="button"
-            onClick={() => { onClose(); onOpenTrade(tx.trade_id!) }}
-            className="ml-2 underline font-medium"
-          >
-            Open trade
-          </button>
+        <div className="mb-3 p-3 rounded-lg bg-purple-50 border border-purple-200 text-xs text-purple-900">
+          {tradeQ.isLoading || !tradeQ.data ? (
+            <div className="text-purple-700">
+              {tradeQ.isLoading ? 'Loading trade…' : 'This transaction is part of a trade. Edit or delete it from the trade.'}
+              <button
+                type="button"
+                onClick={() => { onClose(); onOpenTrade(tx.trade_id!) }}
+                className="ml-2 underline font-medium"
+              >
+                Open trade
+              </button>
+            </div>
+          ) : (
+            <>
+              <div className="font-medium mb-2">
+                Trade · {formatDate(tradeQ.data.trade.traded_at)}
+                {tradeQ.data.trade.counterparty && <> · {tradeQ.data.trade.counterparty}</>}
+              </div>
+              <div className="mb-1">
+                <span className="text-purple-600 uppercase tracking-wide text-[10px] font-semibold mr-1">You gave</span>
+                {tradeQ.data.givenSales.map(s => `${s.items?.name ?? '—'} × ${s.quantity}`).join(', ') || '—'}
+              </div>
+              <div className="mb-2">
+                <span className="text-purple-600 uppercase tracking-wide text-[10px] font-semibold mr-1">You received</span>
+                {tradeQ.data.receivedLots.map(l => `${l.items?.name ?? '—'} × ${l.quantity_purchased}`).join(', ') || '—'}
+              </div>
+              <button
+                type="button"
+                onClick={() => { onClose(); onOpenTrade(tx.trade_id!) }}
+                className="underline font-medium"
+              >
+                Open trade
+              </button>
+            </>
+          )}
         </div>
       )}
       {/* Action buttons */}
