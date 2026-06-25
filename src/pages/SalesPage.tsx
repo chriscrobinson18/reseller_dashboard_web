@@ -72,28 +72,47 @@ function StatusBadge({ status, type }: { status: string; type: 'inventory' | 're
 
 // ─── Sale detail ──────────────────────────────────────────────────────────────
 
-function SaleDetail({ sale, onLinkItem, onEdit, onDelete }: {
+function SaleDetail({ sale, onLinkItem, onEdit, onDelete, onOpenTrade }: {
   sale: Sale
   onLinkItem: () => void
   onEdit: () => void
   onDelete: () => void
+  onOpenTrade: (id: string) => void
 }) {
   const { cogs, netRevenue, profit } = saleProfit(sale)
   const hasCogsData = (sale.inventory_movements?.length ?? 0) > 0
 
   return (
     <div className="space-y-4">
+      {/* Trade banner */}
+      {sale.trade_id && (
+        <div className="mb-3 p-2.5 rounded-lg bg-purple-50 border border-purple-200 text-xs text-purple-800">
+          This sale is part of a trade. Edit or delete it from the trade.
+          <button
+            type="button"
+            onClick={() => { onOpenTrade(sale.trade_id!) }}
+            className="ml-2 underline font-medium"
+          >
+            Open trade
+          </button>
+        </div>
+      )}
+
       {/* Action buttons */}
       <div className="flex gap-2">
         <button
           onClick={onEdit}
-          className="flex-1 flex items-center justify-center gap-1.5 border border-gray-200 rounded-lg py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 transition-colors"
+          disabled={!!sale.trade_id}
+          title={sale.trade_id ? 'Locked — part of a trade. Open the trade to delete.' : undefined}
+          className="flex-1 flex items-center justify-center gap-1.5 border border-gray-200 rounded-lg py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
         >
           <Pencil size={13} /> Edit
         </button>
         <button
           onClick={onDelete}
-          className="flex items-center justify-center gap-1.5 border border-red-200 text-red-600 rounded-lg py-2 px-3 text-sm font-medium hover:bg-red-50 transition-colors"
+          disabled={!!sale.trade_id}
+          title={sale.trade_id ? 'Locked — part of a trade. Open the trade to delete.' : undefined}
+          className="flex items-center justify-center gap-1.5 border border-red-200 text-red-600 rounded-lg py-2 px-3 text-sm font-medium hover:bg-red-50 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
         >
           <Trash2 size={13} /> Delete
         </button>
@@ -393,6 +412,7 @@ export default function SalesPage() {
             onLinkItem={() => setLinkSale(selected)}
             onEdit={() => setEditSale(selected)}
             onDelete={() => setDeleteSaleTarget(selected)}
+            onOpenTrade={(id) => { setSelected(null); setOpenTradeId(id) }}
           />
         )}
       </SlideOver>

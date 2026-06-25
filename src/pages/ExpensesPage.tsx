@@ -229,17 +229,19 @@ function TransactionDetail({ tx, onClose, onOpenTrade }: { tx: Transaction; onCl
         <div className="text-xs font-medium text-gray-500 mb-1.5">Schedule C Category</div>
         <div className="relative">
           <button
-            onClick={() => setEditingCat(!editingCat)}
-            className="flex items-center gap-2 border border-gray-200 rounded-lg px-3 py-2 text-sm w-full text-left hover:border-gray-300 transition-colors"
+            onClick={() => !tx.trade_id && setEditingCat(!editingCat)}
+            disabled={!!tx.trade_id}
+            title={tx.trade_id ? 'Locked — part of a trade' : undefined}
+            className="flex items-center gap-2 border border-gray-200 rounded-lg px-3 py-2 text-sm w-full text-left hover:border-gray-300 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
           >
             {cat ? (
               <CategoryBadge value={tx.schedule_c_category} />
             ) : (
               <span className="text-gray-400 text-xs">No category</span>
             )}
-            <ChevronDown size={14} className="text-gray-400 ml-auto" />
+            {!tx.trade_id && <ChevronDown size={14} className="text-gray-400 ml-auto" />}
           </button>
-          {editingCat && (
+          {!tx.trade_id && editingCat && (
             <div className="absolute top-full left-0 right-0 z-10 bg-white border border-gray-200 rounded-xl shadow-xl mt-1 py-1 overflow-y-auto max-h-56">
               <div
                 className="px-3 py-1.5 text-xs text-gray-400 hover:bg-gray-50 cursor-pointer"
@@ -486,9 +488,9 @@ export default function ExpensesPage() {
                       <td className="px-4 py-2.5" onClick={e => e.stopPropagation()}>
                         <CategoryBadge
                           value={tx.schedule_c_category}
-                          onClick={e => openDropdown(tx.id, e)}
+                          onClick={tx.trade_id ? undefined : e => openDropdown(tx.id, e)}
                         />
-                        {ddTxId === tx.id && (
+                        {!tx.trade_id && ddTxId === tx.id && (
                           <CategoryDropdown
                             txId={tx.id}
                             current={tx.schedule_c_category}

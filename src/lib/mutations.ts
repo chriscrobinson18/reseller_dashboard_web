@@ -683,10 +683,18 @@ export async function deleteTrade(tradeId: string): Promise<void> {
   }
 
   // 2. Hard-delete trade transactions.
-  const txIds = [trade.income_transaction_id, trade.cogs_transaction_id, trade.cash_transaction_id]
+  // Union FK-derived txn IDs with any orphan txns linked by trade_id (defense against
+  // recordTrade partial-failure leaving trade row with NULL FKs but real transactions).
+  const fkTxIds = [trade.income_transaction_id, trade.cogs_transaction_id, trade.cash_transaction_id]
     .filter((x): x is string => !!x)
-  if (txIds.length > 0) {
-    const { error } = await supabase.from('transactions').delete().in('id', txIds)
+  const { data: orphanTxRows, error: orphanErr } = await supabase
+    .from('transactions')
+    .select('id')
+    .eq('trade_id', tradeId)
+  if (orphanErr) throw orphanErr
+  const allTxIds = Array.from(new Set([...fkTxIds, ...(orphanTxRows ?? []).map(t => t.id)]))
+  if (allTxIds.length > 0) {
+    const { error } = await supabase.from('transactions').delete().in('id', allTxIds)
     if (error) throw error
   }
 

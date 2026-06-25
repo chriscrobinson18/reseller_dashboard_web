@@ -55,6 +55,7 @@ export function useTrade(id: string | null) {
         .from('trades')
         .select('*')
         .eq('id', id!)
+        .is('deleted_at', null)
         .single()
       if (error || !trade) throw error ?? new Error('Trade not found')
 
