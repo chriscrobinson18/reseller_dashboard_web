@@ -16,7 +16,16 @@ create table public.custom_categories (
   created_at timestamptz not null default now(),
   deleted_at timestamptz,
   name text not null check (length(trim(name)) > 0 and length(name) <= 40),
-  color_key text not null,
+  color_key text not null check (color_key in (
+    'emerald','sky','rose','amber','violet','slate',
+    'orange','teal','indigo','pink','lime','cyan'
+  )),
+  -- parent_value and schedule_line are validated client-side against
+  -- CATEGORIES[].value (resp. CATEGORIES[].scheduleLine). No DB CHECK
+  -- here so adding a new built-in to src/lib/categories.ts does not
+  -- require a follow-up migration. Unknown values resolve to undefined
+  -- in resolveCategory() and the transaction drops out of Schedule C
+  -- (treated as uncategorized) — accepted per spec.
   parent_value text,
   schedule_line text,
   constraint custom_categories_one_of_parent_or_line
