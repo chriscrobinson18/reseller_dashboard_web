@@ -67,6 +67,65 @@ COGS for a sale = `sum(inventory_movements.quantity * inventory_movements.invent
 
 Once the P1 refund UI ships, `record_return` (v21) also inserts a `transactions` row at `schedule_c_category: 'returns_allowances'` with `amount: -refund_amount`. Those rows land in the Part I bucket via `bucketTransaction`, so refunds reduce gross receipts in the Schedule C breakdown — see [categories.md](categories.md#returns--allowances-added-2026-06-23).
 
+## Recording a trade (`recordTrade` in `mutations.ts`)
+
+See [`docs/superpowers/specs/2026-06-23-trades-design.md`](superpowers/specs/2026-06-23-trades-design.md) for the full accounting rationale. Summary:
+
+A barter trade creates:
+- 1 `trades` row
+- N given-side `sales` rows (FIFO-depletes inventory via the `record_sale` edge function; no `createSaleTransactions` call — income is covered by the trade's bundled income transaction)
+- M `inventory_lots` rows for received-side items (basis = allocated FMV per line)
+- 2 non-cash `transactions` rows (income + COGS, always a wash; `is_non_cash = true`)
+- 0 or 1 cash boot `transaction` row (`is_non_cash = false`; only when `cash_boot ≠ 0`)
+
+### Canonical Schedule C rule
+
+For a trade with `given_FMV`, `received_FMV`, and signed `cash_boot` (positive = you received cash, negative = you paid cash):
+
+| Component | Amount | `is_non_cash` |
+|---|---|---|
+| Non-cash income | `given_FMV − max(boot_received, 0)` | `true` |
+| Non-cash COGS | same as non-cash income (always a wash) | `true` |
+| Cash boot | `cash_boot` (signed; absent if 0) | `false` |
+
+The two non-cash legs always wash each other. **The cash boot leg carries the entire Schedule C impact of the trade event.** If there's no boot, the trade is Schedule-C-neutral at the time it happens; economic gain materializes later when received lots are sold.
+
+### Worked examples
+
+All examples assume the given item was previously bought for $2,000 (already deducted as `cost_of_goods` at purchase).
+
+**Pure swap.** Give 1 box (FMV $3,000); receive 10 boxes (FMV $3,000); no cash. (`given_FMV == received_FMV` — the trade sets both.)
+- Non-cash income: +$3,000 (`payout`, `is_non_cash = true`)
+- Non-cash COGS: −$3,000 (`cost_of_goods`, `is_non_cash = true`)
+- Cash boot: none
+- Net Schedule C from trade: **$0**
+- New lots: 10 lots totaling $3,000 basis
+- Future $5,000 sale of received boxes: +$5,000 revenue, no COGS. Total chain profit: $5,000 − $2,000 = $3,000. ✓
+
+**Paid boot.** Give 1 box (FMV $2,500); receive 10 boxes (FMV $3,000); pay $500 cash.
+- Non-cash income: +$2,500 (`payout`, `is_non_cash = true`)
+- Non-cash COGS: −$2,500 (`cost_of_goods`, `is_non_cash = true`)
+- Cash boot: −$500 (`cost_of_goods`, `is_non_cash = false` — normal bank txn)
+- Net Schedule C from trade: **−$500**
+- New lots: 10 lots totaling $3,000 basis ($2,500 non-cash + $500 cash)
+- Future $5,000 sale: total chain profit: $5,000 − $2,000 − $500 = $2,500. ✓
+
+**Received boot.** Give 1 box (FMV $3,000); receive 10 boxes (FMV $2,500) + $500 cash.
+- Non-cash income: +$2,500 (`payout`, `is_non_cash = true`)
+- Non-cash COGS: −$2,500 (`cost_of_goods`, `is_non_cash = true`)
+- Cash boot: +$500 (`payout`, `is_non_cash = false` — normal bank txn)
+- Net Schedule C from trade: **+$500**
+- New lots: 10 lots totaling $2,500 basis (no cash portion — cash was received, not paid)
+- Future $5,000 sale: total chain profit: $5,000 − $2,000 + $500 = $3,500. ✓
+
+### Profitability dashboard
+
+The Dashboard's Profitability card reads from `inventory_movements.unit_cost` (set when trade-acquired lots are later sold via `record_sale`). No special-casing is needed — trade-acquired lots behave identically to cash-purchased lots for future sales.
+
+### Deleting a trade (`deleteTrade`)
+
+`deleteTrade` hard-deletes the three transactions (income, COGS, cash boot if any), then calls the existing `reverse_sale` RPC for each given-side sale (atomically restores depleted lots), then soft-deletes the given-side sales and received-side lots. Aborts if any received lot has been partially or fully depleted (preventing orphaned inventory movements). **Known v1 limitation:** FIFO reversal on the given-side sales inherits the same gap as `deleteSale` — if the underlying lots were themselves depleted by other sales since the trade, the restoration is incomplete. See TASKS.md "Trades v2 follow-ups."
+
 ## Period filtering
 
 `getPeriodRange(preset)` in `periods.ts` returns `{ start, end }` as `'yyyy-MM-dd'` strings (or `{ null, null }` for `all_time`). Every page passes this into its own fetch function as `.gte('date'|'sold_at', start)` / `.lte(..., end)`. Transactions filter on `date`; sales filter on `sold_at` with `'T00:00:00Z'`/`'T23:59:59Z'` suffixes appended (since `sold_at` is a full timestamp, not just a date).

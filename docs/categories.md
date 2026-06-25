@@ -75,6 +75,12 @@ Bucketing rules (in order — first match wins):
 
 **Why signed:** a $50 refund posted to `supplies` arrives as `amount: +50`. Pre-fix this was bucketed as income and Math.abs'd back into expenses, inflating both. Now it lands as `{ bucket: 'expense', signedAmount: +50 }`, sums against the supplies expense total to reduce it, and the display layer takes `abs()` only at render. Same idea for refunds against income.
 
+## Non-cash trade transactions
+
+`payout` and `cost_of_goods` totals in the Schedule C breakdown **may include non-cash transactions from trades** (`transactions.is_non_cash = true`). Both legs are still correct Schedule C inputs — barter income is taxable at FMV (IRC § 1001), and the matching COGS deduction is legitimate. The non-cash pair always washes, so the only net Schedule C impact from a trade event is the cash boot leg (if any), which is a normal cash transaction (`is_non_cash = false`).
+
+The `is_non_cash` flag exists so a future bank-reconciliation or cash-flow view can filter to `is_non_cash = false` rows only. `bucketTransaction` does **not** filter on this flag — both cash and non-cash transactions flow through the same bucketing logic and land in the same Schedule C totals, which is correct.
+
 ## Known correctness gaps (see TASKS.md P0/P1 for full detail — don't fix ad-hoc, read that list first)
 
 - Custom categories (planned, stored per-user in Supabase rather than this static array) must flow into the dashboard render layer once they ship — see [Custom categories (planned — P1)](#custom-categories-planned--p1) below. `bucketTransaction` itself is already category-string-agnostic.

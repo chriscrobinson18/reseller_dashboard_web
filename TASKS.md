@@ -156,6 +156,15 @@ _Same items as mobile's P4 — lower priority, web-appropriate notes only where 
 
 ---
 
+## 🔄 Trades v2 follow-ups
+
+_Shipped in v1 (2026-06-24): `recordTrade`, `deleteTrade`, `RecordTradeModal`, `TradeDetailSlideOver`, trade-acquired lot marker, trade-leg sale marker, non-cash transaction badge. Items below are known gaps deferred from v1._
+
+- [ ] **Atomic `recordTrade` edge function** — v1 is client-orchestrated; a mid-flight failure leaves partial state (orphaned `trades` row + some transactions/sales/lots). v2 candidate: move to a Postgres-transactional edge function with server-side rollback. Current workaround: surface the `tradeId` in the error toast so the user can manually invoke `deleteTrade`.
+- [ ] **`updateTrade` mutation** — v1 workaround is delete + re-record. Implement a proper edit flow once the atomic edge function lands (edit = RPC that reverts and replays in one transaction).
+- [ ] **Bank-balance / cash-flow view filtering `is_non_cash = false`** — no such view exists yet, but the `transactions.is_non_cash` flag is in place. When a cash-flow reconciliation page ships, filter to `is_non_cash = false` to exclude non-cash trade legs.
+- [ ] **iOS UI parity for trades** — schema is additive; the iOS app reads `trades`, `sales.trade_id`, `inventory_lots.trade_id`, `transactions.is_non_cash` without breaking. No iOS trade UI is in scope for v1; add when iOS becomes active again.
+
 ## 🗄️ Schema/Architecture Notes Inherited from Mobile
 
 _Carried over from mobile's "June 2026 Architectural Review" since both clients share the schema — fix once, both clients benefit:_

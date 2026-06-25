@@ -30,6 +30,8 @@ Bank/manual/CSV-sourced money movements — the Schedule C source of truth for i
 | `parent_settlement_id`, `csv_transaction_id` | CSV-import/settlement linkage, not yet exercised by any UI in this repo |
 | `plaid_transaction_id`, `plaid_category` | Plaid-sourced rows only; read-only in the UI (`TransactionDetail` blocks editing date/amount/merchant/direction when `source === 'plaid'`) |
 | `receipt_url` | referenced in `types.ts`; no upload UI exists yet (see receipts bucket below) |
+| `is_non_cash` | boolean, default `false`; marks non-cash trade-leg income and COGS rows. Included in Schedule C totals; excluded from bank-reconciliation/cash-flow views. |
+| `trade_id` | nullable FK to `trades`; set on all transactions related to a trade (income, COGS, optional cash boot). `ON DELETE SET NULL`. |
 | **no `deleted_at`** | transactions are **hard-deleted** (`deleteTransaction`), unlike every other table here |
 
 ### `sales`
@@ -39,7 +41,7 @@ The relational centerpiece — one row per sale event, FIFO-depletes inventory v
 |---|---|
 | `id`, `user_id`, `created_at`, `deleted_at` | soft-deleted |
 | `item_id` | nullable — sales can arrive unlinked (e.g. from CSV import) and get linked later via `linkSaleToItem` |
-| `platform`, `source`, `external_order_id` | |
+| `platform`, `source`, `external_order_id` | `source` values: `'plaid' \| 'manual' \| 'csv_import' \| 'trade'`. Trade-leg sales set `source = 'trade'`. |
 | `quantity`, `sale_price` | `sale_price` is the **gross** unsigned sale amount |
 | `fees`, `shipping_cost` | unsigned magnitudes, stored separately from `sale_price` |
 | `net_payout` | computed client-side as `sale_price - fees - shipping_cost` and written back (see `recordSale`/`updateSale` in mutations.ts) — **not** server-computed |
@@ -47,6 +49,7 @@ The relational centerpiece — one row per sale event, FIFO-depletes inventory v
 | `return_status` | `'none' \| 'partial' \| 'full'` |
 | `refunded_quantity`, `refunded_amount` | populated by the `record_return` edge function (v21, no web UI yet — P1) |
 | `sold_at` | full ISO timestamp (not just a date) |
+| `trade_id` | nullable FK to `trades`; set on the sale(s) for items given up in a trade. `ON DELETE SET NULL`. |
 
 Joins used: `items(id, name, category)`, `inventory_movements(id, quantity, inventory_lots(unit_cost, item_id))`.
 
@@ -59,13 +62,31 @@ A purchase batch of an item at a specific unit cost — FIFO unit of accounting.
 | column | notes |
 |---|---|
 | `id`, `user_id`, `item_id`, `created_at`, `deleted_at` | soft-deleted |
-| `transaction_id` | nullable FK to the COGS purchase transaction; `ON DELETE SET NULL` (deleting the transaction unlinks, doesn't delete, the lot) |
+| `transaction_id` | nullable FK to the COGS purchase transaction; `ON DELETE SET NULL` (deleting the transaction unlinks, doesn't delete, the lot). On trade-acquired lots, points to the trade's `cogs_transaction_id`. |
 | `quantity_purchased`, `quantity_remaining` | `quantity_remaining` is depleted FIFO by `record_sale`, restored by `reverse_sale` (on sale delete) and by `record_return` v21 (on partial/full refund) |
 | `unit_cost` | |
 | **no `purchase_date`** | only `created_at` exists; TASKS.md flags this as blocking correct FIFO ordering for back-dated entries |
+| `trade_id` | nullable FK to `trades`; set on lots created from received-in-trade items. `ON DELETE SET NULL`. |
 
 ### `inventory_movements`
 Audit trail row created by `record_sale` per lot depleted by a sale. Read-only from the web client (`sale.inventory_movements`); join shape: `{ id, quantity, inventory_lots: { unit_cost, item_id } }`. `quantity * unit_cost` summed across a sale's movements = that sale's COGS.
+
+### `trades`
+Barter exchange record — one row per trade event. See [`docs/superpowers/specs/2026-06-23-trades-design.md`](superpowers/specs/2026-06-23-trades-design.md) for the full accounting model and mutation sequence.
+
+| column | notes |
+|---|---|
+| `id`, `user_id`, `created_at`, `deleted_at` | soft-deleted |
+| `traded_at` | `'yyyy-MM-dd'` — date the trade happened; drives Schedule C date for all linked transactions |
+| `counterparty` | nullable; free-text description of the other party ("John D. on IG", "@handle") |
+| `given_fmv` | sum of given-side line FMVs — what your items were "sold" for in the barter |
+| `received_fmv` | sum of received-side line FMVs — total basis going onto new lots |
+| `cash_boot` | signed numeric; `+` = you received cash, `−` = you paid cash, `0` = pure swap |
+| `cash_transaction_id` | nullable FK to the bank transaction for the boot; `ON DELETE SET NULL` |
+| `income_transaction_id` | FK to the non-cash income `transactions` row (always `is_non_cash = true`); `ON DELETE SET NULL` |
+| `cogs_transaction_id` | FK to the non-cash COGS `transactions` row (always `is_non_cash = true`); `ON DELETE SET NULL` |
+| `fmv_source_notes` | nullable; IRS defensibility breadcrumb (e.g. "eBay sold comps saved 2026-06-23") |
+| `notes` | nullable free text |
 
 ## Tables referenced but not yet built on (per TASKS.md)
 - `custom_categories` (planned — user-defined Schedule C categories, web-only improvement over mobile's UserDefaults approach)

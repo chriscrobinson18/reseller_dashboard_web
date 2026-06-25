@@ -25,6 +25,12 @@ The relational centerpiece of the app — every sale here can cascade into `tran
 - **LinkSaleToItemModal** → `linkSaleToItem`, a one-column `.update({ item_id })`. Does not retroactively create `inventory_movements` for past depletion — linking after the fact does not fix `inventory_status`.
 - **Delete** → `deleteSale`, which invokes the `reverse_sale` edge function. This atomically restores `quantity_remaining` on every depleted lot, deletes the `inventory_movements` audit rows, deletes the linked manual `transactions` rows, and soft-deletes the sale — all in one Postgres transaction with FOR UPDATE locks on the affected lot rows. See [data-flows.md](../data-flows.md) for the full breakdown.
 
+## Trade-linked sales
+
+Sales created as the given side of a barter trade (`source = 'trade'`, `trade_id` set) display a purple **"Trade"** pill in the platform/source column instead of the usual platform badge. Clicking the pill opens `TradeDetailSlideOver` (`src/components/TradeDetailSlideOver.tsx`) for the parent trade.
+
+**Do not edit trade-linked sales directly** — the sale's `sale_price` is the given-side FMV, and its linked income/COGS transactions are the trade's bundled non-cash legs, not per-sale transactions. Use the trade as the canonical handle: delete the trade via `TradeDetailSlideOver` to reverse all legs atomically. The current `deleteSale` still works on a trade-linked sale via `reverse_sale` (it will restore the depleted lots and soft-delete the sale), but it leaves the paired non-cash transactions and the `trades` row orphaned. The `EditSaleModal` is disabled for `source = 'trade'` sales.
+
 ## Gaps vs. mobile (TASKS.md P1)
 
 No "Process Return" UI (return entry doesn't exist on either client yet — would be a web-first feature). No per-platform breakdown/filter in the table.
