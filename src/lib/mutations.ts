@@ -630,4 +630,81 @@ export async function recordTrade(params: {
   }
 }
 
+/**
+ * Deletes a trade and reverses all its linked records.
+ *
+ * Aborts if any received-side lot has been depleted (quantity_remaining < quantity_purchased),
+ * because deleting the trade would orphan the downstream sales' COGS. User must delete those
+ * sales first.
+ *
+ * Otherwise:
+ *   1. reverse_sale on each given-side sale (atomic FIFO restore + audit cleanup + soft-delete)
+ *   2. Hard-delete the 2 (or 3) trade transactions
+ *   3. Soft-delete each received-side lot
+ *   4. Soft-delete the trades row
+ */
+export async function deleteTrade(tradeId: string): Promise<void> {
+  // Load the trade + linked received lots to check depletion.
+  const { data: trade, error: tradeErr } = await supabase
+    .from('trades')
+    .select('id, income_transaction_id, cogs_transaction_id, cash_transaction_id')
+    .eq('id', tradeId)
+    .is('deleted_at', null)
+    .single()
+  if (tradeErr || !trade) throw tradeErr ?? new Error('Trade not found')
+
+  const { data: receivedLots, error: lotsErr } = await supabase
+    .from('inventory_lots')
+    .select('id, quantity_purchased, quantity_remaining')
+    .eq('trade_id', tradeId)
+    .is('deleted_at', null)
+  if (lotsErr) throw lotsErr
+
+  const depleted = (receivedLots ?? []).filter(l => l.quantity_remaining < l.quantity_purchased)
+  if (depleted.length > 0) {
+    throw new Error(
+      `Cannot delete trade — ${depleted.length} received lot(s) have been partially or fully sold. ` +
+      `Delete the downstream sale(s) first, then delete this trade.`
+    )
+  }
+
+  const { data: givenSales, error: salesErr } = await supabase
+    .from('sales')
+    .select('id')
+    .eq('trade_id', tradeId)
+    .is('deleted_at', null)
+  if (salesErr) throw salesErr
+
+  // 1. Reverse each given-side sale atomically.
+  for (const s of givenSales ?? []) {
+    const { error } = await supabase.functions.invoke('reverse_sale', { body: { sale_id: s.id } })
+    if (error) throw error
+  }
+
+  // 2. Hard-delete trade transactions.
+  const txIds = [trade.income_transaction_id, trade.cogs_transaction_id, trade.cash_transaction_id]
+    .filter((x): x is string => !!x)
+  if (txIds.length > 0) {
+    const { error } = await supabase.from('transactions').delete().in('id', txIds)
+    if (error) throw error
+  }
+
+  // 3. Soft-delete received lots.
+  if ((receivedLots ?? []).length > 0) {
+    const { error } = await supabase
+      .from('inventory_lots')
+      .update({ deleted_at: new Date().toISOString() })
+      .eq('trade_id', tradeId)
+      .is('deleted_at', null)
+    if (error) throw error
+  }
+
+  // 4. Soft-delete the trade.
+  const { error: tradeDelErr } = await supabase
+    .from('trades')
+    .update({ deleted_at: new Date().toISOString() })
+    .eq('id', tradeId)
+  if (tradeDelErr) throw tradeDelErr
+}
+
 export { todayStr }
