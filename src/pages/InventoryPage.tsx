@@ -1,11 +1,12 @@
 import { useState, useMemo, Fragment } from 'react'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
-import { ChevronDown, ChevronRight, Plus, Pencil, Trash2 } from 'lucide-react'
+import { ArrowLeftRight, ChevronDown, ChevronRight, Plus, Pencil, Trash2 } from 'lucide-react'
 import { formatUSD, formatDate } from '../lib/utils'
 import { deleteItem, deleteLot } from '../lib/mutations'
 import type { InventoryLot } from '../lib/types'
 import { useItems, type ItemWithLots } from '../lib/queries'
 import AddItemModal from '../components/modals/AddItemModal'
+import RecordTradeModal from '../components/modals/RecordTradeModal'
 import AddLotModal from '../components/modals/AddLotModal'
 import EditItemModal from '../components/modals/EditItemModal'
 import EditLotModal from '../components/modals/EditLotModal'
@@ -45,11 +46,12 @@ function AddLotRow({ onAddLot }: { onAddLot: () => void }) {
   )
 }
 
-function LotRows({ lots, onAddLot, onEditLot, onDeleteLot }: {
+function LotRows({ lots, onAddLot, onEditLot, onDeleteLot, onTradePillClick }: {
   lots: InventoryLot[]
   onAddLot: () => void
   onEditLot: (lot: InventoryLot) => void
   onDeleteLot: (lot: InventoryLot) => void
+  onTradePillClick: (tradeId: string) => void
 }) {
   if (lots.length === 0) {
     return (
@@ -114,6 +116,15 @@ function LotRows({ lots, onAddLot, onEditLot, onDeleteLot }: {
                   </div>
                   <div className="text-xs text-gray-400 mt-0.5">{pctSold.toFixed(0)}% sold</div>
                 </div>
+                {lot.trade_id && (
+                  <span
+                    className="inline-block px-1.5 py-0.5 text-[10px] font-medium bg-purple-100 text-purple-700 rounded cursor-pointer hover:bg-purple-200"
+                    onClick={(e) => { e.stopPropagation(); onTradePillClick(lot.trade_id!) }}
+                    title="Acquired via trade"
+                  >
+                    Trade
+                  </span>
+                )}
                 <div className="flex gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
                   <button onClick={() => onEditLot(lot)} className="p-1 text-gray-400 hover:text-gray-700" title="Edit lot">
                     <Pencil size={12} />
@@ -132,6 +143,10 @@ function LotRows({ lots, onAddLot, onEditLot, onDeleteLot }: {
   )
 }
 
+// ─── Trade detail stub (Task 9 will replace with real component) ──────────────
+
+const TradeDetailSlideOver = (_: { tradeId: string | null; onClose: () => void }) => null
+
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
 export default function InventoryPage() {
@@ -143,6 +158,8 @@ export default function InventoryPage() {
   const [deleteItemTarget, setDeleteItemTarget] = useState<ItemWithLots | null>(null)
   const [editLot, setEditLot] = useState<InventoryLot | null>(null)
   const [deleteLotTarget, setDeleteLotTarget] = useState<InventoryLot | null>(null)
+  const [showRecordTrade, setShowRecordTrade] = useState(false)
+  const [openTradeId, setOpenTradeId] = useState<string | null>(null)
   const qc = useQueryClient()
 
   const { data: items = [], isLoading } = useItems()
@@ -200,12 +217,20 @@ export default function InventoryPage() {
             placeholder="Search items…"
             className="w-64 border border-gray-200 rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-gray-900"
           />
-          <button
-            onClick={() => setShowAddItem(true)}
-            className="flex items-center gap-1.5 bg-gray-900 text-white px-3 py-1.5 rounded-lg text-sm font-medium hover:bg-gray-700 transition-colors"
-          >
-            <Plus size={14} /> Add Item
-          </button>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => setShowRecordTrade(true)}
+              className="flex items-center gap-1.5 bg-gray-900 text-white px-3 py-1.5 rounded-lg text-sm font-medium hover:bg-gray-700 transition-colors"
+            >
+              <ArrowLeftRight size={14} /> Record Trade
+            </button>
+            <button
+              onClick={() => setShowAddItem(true)}
+              className="flex items-center gap-1.5 bg-gray-900 text-white px-3 py-1.5 rounded-lg text-sm font-medium hover:bg-gray-700 transition-colors"
+            >
+              <Plus size={14} /> Add Item
+            </button>
+          </div>
         </div>
       </div>
 
@@ -290,6 +315,7 @@ export default function InventoryPage() {
                         onAddLot={() => setAddLotFor(item)}
                         onEditLot={setEditLot}
                         onDeleteLot={setDeleteLotTarget}
+                        onTradePillClick={setOpenTradeId}
                       />
                     )}
                   </Fragment>
@@ -304,6 +330,8 @@ export default function InventoryPage() {
         {filtered.length} items
       </div>
 
+      <RecordTradeModal open={showRecordTrade} onClose={() => setShowRecordTrade(false)} />
+      <TradeDetailSlideOver tradeId={openTradeId} onClose={() => setOpenTradeId(null)} />
       <AddItemModal open={showAddItem} onClose={() => setShowAddItem(false)} />
       {addLotFor && (
         <AddLotModal
