@@ -2,6 +2,7 @@ import { useMemo, useState, type FormEvent } from 'react'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { Plus, Trash2, ChevronDown, ChevronRight } from 'lucide-react'
 import Modal, { Field, inputCls, ModalActions } from '../Modal'
+import InfoPopover from '../InfoPopover'
 import ItemPicker from '../ItemPicker'
 import { recordTrade, todayStr } from '../../lib/mutations'
 import { itemUnitsInStock, type ItemWithLots } from '../../lib/queries'
@@ -142,6 +143,11 @@ export default function RecordTradeModal({ open, onClose }: Props) {
   return (
     <Modal open={open} onClose={handleClose} title="Record Trade" width="max-w-2xl">
       <form onSubmit={submit}>
+        <div className="flex justify-end -mt-2 mb-2">
+          <InfoPopover label="How trades work" width="w-[360px]">
+            <HelpContent />
+          </InfoPopover>
+        </div>
         <div className="grid grid-cols-2 gap-3">
           <Field label="Trade date">
             <input type="date" value={tradedAt} onChange={e => setTradedAt(e.target.value)} className={inputCls} required />
@@ -300,5 +306,94 @@ export default function RecordTradeModal({ open, onClose }: Props) {
         <ModalActions onCancel={handleClose} submitLabel="Record trade" loading={m.isPending} disabled={!!validationError} />
       </form>
     </Modal>
+  )
+}
+
+function HelpContent() {
+  return (
+    <div className="space-y-3 leading-relaxed">
+      <div>
+        <h3 className="text-sm font-semibold text-gray-900 mb-1">Recording a trade</h3>
+        <p>
+          A trade is treated as a barter sale under IRS rules — both sides are recorded at fair
+          market value (FMV), and the trade itself anchors the transaction price.
+        </p>
+      </div>
+
+      <div>
+        <p>
+          <strong>You gave</strong> — items leaving your inventory. Each becomes a Sale at the FMV you
+          enter, FIFO-depleting the underlying lot.
+        </p>
+      </div>
+
+      <div>
+        <p>
+          <strong>You received</strong> — items entering your inventory. Each becomes a new lot with
+          cost basis = the FMV you enter. Pick an existing item or create a new one inline.
+        </p>
+      </div>
+
+      <div>
+        <p>
+          <strong>Cash boot</strong> — optional cash that balances the trade. The balance rule is:
+        </p>
+        <pre className="mt-1 bg-gray-50 px-2 py-1.5 rounded text-[11px] whitespace-pre-wrap">
+Given total + cash you paid = Received total + cash you received
+        </pre>
+        <p className="mt-1">
+          The balance footer turns green when this holds. Submit is disabled otherwise.
+        </p>
+      </div>
+
+      <div>
+        <h3 className="text-sm font-semibold text-gray-900 mb-1">What gets posted to Schedule C</h3>
+        <table className="w-full text-[11px]">
+          <thead>
+            <tr className="text-left text-gray-500">
+              <th className="py-1 pr-2 font-medium">Component</th>
+              <th className="py-1 pr-2 font-medium">Amount</th>
+              <th className="py-1 font-medium">Cash?</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr className="border-t border-gray-100">
+              <td className="py-1 pr-2">Non-cash income</td>
+              <td className="py-1 pr-2">given − cash received</td>
+              <td className="py-1">non-cash</td>
+            </tr>
+            <tr className="border-t border-gray-100">
+              <td className="py-1 pr-2">Non-cash COGS</td>
+              <td className="py-1 pr-2">same (always washes)</td>
+              <td className="py-1">non-cash</td>
+            </tr>
+            <tr className="border-t border-gray-100">
+              <td className="py-1 pr-2">Cash boot</td>
+              <td className="py-1 pr-2">signed</td>
+              <td className="py-1">real bank txn</td>
+            </tr>
+          </tbody>
+        </table>
+        <p className="mt-1">
+          The two non-cash legs cancel each other; only the cash boot moves your Schedule C totals
+          at trade time. The deferred gain materializes later when received items are sold.
+        </p>
+      </div>
+
+      <div>
+        <p>
+          <strong>FMV source notes</strong> — recommended for IRS defensibility. Save a quick
+          reference (e.g. "eBay sold comps screenshot 2026-06-24").
+        </p>
+      </div>
+
+      <div>
+        <p>
+          <strong>Editing</strong> — trades are read-only after creation. To change one, delete it
+          from the Trade detail drawer and re-record. Delete blocks if you've already sold any
+          received items.
+        </p>
+      </div>
+    </div>
   )
 }
