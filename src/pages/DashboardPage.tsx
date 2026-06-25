@@ -128,10 +128,10 @@ export default function DashboardPage() {
     queryFn: () => fetchSales(range.start, range.end),
   })
 
-  const kpis = useMemo(() => computeKPIs(transactions), [transactions])
+  const kpis = useMemo(() => computeKPIs(transactions, []), [transactions])
   const profitability = useMemo(() => computeProfitability(sales), [sales])
-  const monthlyData = useMemo(() => computeMonthlyChart(transactions), [transactions])
-  const scheduleC = useMemo(() => computeScheduleC(transactions), [transactions])
+  const monthlyData = useMemo(() => computeMonthlyChart(transactions, []), [transactions])
+  const scheduleC = useMemo(() => computeScheduleC(transactions, []), [transactions])
 
   // Note: scheduleC values are SIGNED. For Part I, positive = income (display as is).
   // For Part II/III (expenses/COGS), values are negative; we display the absolute value

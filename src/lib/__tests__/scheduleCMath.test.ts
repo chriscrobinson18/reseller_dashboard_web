@@ -19,7 +19,7 @@ describe('computeScheduleC', () => {
       tx({ id: 'a', amount: -100, schedule_c_category: 'supplies' }),
       tx({ id: 'b', amount: -50, schedule_c_category: 'supplies' }),
       tx({ id: 'c', amount: -200, schedule_c_category: 'advertising' }),
-    ])
+    ], [])
     expect(totals).toEqual({ supplies: -150, advertising: -200 })
   })
 
@@ -27,14 +27,14 @@ describe('computeScheduleC', () => {
     const totals = computeScheduleC([
       tx({ id: 'a', amount: -100, schedule_c_category: 'supplies' }),
       tx({ id: 'b', amount: 30, schedule_c_category: 'supplies' }), // refund
-    ])
+    ], [])
     expect(totals).toEqual({ supplies: -70 })
   })
 
   it('applies meals 50%', () => {
     const totals = computeScheduleC([
       tx({ id: 'a', amount: -100, schedule_c_category: 'meals' }),
-    ])
+    ], [])
     expect(totals).toEqual({ meals: -50 })
   })
 
@@ -45,7 +45,7 @@ describe('computeScheduleC', () => {
       tx({ id: 'c', amount: -50, schedule_c_category: 'supplies', source: 'csv_import' }),
       tx({ id: 'd', amount: -50, schedule_c_category: 'supplies', related_sale_id: 's1' }),
       tx({ id: 'e', amount: -50, schedule_c_category: 'supplies', net_zero_pair_id: 'p1' }),
-    ])
+    ], [])
     expect(totals).toEqual({ supplies: -100 })
   })
 
@@ -54,14 +54,14 @@ describe('computeScheduleC', () => {
       tx({ id: 'a', amount: -500, schedule_c_category: 'transfer' }),
       tx({ id: 'b', amount: -100, schedule_c_category: 'personal' }),
       tx({ id: 'c', amount: -50, schedule_c_category: 'supplies' }),
-    ])
+    ], [])
     expect(totals).toEqual({ supplies: -50 })
   })
 
   it('excludes uncategorized', () => {
     const totals = computeScheduleC([
       tx({ id: 'a', amount: -100, schedule_c_category: undefined }),
-    ])
+    ], [])
     expect(totals).toEqual({})
   })
 })
@@ -72,7 +72,7 @@ describe('computeKPIs', () => {
       tx({ id: 'a', amount: 1000, schedule_c_category: 'payout' }),
       tx({ id: 'b', amount: -200, schedule_c_category: 'supplies' }),
       tx({ id: 'c', amount: -100, schedule_c_category: 'advertising' }),
-    ])
+    ], [])
     expect(result.income).toBe(1000)
     expect(result.expenses).toBe(300)
     expect(result.net).toBe(700)
@@ -83,7 +83,7 @@ describe('computeKPIs', () => {
       tx({ id: 'a', amount: 1000, schedule_c_category: 'payout' }),
       tx({ id: 'b', amount: -200, schedule_c_category: 'supplies' }),
       tx({ id: 'c', amount: 50, schedule_c_category: 'supplies' }), // refund
-    ])
+    ], [])
     expect(result.income).toBe(1000)
     expect(result.expenses).toBe(150)
     expect(result.net).toBe(850)
@@ -93,7 +93,7 @@ describe('computeKPIs', () => {
     const result = computeKPIs([
       tx({ id: 'a', amount: 1000, schedule_c_category: 'payout' }),
       tx({ id: 'b', amount: -30, schedule_c_category: 'payout' }), // chargeback
-    ])
+    ], [])
     expect(result.income).toBe(970)
     expect(result.expenses).toBe(0)
     expect(result.net).toBe(970)
@@ -103,7 +103,7 @@ describe('computeKPIs', () => {
     const result = computeKPIs([
       tx({ id: 'a', amount: 1000, schedule_c_category: 'payout' }),
       tx({ id: 'b', amount: -400, schedule_c_category: 'cost_of_goods' }),
-    ])
+    ], [])
     expect(result.income).toBe(1000)
     expect(result.expenses).toBe(400)
     expect(result.net).toBe(600)
@@ -116,7 +116,7 @@ describe('computeMonthlyChart', () => {
       tx({ id: 'a', date: '2026-01-15', amount: 1000, schedule_c_category: 'payout' }),
       tx({ id: 'b', date: '2026-01-20', amount: -200, schedule_c_category: 'supplies' }),
       tx({ id: 'c', date: '2026-02-05', amount: 500, schedule_c_category: 'payout' }),
-    ])
+    ], [])
     expect(result).toEqual([
       { month: '2026-01', income: 1000, expenses: 200 },
       { month: '2026-02', income: 500, expenses: 0 },
@@ -127,7 +127,7 @@ describe('computeMonthlyChart', () => {
     const result = computeMonthlyChart([
       tx({ id: 'a', date: '2026-01-15', amount: -200, schedule_c_category: 'supplies' }),
       tx({ id: 'b', date: '2026-01-20', amount: 50, schedule_c_category: 'supplies' }),
-    ])
+    ], [])
     expect(result).toEqual([
       { month: '2026-01', income: 0, expenses: 150 },
     ])
@@ -138,7 +138,7 @@ describe('computeMonthlyChart', () => {
       tx({ id: 'a', date: '2026-03-10', amount: 100, schedule_c_category: 'payout' }),
       tx({ id: 'b', date: '2026-01-10', amount: 100, schedule_c_category: 'payout' }),
       tx({ id: 'c', date: '2026-02-10', amount: 100, schedule_c_category: 'payout' }),
-    ])
+    ], [])
     expect(result.map(r => r.month)).toEqual(['2026-01', '2026-02', '2026-03'])
   })
 })

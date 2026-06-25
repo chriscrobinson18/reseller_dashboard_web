@@ -1,12 +1,13 @@
 import { bucketTransaction } from './categories'
+import type { CustomCategory } from './categories'
 import type { Transaction } from './types'
 import { monthKey } from './utils'
 
 /** Sum of signed amounts per Schedule C category. Sum is signed (refunds against expenses reduce expense totals). */
-export function computeScheduleC(transactions: Transaction[]): Record<string, number> {
+export function computeScheduleC(transactions: Transaction[], customs: CustomCategory[]): Record<string, number> {
   const totals: Record<string, number> = {}
   for (const t of transactions) {
-    const b = bucketTransaction(t)
+    const b = bucketTransaction(t, customs)
     if (b.bucket === null || b.categoryValue === null) continue
     totals[b.categoryValue] = (totals[b.categoryValue] ?? 0) + b.signedAmount
   }
@@ -20,11 +21,11 @@ export interface KPITotals {
 }
 
 /** Period-scoped income, expenses, and net for the dashboard KPI row. Refunds against expenses reduce expenses. */
-export function computeKPIs(transactions: Transaction[]): KPITotals {
+export function computeKPIs(transactions: Transaction[], customs: CustomCategory[]): KPITotals {
   let incomeSum = 0
   let expenseSum = 0  // negative in the normal case
   for (const t of transactions) {
-    const b = bucketTransaction(t)
+    const b = bucketTransaction(t, customs)
     if (b.bucket === 'income') incomeSum += b.signedAmount
     else if (b.bucket === 'expense' || b.bucket === 'cogs') expenseSum += b.signedAmount
   }
@@ -42,10 +43,10 @@ export interface MonthlyBar {
 }
 
 /** Monthly income/expense bar chart data. Refunds against expenses reduce expenses, not income. */
-export function computeMonthlyChart(transactions: Transaction[]): MonthlyBar[] {
+export function computeMonthlyChart(transactions: Transaction[], customs: CustomCategory[]): MonthlyBar[] {
   const months: Record<string, { income: number; expense: number }> = {}
   for (const t of transactions) {
-    const b = bucketTransaction(t)
+    const b = bucketTransaction(t, customs)
     if (b.bucket === null) continue
     const key = monthKey(t.date)
     if (!months[key]) months[key] = { income: 0, expense: 0 }

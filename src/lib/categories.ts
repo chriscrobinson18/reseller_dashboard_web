@@ -134,11 +134,10 @@ export interface BucketedAmount {
  * which correctly offsets the negative expense amounts when summed). Callers should sum
  * signedAmount per categoryValue and only abs() at display time.
  *
- * Future work: when custom_categories ships, this function already handles arbitrary
- * categoryValue strings — it's the dashboard display code (CATEGORIES.filter) that
- * needs to become data-driven. See docs/categories.md "Custom categories".
+ * Pass the user's custom categories array so custom-tagged transactions resolve correctly.
+ * Pass [] when no custom categories are available (all existing built-in tests stay valid).
  */
-export function bucketTransaction(t: Transaction): BucketedAmount {
+export function bucketTransaction(t: Transaction, customs: CustomCategory[]): BucketedAmount {
   const none: BucketedAmount = { bucket: null, categoryValue: null, signedAmount: 0 }
 
   if (t.record_type === 'settlement') return none
@@ -147,7 +146,7 @@ export function bucketTransaction(t: Transaction): BucketedAmount {
   if (t.net_zero_pair_id) return none
   if (!t.schedule_c_category) return none
 
-  const cat = getCategoryDef(t.schedule_c_category)
+  const cat = resolveCategory(t.schedule_c_category, customs)
   if (cat?.isExcluded) return none
 
   const mult = cat?.mealsHalf ? 0.5 : 1
