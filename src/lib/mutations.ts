@@ -864,3 +864,75 @@ export async function countTransactionsUsingCustomCategory(customCategoryId: str
   if (error) throw error
   return count ?? 0
 }
+
+// ────────────────────────────────────────────────────────────
+// Plaid
+// ────────────────────────────────────────────────────────────
+
+export interface PlaidCreateLinkTokenResult {
+  link_token: string
+  expiration?: string
+}
+
+/**
+ * Calls plaid_create_link_token. Pass an item_id to request an update-mode token
+ * (used when a connection has status='login_required' and needs re-auth).
+ */
+export async function plaidCreateLinkToken(itemId?: string): Promise<PlaidCreateLinkTokenResult> {
+  const body = itemId ? { item_id: itemId } : {}
+  const { data, error } = await supabase.functions.invoke('plaid_create_link_token', { body })
+  if (error) throw error
+  return data as PlaidCreateLinkTokenResult
+}
+
+/**
+ * Exchanges a Plaid Link public_token for an access_token and persists a plaid_items row
+ * (or refreshes the existing one for update mode). Backend reads institution from metadata.
+ */
+export async function plaidExchangeToken(params: {
+  public_token: string
+  metadata: unknown
+}): Promise<void> {
+  const { error } = await supabase.functions.invoke('plaid_exchange_token', {
+    body: params,
+  })
+  if (error) throw error
+}
+
+export interface PlaidSyncResult {
+  /** Server returns the number of newly-inserted transactions (may be undefined on legacy responses). */
+  inserted?: number
+}
+
+/**
+ * Triggers an incremental Plaid sync. When `reset_cursor=true`, the backend must clear the
+ * stored cursor first and re-pull full history. If the backend ignores the flag, Force Full
+ * Resync silently degrades to a normal Sync Now — documented in the spec.
+ */
+export async function plaidSyncTransactions(params: {
+  item_id: string
+  reset_cursor?: boolean
+}): Promise<PlaidSyncResult> {
+  const { data, error } = await supabase.functions.invoke('plaid_sync_transactions', {
+    body: params,
+  })
+  if (error) throw error
+  return (data ?? {}) as PlaidSyncResult
+}
+
+/** Disconnects an institution. Backend removes plaid_items + cascades plaid_accounts. */
+export async function plaidRemoveItem(itemId: string): Promise<void> {
+  const { error } = await supabase.functions.invoke('plaid_remove_item', {
+    body: { item_id: itemId },
+  })
+  if (error) throw error
+}
+
+/** Direct table update — RLS scopes by user_id. */
+export async function updatePlaidAccount(
+  id: string,
+  patch: { display_name?: string | null; sync_enabled?: boolean }
+): Promise<void> {
+  const { error } = await supabase.from('plaid_accounts').update(patch).eq('id', id)
+  if (error) throw error
+}
