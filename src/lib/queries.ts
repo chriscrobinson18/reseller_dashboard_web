@@ -1,6 +1,6 @@
 import { useQuery } from '@tanstack/react-query'
 import { supabase } from './supabase'
-import type { Item, InventoryLot, Trade } from './types'
+import type { Item, InventoryLot, Trade, PlaidItem, PlaidAccount } from './types'
 import type { CustomCategory } from './categories'
 import { customCategoryValue } from './categories'
 import type { ColorKey } from './categoryPalette'
@@ -126,4 +126,41 @@ export function useCustomCategories() {
 /** Active (non-tombstoned) custom categories for picker UIs. */
 export function activeCustomCategories(customs: CustomCategory[]): CustomCategory[] {
   return customs.filter(c => !c.deletedAt)
+}
+
+/** Lists the user's connected Plaid institutions. RLS scopes by user_id. */
+export function usePlaidItems() {
+  return useQuery({
+    queryKey: ['plaid_items'],
+    queryFn: async (): Promise<PlaidItem[]> => {
+      const { data, error } = await supabase
+        .from('plaid_items')
+        .select('*')
+        .order('institution_name', { ascending: true, nullsFirst: false })
+      if (error) throw error
+      return (data ?? []) as PlaidItem[]
+    },
+  })
+}
+
+/**
+ * Lists Plaid accounts under one institution.
+ *
+ * `itemId` here is the Plaid-side string id (the `item_id` column on plaid_items and
+ * plaid_accounts), NOT the DB row uuid. Pass `plaidItem.item_id`, not `plaidItem.id`.
+ */
+export function usePlaidAccounts(itemId: string | null) {
+  return useQuery({
+    queryKey: ['plaid_accounts', itemId],
+    enabled: !!itemId,
+    queryFn: async (): Promise<PlaidAccount[]> => {
+      const { data, error } = await supabase
+        .from('plaid_accounts')
+        .select('id, user_id, item_id, account_id, name, mask, subtype, display_name, sync_enabled, created_at')
+        .eq('item_id', itemId!)
+        .order('name', { ascending: true, nullsFirst: false })
+      if (error) throw error
+      return (data ?? []) as PlaidAccount[]
+    },
+  })
 }
