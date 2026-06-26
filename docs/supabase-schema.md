@@ -103,6 +103,15 @@ Per-user, tax-aware Schedule C categories. See [`docs/superpowers/specs/2026-06-
 
 `transactions.schedule_c_category` stores `cust_<uuid-no-hyphens>` for rows tagged with a custom category. No schema change to `transactions`.
 
+### `plaid_items`
+
+One row per linked Plaid Item (institution). `plaid_accounts` is the per-account child table. Both are written exclusively by the Plaid edge functions; the web client only reads them and toggles `plaid_accounts.sync_enabled`.
+
+| Column | Notes |
+|---|---|
+| `status` (`'active' \| 'login_required' \| 'error'`) | Health of the Plaid connection. Defaults to `'active'`. Written by `plaid_sync_transactions` on `ITEM_LOGIN_REQUIRED` and reset by `plaid_exchange_token` on update-mode success. Web client reads this to drive the "Reconnect needed" badge in Settings; treats the column as `'active'` if missing. |
+| `error_message` | Optional human-readable Plaid error string, shown as a tooltip on the status badge. |
+
 ## Tables referenced but not yet built on (per TASKS.md)
 - `category_rules` (planned — merchant auto-categorization)
 - `inventory_valuations` (planned — Beginning/Ending inventory for Part III, must NOT be period-scoped)
