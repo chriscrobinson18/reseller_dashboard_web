@@ -294,17 +294,33 @@ serve(async (req) => {
                 .maybeSingle()
 
               const renamed = buildRow(tx, user.id, accountMap)
+              // Only mark the pending id as "consumed" if the rename/delete
+              // actually succeeded. On failure we fall through to freshAdds so
+              // the new posted row gets inserted normally and the stale
+              // pending row gets removed by the regular `removed` cleanup —
+              // worse than the handoff path, but better than orphaning the
+              // pending row AND blocking its cleanup.
+              let consumed = false
               if (existingPosted) {
-                await supabase.from('transactions').delete().eq('id', existingPending.id)
+                const { error: delErr } = await supabase
+                  .from('transactions')
+                  .delete()
+                  .eq('id', existingPending.id)
+                if (delErr) console.error('Pending cleanup delete error:', delErr)
+                else consumed = true
               } else {
                 const { error: renameErr } = await supabase
                   .from('transactions')
                   .update(plaidRowFields(renamed))
                   .eq('id', existingPending.id)
                 if (renameErr) console.error('Pending→posted rename error:', renameErr)
+                else consumed = true
               }
-              consumedPendingIds.add(tx.pending_transaction_id)
-              continue
+              if (consumed) {
+                consumedPendingIds.add(tx.pending_transaction_id)
+                continue
+              }
+              // fall through: handoff failed, treat as a fresh add
             }
           }
           freshAdds.push(tx)
@@ -336,9 +352,19 @@ serve(async (req) => {
         }
 
         // ── v32: metadata refresh pass ──
-        // Refresh the 14 metadata columns on every row Plaid re-delivered in
-        // this sync's added batch (whether freshly inserted or pre-existing).
-        // User-editable fields are excluded from the SET clause.
+        // Load-bearing for the Force Full Resync case: when cursor is reset,
+        // Plaid re-delivers historical transactions in `added`. The upsert
+        // above uses ignoreDuplicates:true, so existing rows are skipped — this
+        // pass is what writes the 14 new metadata columns onto those rows.
+        //
+        // For freshly-inserted rows (freshAdds) and renamed handoff rows, this
+        // pass is a redundant no-op write of the same values just written.
+        // Kept simple (one UPDATE per addedTx row) rather than tracking which
+        // rows were inserted vs. skipped — the alternative is an extra
+        // existence check per row, same N+1 cost, more code.
+        //
+        // User-editable fields are excluded from the SET clause via
+        // plaidMetadataFields.
         const refreshRows = addedTx.map((tx: any) => buildRow(tx, user.id, accountMap))
         for (const r of refreshRows) {
           const { error: metaErr } = await supabase
