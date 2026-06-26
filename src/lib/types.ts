@@ -21,6 +21,21 @@ export interface Transaction {
   plaid_category?: string
   created_at: string
   is_non_cash: boolean
+  // ── Plaid metadata (populated by plaid_sync_transactions v39+; null when source ≠ 'plaid'). ──
+  merchant_logo_url?: string | null
+  merchant_website?: string | null
+  merchant_entity_id?: string | null
+  location_city?: string | null
+  location_region?: string | null
+  location_store_number?: string | null
+  payment_channel?: 'online' | 'in store' | 'other' | string | null
+  authorized_date?: string | null
+  iso_currency_code?: string | null
+  pending?: boolean
+  pending_plaid_transaction_id?: string | null
+  plaid_category_detailed?: string | null
+  plaid_category_confidence?: 'LOW' | 'MEDIUM' | 'HIGH' | 'VERY_HIGH' | string | null
+  plaid_metadata?: Record<string, unknown> | null
   trade_id?: string
 }
 
