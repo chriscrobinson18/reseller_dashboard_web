@@ -11,6 +11,7 @@ Knowledge base for the Reseller Dashboard web app, meant to be read by humans an
   - [expenses.md](features/expenses.md)
   - [sales.md](features/sales.md)
   - [inventory.md](features/inventory.md)
+  - [settings.md](features/settings.md)
 - [`../supabase/functions/README.md`](../supabase/functions/README.md) — local-stack workflow for the committed edge functions and Deno tests
 
 Related: [`/TASKS.md`](../TASKS.md) tracks open work and known bugs (P0 tax-correctness items especially). Docs here describe *current* behavior, including known-buggy behavior — check TASKS.md to see if something documented here is slated to change.
