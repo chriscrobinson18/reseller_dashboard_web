@@ -97,7 +97,7 @@ In the existing `### transactions` block (around line 14), add the new columns t
 ```markdown
 ### Plaid metadata fields (added 2026-06-26 by `plaid_metadata_capture`)
 
-Populated by `plaid_sync_transactions` v39+. All nullable; absent when source ≠ `'plaid'`. Backfill on existing rows happens via the **Force Full Resync** kebab option in Settings — see [`features/settings.md`](features/settings.md).
+Populated by `plaid_sync_transactions` v32+. All nullable; absent when source ≠ `'plaid'`. Backfill on existing rows happens via the **Force Full Resync** kebab option in Settings — see [`features/settings.md`](features/settings.md).
 
 | Column | Type | Source field |
 |---|---|---|
@@ -136,7 +136,7 @@ git commit -m "feat(plaid-metadata): add 14 columns to transactions for richer U
 Open `src/lib/types.ts`. Inside `interface Transaction { ... }`, after the last existing field (currently `is_non_cash`), add:
 
 ```ts
-  // ── Plaid metadata (populated by plaid_sync_transactions v39+; null when source ≠ 'plaid'). ──
+  // ── Plaid metadata (populated by plaid_sync_transactions v32+; null when source ≠ 'plaid'). ──
   merchant_logo_url?: string | null
   merchant_website?: string | null
   merchant_entity_id?: string | null
@@ -190,7 +190,7 @@ This task makes one cohesive edit to one file. It changes 3 things:
 Replace the top comment block (lines 1–7 of the current v38) with:
 
 ```ts
-// plaid_sync_transactions v39
+// plaid_sync_transactions v32
 // Adds rich Plaid metadata capture: 14 new columns on transactions (logo, location,
 // payment_channel, authorized_date, pending, detailed PFC + confidence, currency,
 // plaid_metadata jsonb). A side-channel metadata UPDATE pass refreshes those fields
@@ -229,7 +229,7 @@ function buildRow(tx: any, userId: string, accountMap: Record<string, string>) {
     record_type: settlement?.record_type ?? 'transaction',
     platform: settlement?.platform ?? null,
     ...(settlement ? { schedule_c_category: settlement.schedule_c_category } : {}),
-    // ── new fields (v39) ──
+    // ── new fields (v32) ──
     merchant_logo_url: tx.logo_url ?? null,
     merchant_website: tx.website ?? null,
     merchant_entity_id: tx.merchant_entity_id ?? null,
@@ -254,7 +254,7 @@ Below `buildRow`, before the `const BATCH = 200` line, add:
 
 ```ts
 /**
- * The 14 metadata columns added in v39. Used by the side-channel UPDATE pass
+ * The 14 metadata columns added in v32. Used by the side-channel UPDATE pass
  * to refresh metadata on existing rows without touching user edits or the
  * canonical economic fields (amount/date/merchant/type).
  */
@@ -299,7 +299,7 @@ function plaidRowFields(r: ReturnType<typeof buildRow>) {
 Locate the existing per-item `for (const item of plaidItems) { try { ... } }` loop. Inside the `try` block, replace everything from the `if (addedTx.length > 0) { ... }` block through (and including) the existing `if (modifiedTx.length > 0) { ... }` and `if (removedTx.length > 0) { ... }` blocks with the version below. The earlier accumulation (`while (hasMore) { ... }`) stays as-is.
 
 ```ts
-        // ── v39: pending → posted handoff ──
+        // ── v32: pending → posted handoff ──
         // Plaid removes the pending row and adds a new posted row with
         // pending_transaction_id pointing back. Rename the existing row
         // in place instead of delete+insert so user edits survive.
@@ -367,7 +367,7 @@ Locate the existing per-item `for (const item of plaidItems) { try { ... } }` lo
           totalAdded += freshAdds.length
         }
 
-        // ── v39: metadata refresh pass ──
+        // ── v32: metadata refresh pass ──
         // Refresh the 14 metadata columns on every row Plaid re-delivered in
         // this sync's added batch (whether freshly inserted or pre-existing).
         // User-editable fields are excluded from the SET clause.
@@ -393,7 +393,7 @@ Locate the existing per-item `for (const item of plaidItems) { try { ... } }` lo
           totalModified += modifiedTx.length
         }
 
-        // ── v39: removed-skip filter ──
+        // ── v32: removed-skip filter ──
         // Pending rows that we just renamed into posted rows above will
         // appear in Plaid's `removed`. Skip them — we already kept the row.
         const trulyRemoved = removedTx.filter(
@@ -438,7 +438,7 @@ git commit -m "feat(plaid-metadata): capture 14 fields, metadata refresh pass, p
 
 ---
 
-## Task 4: Deploy `plaid_sync_transactions` v39
+## Task 4: Deploy `plaid_sync_transactions` v32
 
 **Files:** none (server-side deploy).
 
@@ -468,7 +468,7 @@ The web client (if running locally) can hit **Sync Now** from Settings. Or invok
 
 Skip if no local environment is set up; Task 8's manual smoke test covers this end-to-end.
 
-(No commit — server-side deploy has no local artifacts. The v39 source already committed in Task 3 is the version control.)
+(No commit — server-side deploy has no local artifacts. The v32 source already committed in Task 3 is the version control.)
 
 ---
 
@@ -826,7 +826,7 @@ Plan: `docs/superpowers/plans/2026-06-26-plaid-metadata-capture.md`
 ## Notable changes
 
 - Migration `plaid_metadata_capture` — 13 typed columns + `plaid_metadata jsonb`. `pending` defaults `false`, rest nullable.
-- `plaid_sync_transactions` v39 deployed. iOS unaffected (additive).
+- `plaid_sync_transactions` v32 deployed. iOS unaffected (additive).
 - New `MerchantAvatar` component.
 
 ## Test plan

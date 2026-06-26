@@ -36,7 +36,7 @@ Bank/manual/CSV-sourced money movements — the Schedule C source of truth for i
 
 #### Plaid metadata fields (added 2026-06-26 by `plaid_metadata_capture`)
 
-Populated by `plaid_sync_transactions` v39+. All nullable; absent when source ≠ `'plaid'`. Backfill on existing rows happens via the **Force Full Resync** kebab option in Settings — see [`features/settings.md`](features/settings.md).
+Populated by `plaid_sync_transactions` v32+. All nullable; absent when source ≠ `'plaid'`. Backfill on existing rows happens via the **Force Full Resync** kebab option in Settings — see [`features/settings.md`](features/settings.md).
 
 | Column | Type | Source field |
 |---|---|---|

@@ -46,7 +46,7 @@ Notes:
 - No new indexes. None of these are query keys yet. `merchant_entity_id` may get an index when the category-rules feature ships.
 - Backfill for existing 3,705 rows happens via the existing **Force Full Resync** flow (see "Backfill" below). No data migration is needed in the SQL migration itself.
 
-## Sync logic — `plaid_sync_transactions` v39
+## Sync logic — `plaid_sync_transactions` v32
 
 Three changes inside the per-item loop, all in `index.ts`.
 
@@ -277,7 +277,7 @@ Captured but not surfaced (live in `plaid_metadata`):
 | Path | Change |
 |---|---|
 | `supabase/migrations/<ts>_plaid_metadata_capture.sql` | new — adds 14 columns |
-| `supabase/functions/plaid_sync_transactions/index.ts` | extended — `buildRow`, metadata refresh pass, pending→posted handoff. Bump comment to `v39`. |
+| `supabase/functions/plaid_sync_transactions/index.ts` | extended — `buildRow`, metadata refresh pass, pending→posted handoff. Bump comment to `v32`. |
 | `src/lib/types.ts` | extended — `Transaction` interface |
 | `src/pages/ExpensesPage.tsx` | `TransactionDetail` slide-over additions |
 | `src/components/MerchantAvatar.tsx` | new — reusable 32×32 logo-or-initial component |
@@ -298,6 +298,6 @@ Both deferable — the logic is mechanical enough that the manual smoke test in 
 
 1. Merge the Settings PR (`feat/settings-and-plaid`) first.
 2. Apply migration.
-3. Deploy `plaid_sync_transactions` v39.
+3. Deploy `plaid_sync_transactions` v32.
 4. Web client deploy with the UI changes.
 5. From Settings, hit **Force Full Resync** on every connected institution. Confirm sample rows now have logos / locations / channel populated.

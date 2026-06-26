@@ -21,7 +21,7 @@ export interface Transaction {
   plaid_category?: string
   created_at: string
   is_non_cash: boolean
-  // ── Plaid metadata (populated by plaid_sync_transactions v39+; null when source ≠ 'plaid'). ──
+  // ── Plaid metadata (populated by plaid_sync_transactions v32+; null when source ≠ 'plaid'). ──
   merchant_logo_url?: string | null
   merchant_website?: string | null
   merchant_entity_id?: string | null
