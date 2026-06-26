@@ -9,6 +9,7 @@ import DashboardPage from './pages/DashboardPage'
 import ExpensesPage from './pages/ExpensesPage'
 import SalesPage from './pages/SalesPage'
 import InventoryPage from './pages/InventoryPage'
+import SettingsPage from './pages/SettingsPage'
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -49,6 +50,7 @@ export default function App() {
               <Route path="/sales" element={<SalesPage />} />
               <Route path="/inventory" element={<InventoryPage />} />
               <Route path="/expenses" element={<ExpensesPage />} />
+              <Route path="/settings" element={<SettingsPage />} />
               <Route path="*" element={<Navigate to="/dashboard" replace />} />
             </Route>
           )}

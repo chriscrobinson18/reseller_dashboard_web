@@ -1,5 +1,5 @@
 import { Outlet, NavLink } from 'react-router-dom'
-import { LayoutDashboard, ShoppingCart, Package, Receipt, LogOut } from 'lucide-react'
+import { LayoutDashboard, ShoppingCart, Package, Receipt, Settings, LogOut } from 'lucide-react'
 import { supabase } from '../lib/supabase'
 
 const NAV = [
@@ -7,6 +7,7 @@ const NAV = [
   { to: '/sales', icon: ShoppingCart, label: 'Sales' },
   { to: '/inventory', icon: Package, label: 'Inventory' },
   { to: '/expenses', icon: Receipt, label: 'Expenses' },
+  { to: '/settings', icon: Settings, label: 'Settings' },
 ]
 
 export default function Layout() {
