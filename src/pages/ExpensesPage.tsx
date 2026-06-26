@@ -1,6 +1,6 @@
 import { useState, useMemo } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { Search, Filter, ChevronDown, Plus, Pencil, Trash2, Tag, X } from 'lucide-react'
+import { Search, Filter, ChevronDown, Plus, Pencil, Trash2, Tag, X, ExternalLink } from 'lucide-react'
 import { supabase } from '../lib/supabase'
 import { getPeriodRange, type PeriodPreset } from '../lib/periods'
 import { resolveCategory } from '../lib/categories'
@@ -15,6 +15,7 @@ import ManageCategoriesModal from '../components/modals/ManageCategoriesModal'
 import TransactionInventorySection from '../components/TransactionInventorySection'
 import { Field, inputCls } from '../components/Modal'
 import TradeDetailSlideOver from '../components/TradeDetailSlideOver'
+import MerchantAvatar from '../components/MerchantAvatar'
 import { useTrade, useCustomCategories } from '../lib/queries'
 import CategoryDropdown from '../components/CategoryDropdown'
 import type { Transaction } from '../lib/types'
@@ -224,8 +225,45 @@ function TransactionDetail({ tx, onClose, onOpenTrade, onManage }: { tx: Transac
           <div className={`text-2xl font-bold tabular-nums ${isExpense ? 'text-red-500' : 'text-green-600'}`}>
             {isExpense ? '-' : '+'}{formatUSD(Math.abs(tx.amount))}
           </div>
-          <div className="text-sm font-medium text-gray-900 mt-1">{tx.merchant || '—'}</div>
-          <div className="text-xs text-gray-500 mt-0.5">{formatDate(tx.date)}</div>
+          <div className="flex items-center gap-3 mt-2">
+            <MerchantAvatar logoUrl={tx.merchant_logo_url} merchant={tx.merchant ?? null} size={36} />
+            <div className="min-w-0 flex-1">
+              <div className="flex items-center gap-2 flex-wrap">
+                {tx.merchant_website ? (
+                  <a
+                    href={tx.merchant_website}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-sm font-medium text-gray-900 hover:underline inline-flex items-center gap-1"
+                  >
+                    {tx.merchant || '—'}
+                    <ExternalLink size={12} className="text-gray-400" />
+                  </a>
+                ) : (
+                  <span className="text-sm font-medium text-gray-900">{tx.merchant || '—'}</span>
+                )}
+                {tx.pending && (
+                  <span className="text-xs font-medium px-2 py-0.5 rounded-full border bg-amber-50 text-amber-700 border-amber-200">
+                    Pending
+                  </span>
+                )}
+              </div>
+              {(() => {
+                const authd = tx.authorized_date
+                const showDual = authd && authd !== tx.date
+                return showDual ? (
+                  <div className="text-xs text-gray-500 mt-0.5">
+                    Purchased {formatDate(authd)} · Posted {formatDate(tx.date)}
+                  </div>
+                ) : (
+                  <div className="text-xs text-gray-500 mt-0.5">{formatDate(tx.date)}</div>
+                )
+              })()}
+              {tx.pending && (
+                <div className="text-xs text-gray-400 mt-0.5">Will finalize within a few days.</div>
+              )}
+            </div>
+          </div>
         </div>
       )}
 
@@ -300,10 +338,68 @@ function TransactionDetail({ tx, onClose, onOpenTrade, onManage }: { tx: Transac
         {notesMutation.isPending && <div className="text-xs text-gray-400 mt-0.5">Saving…</div>}
       </div>
 
+      {/* Details (Plaid metadata) */}
+      {(() => {
+        const channelLabel: Record<string, string> = {
+          'online': 'Online',
+          'in store': 'In store',
+          'other': 'Other',
+        }
+        const locParts = [
+          tx.location_city,
+          tx.location_region,
+          tx.location_store_number ? `Store #${tx.location_store_number}` : null,
+        ].filter(Boolean) as string[]
+        const showCurrency = tx.iso_currency_code && tx.iso_currency_code !== 'USD'
+        const hasAny = tx.payment_channel || locParts.length > 0 || showCurrency
+        if (!hasAny) return null
+        return (
+          <div className="border-t border-gray-100 pt-3 space-y-2">
+            {tx.payment_channel && (
+              <div className="text-xs">
+                <span className="text-gray-500 mr-2">Channel:</span>
+                <span className="px-2 py-0.5 rounded-full bg-gray-100 text-gray-700 font-medium">
+                  {channelLabel[tx.payment_channel as string] ?? tx.payment_channel}
+                </span>
+              </div>
+            )}
+            {locParts.length > 0 && (
+              <div className="text-xs">
+                <span className="text-gray-500 mr-2">Location:</span>
+                <span className="text-gray-700">{locParts.join(' · ')}</span>
+              </div>
+            )}
+            {showCurrency && (
+              <div className="text-xs">
+                <span className="text-gray-500 mr-2">Currency:</span>
+                <span className="text-gray-700">{tx.iso_currency_code}</span>
+              </div>
+            )}
+          </div>
+        )
+      })()}
+
       {/* Plaid raw category */}
       {tx.plaid_category && (
         <div className="text-xs text-gray-400">
-          Plaid category: <span className="text-gray-600">{tx.plaid_category}</span>
+          Plaid category:{' '}
+          <span className="text-gray-600">
+            {tx.plaid_category}
+            {tx.plaid_category_detailed && ` / ${tx.plaid_category_detailed}`}
+          </span>
+          {tx.plaid_category_confidence && (
+            <span
+              className={`ml-2 text-[10px] font-semibold uppercase tracking-wide px-1.5 py-0.5 rounded ${
+                tx.plaid_category_confidence === 'VERY_HIGH' || tx.plaid_category_confidence === 'HIGH'
+                  ? 'bg-green-50 text-green-700'
+                  : tx.plaid_category_confidence === 'MEDIUM'
+                    ? 'bg-amber-50 text-amber-700'
+                    : 'bg-gray-100 text-gray-600'
+              }`}
+            >
+              {tx.plaid_category_confidence.replace('_', ' ')}
+            </span>
+          )}
         </div>
       )}
 
