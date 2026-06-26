@@ -34,6 +34,27 @@ Bank/manual/CSV-sourced money movements — the Schedule C source of truth for i
 | `trade_id` | nullable FK to `trades`; set on all transactions related to a trade (income, COGS, optional cash boot). `ON DELETE SET NULL`. |
 | **no `deleted_at`** | transactions are **hard-deleted** (`deleteTransaction`), unlike every other table here |
 
+#### Plaid metadata fields (added 2026-06-26 by `plaid_metadata_capture`)
+
+Populated by `plaid_sync_transactions` v39+. All nullable; absent when source ≠ `'plaid'`. Backfill on existing rows happens via the **Force Full Resync** kebab option in Settings — see [`features/settings.md`](features/settings.md).
+
+| Column | Type | Source field |
+|---|---|---|
+| `merchant_logo_url` | `text` | `logo_url` |
+| `merchant_website` | `text` | `website` |
+| `merchant_entity_id` | `text` | `merchant_entity_id` |
+| `location_city` | `text` | `location.city` |
+| `location_region` | `text` | `location.region` |
+| `location_store_number` | `text` | `location.store_number` |
+| `payment_channel` | `text` | `payment_channel` (`'online' \| 'in store' \| 'other'`) |
+| `authorized_date` | `date` | `authorized_date` |
+| `iso_currency_code` | `text` | `iso_currency_code` |
+| `pending` | `boolean NOT NULL DEFAULT false` | `pending` |
+| `pending_plaid_transaction_id` | `text` | `pending_transaction_id` |
+| `plaid_category_detailed` | `text` | `personal_finance_category.detailed` |
+| `plaid_category_confidence` | `text` | `personal_finance_category.confidence_level` |
+| `plaid_metadata` | `jsonb` | the entire raw Plaid transaction (safety net) |
+
 ### `sales`
 The relational centerpiece — one row per sale event, FIFO-depletes inventory via the `record_sale` edge function.
 
