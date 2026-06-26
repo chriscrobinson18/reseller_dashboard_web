@@ -51,3 +51,15 @@ The same dropdown is also used by [`AddTransactionModal`](../../src/components/m
 ## Gaps vs. mobile (see TASKS.md P1 for the authoritative list)
 
 No sort (date/amount/merchant asc/desc), no account filter beyond the period preset, no receipt attachment UI despite `receipt_url` existing on the type. (Bulk categorize shipped 2026-07-10.)
+
+## Plaid metadata in the detail slide-over (added 2026-06-26)
+
+When a transaction has `source = 'plaid'`, the slide-over surfaces:
+- Merchant logo (via `MerchantAvatar` — falls back to initial circle if no `merchant_logo_url`).
+- Merchant website link (when `merchant_website` is set; opens in a new tab).
+- "Pending" amber pill (when `pending = true`).
+- Dual dates: "Purchased X · Posted Y" when `authorized_date` differs from `date`.
+- Payment channel pill, location row (city · region · store #), non-USD currency callout.
+- Detailed PFC + confidence pill next to the existing primary PFC.
+
+All fields render conditionally — manual / CSV / trade-source transactions show none of these.

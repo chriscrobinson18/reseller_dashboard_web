@@ -19,6 +19,7 @@ institution from `plaid_accounts`.
   `reset_cursor: true`. Backend dependency: the edge function must accept the flag and
   clear `plaid_items.cursor`. If the flag is ignored, this silently degrades to a normal
   Sync Now.
+  - After the `plaid_metadata_capture` migration (2026-06-26), running Force Full Resync once per institution backfills merchant logos, locations, payment channel, and detailed PFC onto historical transactions. User edits (categories, notes, sale links, receipts) are not touched.
 - **Reconnect** — appears as a red button when `plaid_items.status = 'login_required'`.
   Launches Plaid Link in update mode (passes `item_id` to `plaid_create_link_token`).
 - **Disconnect** — kebab menu → confirm dialog → `plaid_remove_item`. Historical
