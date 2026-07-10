@@ -14,6 +14,13 @@
 //        related_sale_id = sale_id, source = 'manual'.
 //      The dashboard's Schedule C breakdown shows this as a negative Part I
 //      line (Returns & Allowances) that reduces gross receipts.
+//   6. If `return_shipping_cost` (> 0) is given — the label cost of shipping
+//      the item back, which the seller (not the buyer) pays — inserts a
+//      second `transactions` row: amount = -return_shipping_cost,
+//      schedule_c_category = 'shipping_postage', related_sale_id = sale_id.
+//      Both refund-related rows use `type: 'refund'` (shared with the money
+//      refund row) so `reverse_return` can find and delete exactly these two
+//      rows without touching the sale's original payout/fee/shipping rows.
 //
 // See docs/superpowers/specs/2026-06-23-p0-tax-correctness-design.md § C
 // (P0 item 5) for the cost-basis and refund-row rationale.
@@ -68,6 +75,7 @@ serve(async (req) => {
       quantity,
       refund_amount,
       reason,
+      return_shipping_cost,
       source = "manual",
     } = body;
 
@@ -177,6 +185,25 @@ serve(async (req) => {
       schedule_c_category: "returns_allowances",
       related_sale_id: sale_id,
     });
+
+    /* Insert return-shipping-cost transaction row, if given (Schedule C:
+       Shipping & Postage — a deductible expense, distinct from the buyer
+       refund above). */
+    const shippingCost = Number(return_shipping_cost) || 0;
+    if (shippingCost > 0) {
+      await supabase.from("transactions").insert({
+        user_id: user.id,
+        date: today,
+        amount: -shippingCost,
+        merchant: sale.platform
+          ? `${sale.platform} return shipping`
+          : "Return shipping",
+        type: "refund",
+        source: "manual",
+        schedule_c_category: "shipping_postage",
+        related_sale_id: sale_id,
+      });
+    }
 
     return json(200, {
       success: true,

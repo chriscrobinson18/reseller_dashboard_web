@@ -397,13 +397,16 @@ export async function deleteSale(id: string) {
  * Processes a full or partial return: reverses the sale's FIFO inventory
  * movements (restoring quantity_remaining at each lot's original unit_cost),
  * updates the sale's refunded_quantity/refunded_amount/return_status, and
- * inserts a `returns_allowances`-categorized refund transaction row. See
+ * inserts a `returns_allowances`-categorized refund transaction row (plus a
+ * `shipping_postage`-categorized one for `returnShippingCost`, if given —
+ * the label cost of shipping the item back, paid by the seller). See
  * supabase/functions/record_return/.
  */
 export async function recordReturn(params: {
   saleId: string
   quantity: number
   refundAmount: number
+  returnShippingCost?: number | null
   reason?: string | null
 }) {
   const { data, error } = await supabase.functions.invoke('record_return', {
@@ -411,6 +414,7 @@ export async function recordReturn(params: {
       sale_id: params.saleId,
       quantity: params.quantity,
       refund_amount: params.refundAmount,
+      return_shipping_cost: params.returnShippingCost || undefined,
       reason: params.reason || undefined,
       source: 'manual',
     },
@@ -418,6 +422,63 @@ export async function recordReturn(params: {
   if (error) throw error
   if (data?.error) throw new Error(data.error)
   return data as { success: true; sale_id: string; refunded_quantity: number; refunded_amount: number; units_restored: number }
+}
+
+/**
+ * Undoes a single `returns` row (re-depletes inventory FIFO, decrements the
+ * sale's refund totals, deletes the linked refund/return-shipping
+ * transactions, deletes the `returns` row). Used to implement "edit a
+ * return" as delete-then-re-record. See supabase/functions/reverse_return/.
+ */
+export async function reverseReturn(returnId: string) {
+  const { data, error } = await supabase.functions.invoke('reverse_return', {
+    body: { return_id: returnId },
+  })
+  if (error) throw error
+  if (data?.error) throw new Error(data.error)
+}
+
+export interface ActiveReturn {
+  id: string
+  quantity: number
+  refundAmount: number
+  returnShippingCost: number
+  reason: string
+}
+
+/**
+ * Fetches the sale's most recent return (this app supports at most one
+ * active return per sale) plus its linked return-shipping-cost transaction,
+ * for pre-filling the edit-return form. Returns null if the sale has never
+ * been returned.
+ */
+export async function fetchActiveReturn(saleId: string): Promise<ActiveReturn | null> {
+  const { data: returns, error } = await supabase
+    .from('returns')
+    .select('id, quantity, refund_amount, reason')
+    .eq('sale_id', saleId)
+    .order('created_at', { ascending: false })
+    .limit(1)
+  if (error) throw error
+  const ret = returns?.[0]
+  if (!ret) return null
+
+  const { data: shippingTxns, error: txErr } = await supabase
+    .from('transactions')
+    .select('amount')
+    .eq('related_sale_id', saleId)
+    .eq('type', 'refund')
+    .eq('schedule_c_category', 'shipping_postage')
+  if (txErr) throw txErr
+  const returnShippingCost = (shippingTxns ?? []).reduce((sum, t) => sum - t.amount, 0)
+
+  return {
+    id: ret.id,
+    quantity: ret.quantity,
+    refundAmount: ret.refund_amount,
+    returnShippingCost,
+    reason: ret.reason ?? '',
+  }
 }
 
 /**

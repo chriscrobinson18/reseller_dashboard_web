@@ -88,7 +88,7 @@ _Daily-workflow features mobile has that web doesn't yet. Ordered by how often t
 - [ ] **Receipt attachment** — file upload to the existing private `receipts` Supabase Storage bucket (already created for mobile, RLS user-scoped); inline preview + replace + delete in the transaction detail slide-over
 
 ### Returns
-- [x] **Return/refund UI** — "Process Return" button in Sale detail calling `record_return` edge function. Shipped: `ProcessReturnModal` + `recordReturn` mutation wrapper; button hidden once `return_status === 'full'` or for trade-linked sales.
+- [x] **Return/refund UI** — "Process Return" button in Sale detail calling `record_return` edge function. Shipped: `ProcessReturnModal` + `recordReturn` mutation wrapper (button hidden only for trade-linked sales, relabels to "Edit Return" once a return exists). Also shipped: editing a return (delete + re-record via new `reverse_return` edge function), an optional return-shipping-cost field on the return (seller-paid label cost, posted as a `shipping_postage` transaction), and Sales-tab Net Payout now sums all `related_sale_id`-linked transactions so refunds/return-shipping show up as a (often negative) net payout. **`reverse_return` and `record_return`'s new `return_shipping_cost` param are undeployed** — see `docs/supabase-schema.md` Deployment note.
 
 ### Export
 - [ ] **CSV export** — per-period Schedule C transaction export (browser download instead of mobile's share sheet); strip Non-Business rows (`isExcluded` categories), fix amount sign convention (export `abs()` + `Type` column), add `Platform` + `Gross Amount` columns
