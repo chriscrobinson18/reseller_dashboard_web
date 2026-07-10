@@ -9,6 +9,8 @@ import { CATEGORIES, resolveCategory, type CustomCategory, type CategoryDef } fr
 import { useCustomCategories } from '../lib/queries'
 import { computeScheduleC, computeKPIs, computeMonthlyChart } from '../lib/scheduleCMath'
 import { formatUSD } from '../lib/utils'
+import { buildScheduleCTransactionsCSV, downloadCSV } from '../lib/csvExport'
+import { Download } from 'lucide-react'
 import PeriodPicker from '../components/PeriodPicker'
 import type { Transaction, Sale } from '../lib/types'
 
@@ -172,6 +174,12 @@ export default function DashboardPage() {
 
   const loading = loadingTx || loadingSales
 
+  function handleExport() {
+    const csv = buildScheduleCTransactionsCSV(transactions, customs)
+    const label = (range.start ?? 'all').slice(0, 10)
+    downloadCSV(`schedule-c-transactions-${label}-to-${(range.end ?? 'now').slice(0, 10)}.csv`, csv)
+  }
+
   return (
     <div className="p-6 space-y-6 max-w-6xl mx-auto">
       {/* Header */}
@@ -179,7 +187,17 @@ export default function DashboardPage() {
         <h1 className="text-lg font-semibold text-gray-900">
           Dashboard — <span className="text-gray-500 font-normal">{PERIOD_LABELS[period]}</span>
         </h1>
-        {loading && <span className="text-xs text-gray-400">Loading…</span>}
+        <div className="flex items-center gap-3">
+          {loading && <span className="text-xs text-gray-400">Loading…</span>}
+          <button
+            onClick={handleExport}
+            disabled={transactions.length === 0}
+            title="Download this period's business transactions as a Schedule C CSV"
+            className="flex items-center gap-1.5 border border-gray-200 rounded-lg px-3 py-1.5 text-sm font-medium text-gray-700 hover:bg-gray-50 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+          >
+            <Download size={14} /> Export CSV
+          </button>
+        </div>
       </div>
 
       {/* Period picker */}

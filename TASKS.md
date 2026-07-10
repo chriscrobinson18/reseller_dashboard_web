@@ -92,7 +92,7 @@ _Daily-workflow features mobile has that web doesn't yet. Ordered by how often t
 - [ ] **CSV return reconciliation** — detect refund + return-shipping rows in imported eBay/Amazon transactions, match to sales by `external_order_id`, and route them through the same inventory-restoring `record_return` primitive (re-tagging existing CSV rows, not duplicating) via a review queue. Hybrid model chosen in the returns design doc; depends on "Marketplace CSV import" + "Settlement Status view" above.
 
 ### Export
-- [ ] **CSV export** — per-period Schedule C transaction export (browser download instead of mobile's share sheet); strip Non-Business rows (`isExcluded` categories), fix amount sign convention (export `abs()` + `Type` column), add `Platform` + `Gross Amount` columns
+- [x] **CSV export** — Shipped 2026-07-10. Dashboard "Export CSV" button downloads the period's business transactions via `src/lib/csvExport.ts`. Scope = all business rows (strips `isExcluded` + settlement rows, keeps sale-linked + uncategorized); `abs()` amount + `Type` direction column; `Platform` + `Gross Amount` columns. Unit-tested. See [`docs/features/dashboard.md`](docs/features/dashboard.md#export-csv).
 - [ ] **Schedule C Summary export** — one row per IRS line with net profit at bottom (the "form", not a transaction dump) — same gap exists on mobile, worth shipping here first
 
 ### Settings / Misc

@@ -21,6 +21,15 @@ All three transaction-aggregating functions (KPI row, Schedule C breakdown, mont
 
 `PeriodPicker` drives a single `period` state (`PeriodPreset`, default `'ytd'`); both queries key off `getPeriodRange(period)` so changing the period refetches both transactions and sales.
 
+## Export CSV
+
+The header **Export CSV** button downloads the selected period's business transactions as a Schedule C ledger via `buildScheduleCTransactionsCSV` + `downloadCSV` ([`src/lib/csvExport.ts`](../../src/lib/csvExport.ts)). Disabled when the period has no transactions.
+
+- **Scope — all business rows** (`scheduleCExportRows`): every fetched transaction EXCEPT `record_type === 'settlement'` and rows whose resolved category is `isExcluded` (Transfer / Personal / Settlement / Balance Adjustment + customs inheriting that flag). **Deliberately different from the Schedule C Breakdown card**, which routes through `bucketTransaction` and therefore drops sale-linked / `csv_import` rows. The export *keeps* those — that is where sales income and selling costs live — plus uncategorized rows (labeled `Uncategorized`) so nothing is silently dropped from an accountant-facing ledger.
+- **Sign convention:** `Amount` is always absolute; the `Type` column (`Income` / `Expense`) carries the direction. A `returns_allowances` refund (negative) exports as an `Expense`-direction row under the Returns & Allowances category. The meals 50% multiplier is **not** applied — a ledger shows the actual dollar amount.
+- **Columns:** Date, Type, Category, Schedule C Line, Merchant, Platform, Gross Amount (`gross_amount` if present else abs amount), Amount, Notes. Rows sorted ascending by date; RFC-4180 quoting. Covered by `src/lib/__tests__/csvExport.test.ts`.
+- The "form" view (one row per IRS line with net profit) is the separate P1 **Schedule C Summary export**, not yet built.
+
 ## Things to know before changing this page
 
 - All money math here is duplicated from (or duplicated *into*) `SalesPage.tsx` and `ExpensesPage.tsx` — check [data-flows.md](../data-flows.md) before "fixing" a calculation only here.
