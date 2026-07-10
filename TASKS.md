@@ -6,6 +6,43 @@ _Created: June 23, 2026. Source of truth for porting the iOS app's feature set t
 
 ---
 
+## 🎯 Next Up — build order (set 2026-07-10)
+
+_Sequenced, not just tiered — each phase assumes the previous one is done, though phases can run in parallel if capacity allows. Reasoning: fix what's silently wrong today (cheap), harden the money-moving paths (moderate), unlock the actual daily workflow this account runs on (Collectibles — box breaks, grading, sealed-product holding), reach filing-readiness, then scale via CSV/Plaid automation, then harden further. Supersedes reading tier order (P0/P1/P2...) as a literal work queue — use this section for "what's next," the tiers below for full detail and cross-references._
+
+**Phase 1 — Fix what's silently wrong right now** _(ship this week; both are small)_
+1. **REQ-09** — Schedule C completeness fix: `bucketTransaction` excludes every sale-linked transaction, so manually-recorded sales never reach the Dashboard's Part I/Part II totals today. Highest-leverage single fix in this file.
+2. **REQ-07** — Add `facebook` to the platform list. One line; stops the highest-volume cash channel from misreporting as `manual`.
+
+**Phase 2 — Harden the money-moving paths** _(one focused engineering pass)_
+3. **REQ-01** — Lock FIFO depletion in `record_sale` (port to an RPC, mirroring `reverse_sale`)
+4. **REQ-02** — Make `record_return` atomic + replay-safe (same RPC treatment)
+5. **REQ-04** — Reconcile sale-quantity edits with FIFO (same mutation surface — bundle with #3/#4)
+
+**Phase 3 — Ship the daily workflow this business actually runs on (Collectibles core)** _(largest single lift, highest business value)_
+6. **Box Opening + Grading capitalization** — spec already written and CPA-approved (`2026-06-23-box-opening-and-grading-design.md`); only the 5 open questions at the bottom need answers before building
+7. **REQ-06** — Personal-use withdrawal (Line 36) — piggybacks on #6's `lot_cost_adjustments` infrastructure
+8. **REQ-08** — Multi-item order entry
+9. **Fast cash-sale entry** (pairs naturally with #2)
+
+**Phase 4 — Filing readiness**
+10. **REQ-03** — Returns & Allowances Part I display split (ship alongside the Return/refund UI)
+11. **Schedule C Summary export**
+12. **Beginning/Ending inventory** (full tax year, not period-scoped)
+13. **1099-K reconciliation by platform** — depends on #10 and #2
+
+**Phase 5 — Scale via automation**
+14. **CSV Import** (eBay/Amazon/TCGPlayer/Mercari) — the actual adoption gate; this volume doesn't get hand-entered forever
+15. **Settlement reconciliation** — manual-linking works standalone now; full auto-matching depends on #14
+16. **Plaid** bank sync
+
+**Phase 6 — Hardening** _(batch together, lower urgency)_
+17. REQ-15 (audit trail) · 18. REQ-16 (custom-category integrity) · 19. REQ-18 (period lock) · 20. REQ-19 (rounding discipline) · 21. REQ-20 (export completeness gate)
+
+P3/P4/P5 below are unaffected — background/opportunistic work, not resequenced.
+
+---
+
 ## ✅ Completed (current state)
 
 ### Foundation
@@ -98,6 +135,7 @@ _Daily-workflow features mobile has that web doesn't yet. Ordered by how often t
 
 ### Returns
 - [ ] **Return/refund UI** — "Process Return" button in Sale detail calling `record_return` edge function (UI doesn't exist on either client yet for return entry — ship web-first since mobile's is also a TODO)
+- [ ] **REQ-03 — Returns & Allowances Part I display split** — the underlying math has been correct since the 2026-06-23 P0 pass (`returns_allowances` rows already reduce Line 1 in `computeScheduleC`), but the Dashboard still nets them silently into the `payout` total instead of rendering "Gross Receipts − Returns & Allowances = Line 1" as three visible figures. Was previously only a TODO comment in `DashboardPage.tsx`, not a tracked checkbox — surfaced explicitly here so it doesn't stay indefinitely deferred. Ship together with the Return/refund UI above (no returns data to display meaningfully until users can actually create them); a 1099-K mismatch otherwise, since platforms report pre-return gross.
 
 ### Collectibles Workflows (card business core)
 
