@@ -80,7 +80,7 @@ _Daily-workflow features mobile has that web doesn't yet. Ordered by how often t
 
 ### Categorization
 - [x] **Custom Schedule C categories** — Shipped 2026-06-25 (see [`docs/superpowers/specs/2026-06-25-custom-categories-design.md`](docs/superpowers/specs/2026-06-25-custom-categories-design.md)). Supabase-backed `custom_categories` table with hybrid tax mapping (parent_value inherits from a built-in, or schedule_line maps directly to a Schedule C line). Inline management via `ManageCategoriesModal` reachable from every category dropdown. Soft-delete tombstones keep historical math intact. _Closed by `7166b87`…`b6b38db`._
-- [ ] **Bulk categorize** — multi-select rows in Expenses table + assign category to all selected at once (mobile has this via swipe; web should use checkbox column)
+- [x] **Bulk categorize** — Shipped 2026-07-10. Checkbox column + select-all in the Expenses table; a floating bar assigns one category to all selected rows via a single `.in('id', ids)` update (`bulkUpdateCategory`). Trade-linked rows are excluded (locked category); selection resets on filter change. See [`docs/features/expenses.md`](docs/features/expenses.md#bulk-categorize).
 - [ ] **Quick categorize from list** — inline category change without opening detail panel (web's `CategoryDropdown` already supports this from the table — confirm UX is on par)
 - [ ] **Period chip filter + sort** in Expenses — mobile has Date/Amount/Merchant sort with asc/desc toggle and a richer period preset/account filter sheet; web only has the basic period picker + search + single category filter today
 

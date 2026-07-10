@@ -9,6 +9,13 @@ Transaction list + editing surface. The only page where `transactions` rows are 
 - Header shows live `income`/`expenses` totals for the *filtered* set (not the exclusion-filtered "business" total Dashboard uses — these are simpler: any positive amount vs. any negative amount in the visible rows) plus an uncategorized-count badge computed from the *unfiltered* period set.
 - Inline category change: clicking the `CategoryBadge` in a row opens the shared [`CategoryDropdown`](../../src/components/CategoryDropdown.tsx), a fixed-position popover positioned via CSS vars (`--dd-top`/`--dd-left`) set from the clicked element's bounding rect — not a `<select>`. Mutates via local `updateCategory`, invalidates `['transactions']`.
 
+### Bulk categorize
+
+- A leading checkbox column plus a header select-all lets the user multi-select rows. Trade-linked rows (`tx.trade_id`) have a disabled checkbox and are excluded from select-all — their category is locked (edited via the trade). Plaid rows are selectable (category is editable for them).
+- When ≥1 row is selected, a floating dark pill bar appears at the bottom of the list: "N selected", a **Set category** dropdown (the same shared `CategoryDropdown`, so custom categories and "Clear category" both work), and a clear-selection ✕.
+- Applying a category runs `bulkUpdateCategory(ids, cat)` — a single `.update({ schedule_c_category }).in('id', ids)` round-trip (not N requests) — then invalidates `['transactions']` and clears the selection.
+- Selection is reset whenever the visible set changes (period / search / category filter / Sale-rows toggle) via a render-phase previous-signature check, so a bulk action can never silently hit rows the user can no longer see.
+
 ### Category dropdowns (shared)
 
 Every category picker on this page (top-of-page filter, inline category cell, detail-pane dropdown) renders the shared `CategoryDropdown` component with four sections:
@@ -43,4 +50,4 @@ The same dropdown is also used by [`AddTransactionModal`](../../src/components/m
 
 ## Gaps vs. mobile (see TASKS.md P1 for the authoritative list)
 
-No bulk categorize (multi-select), no sort (date/amount/merchant asc/desc), no account filter beyond the period preset, no receipt attachment UI despite `receipt_url` existing on the type.
+No sort (date/amount/merchant asc/desc), no account filter beyond the period preset, no receipt attachment UI despite `receipt_url` existing on the type. (Bulk categorize shipped 2026-07-10.)
