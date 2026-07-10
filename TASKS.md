@@ -88,7 +88,7 @@ _Daily-workflow features mobile has that web doesn't yet. Ordered by how often t
 - [ ] **Receipt attachment** — file upload to the existing private `receipts` Supabase Storage bucket (already created for mobile, RLS user-scoped); inline preview + replace + delete in the transaction detail slide-over
 
 ### Returns
-- [ ] **Return/refund UI** — "Process Return" button in Sale detail calling `record_return` edge function (UI doesn't exist on either client yet for return entry — ship web-first since mobile's is also a TODO)
+- [x] **Return/refund UI** — "Process Return" button in Sale detail calling `record_return` edge function. Shipped: `ProcessReturnModal` + `recordReturn` mutation wrapper; button hidden once `return_status === 'full'` or for trade-linked sales.
 
 ### Export
 - [ ] **CSV export** — per-period Schedule C transaction export (browser download instead of mobile's share sheet); strip Non-Business rows (`isExcluded` categories), fix amount sign convention (export `abs()` + `Type` column), add `Platform` + `Gross Amount` columns

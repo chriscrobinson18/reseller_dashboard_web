@@ -1,6 +1,6 @@
 import { useState, useMemo } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { Plus, Link2, Pencil, Trash2 } from 'lucide-react'
+import { Plus, Link2, Pencil, Trash2, RotateCcw } from 'lucide-react'
 import { supabase } from '../lib/supabase'
 import { getPeriodRange, type PeriodPreset } from '../lib/periods'
 import { formatUSD, formatDate } from '../lib/utils'
@@ -11,6 +11,7 @@ import ConfirmDialog from '../components/ConfirmDialog'
 import RecordSaleModal from '../components/modals/RecordSaleModal'
 import EditSaleModal from '../components/modals/EditSaleModal'
 import LinkSaleToItemModal from '../components/modals/LinkSaleToItemModal'
+import ProcessReturnModal from '../components/modals/ProcessReturnModal'
 import { saleProfit } from '../lib/saleProfit'
 import type { Sale } from '../lib/types'
 import TradeDetailSlideOver from '../components/TradeDetailSlideOver'
@@ -72,15 +73,17 @@ function StatusBadge({ status, type }: { status: string; type: 'inventory' | 're
 
 // ─── Sale detail ──────────────────────────────────────────────────────────────
 
-function SaleDetail({ sale, onLinkItem, onEdit, onDelete, onOpenTrade }: {
+function SaleDetail({ sale, onLinkItem, onEdit, onDelete, onProcessReturn, onOpenTrade }: {
   sale: Sale
   onLinkItem: () => void
   onEdit: () => void
   onDelete: () => void
+  onProcessReturn: () => void
   onOpenTrade: (id: string) => void
 }) {
   const { cogs, netRevenue, profit } = saleProfit(sale)
   const hasCogsData = (sale.inventory_movements?.length ?? 0) > 0
+  const canReturn = sale.return_status !== 'full' && !sale.trade_id
 
   return (
     <div className="space-y-4">
@@ -117,6 +120,15 @@ function SaleDetail({ sale, onLinkItem, onEdit, onDelete, onOpenTrade }: {
           <Trash2 size={13} /> Delete
         </button>
       </div>
+
+      {canReturn && (
+        <button
+          onClick={onProcessReturn}
+          className="w-full flex items-center justify-center gap-1.5 border border-amber-200 text-amber-700 rounded-lg py-2 text-sm font-medium hover:bg-amber-50 transition-colors"
+        >
+          <RotateCcw size={13} /> Process Return
+        </button>
+      )}
 
       {/* Header */}
       <div className="bg-gray-50 rounded-xl p-4">
@@ -251,6 +263,7 @@ export default function SalesPage() {
   const [showRecordSale, setShowRecordSale] = useState(false)
   const [linkSale, setLinkSale] = useState<Sale | null>(null)
   const [editSale, setEditSale] = useState<Sale | null>(null)
+  const [returnSale, setReturnSale] = useState<Sale | null>(null)
   const [deleteSaleTarget, setDeleteSaleTarget] = useState<Sale | null>(null)
   const [openTradeId, setOpenTradeId] = useState<string | null>(null)
   const qc = useQueryClient()
@@ -412,6 +425,7 @@ export default function SalesPage() {
             onLinkItem={() => setLinkSale(selected)}
             onEdit={() => setEditSale(selected)}
             onDelete={() => setDeleteSaleTarget(selected)}
+            onProcessReturn={() => setReturnSale(selected)}
             onOpenTrade={(id) => { setSelected(null); setOpenTradeId(id) }}
           />
         )}
@@ -430,6 +444,13 @@ export default function SalesPage() {
           open={!!editSale}
           onClose={() => setEditSale(null)}
           sale={editSale}
+        />
+      )}
+      {returnSale && (
+        <ProcessReturnModal
+          open={!!returnSale}
+          onClose={() => setReturnSale(null)}
+          sale={returnSale}
         />
       )}
       <ConfirmDialog

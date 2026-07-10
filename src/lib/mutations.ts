@@ -394,6 +394,33 @@ export async function deleteSale(id: string) {
 }
 
 /**
+ * Processes a full or partial return: reverses the sale's FIFO inventory
+ * movements (restoring quantity_remaining at each lot's original unit_cost),
+ * updates the sale's refunded_quantity/refunded_amount/return_status, and
+ * inserts a `returns_allowances`-categorized refund transaction row. See
+ * supabase/functions/record_return/.
+ */
+export async function recordReturn(params: {
+  saleId: string
+  quantity: number
+  refundAmount: number
+  reason?: string | null
+}) {
+  const { data, error } = await supabase.functions.invoke('record_return', {
+    body: {
+      sale_id: params.saleId,
+      quantity: params.quantity,
+      refund_amount: params.refundAmount,
+      reason: params.reason || undefined,
+      source: 'manual',
+    },
+  })
+  if (error) throw error
+  if (data?.error) throw new Error(data.error)
+  return data as { success: true; sale_id: string; refunded_quantity: number; refunded_amount: number; units_restored: number }
+}
+
+/**
  * Records a barter trade: creates a trades row, posts two non-cash transactions
  * (income + COGS, always equal and washing), optionally posts one cash boot
  * transaction, invokes record_sale per given line (FIFO depletes), and creates
