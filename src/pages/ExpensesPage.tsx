@@ -1,6 +1,6 @@
 import { useState, useMemo } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { Search, Filter, ChevronDown, Plus, Pencil, Trash2 } from 'lucide-react'
+import { Search, Filter, ChevronDown, Plus, Pencil, Trash2, Tag, X } from 'lucide-react'
 import { supabase } from '../lib/supabase'
 import { getPeriodRange, type PeriodPreset } from '../lib/periods'
 import { resolveCategory } from '../lib/categories'
@@ -46,6 +46,16 @@ async function updateNotes(id: string, notes: string) {
     .from('transactions')
     .update({ notes })
     .eq('id', id)
+  if (error) throw error
+}
+
+/** Assigns one category to many transactions in a single round-trip. */
+async function bulkUpdateCategory(ids: string[], category: string | null) {
+  if (ids.length === 0) return
+  const { error } = await supabase
+    .from('transactions')
+    .update({ schedule_c_category: category })
+    .in('id', ids)
   if (error) throw error
 }
 
@@ -330,6 +340,8 @@ export default function ExpensesPage() {
   const [openTradeId, setOpenTradeId] = useState<string | null>(null)
   const [showManage, setShowManage] = useState(false)
   const [showCatFilter, setShowCatFilter] = useState(false)
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
+  const [showBulkCat, setShowBulkCat] = useState(false)
 
   const qc = useQueryClient()
   const { data: customsAll = [] } = useCustomCategories()
@@ -337,6 +349,15 @@ export default function ExpensesPage() {
   const updateCategoryMutation = useMutation({
     mutationFn: ({ id, cat }: { id: string; cat: string | null }) => updateCategory(id, cat),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['transactions'] }),
+  })
+
+  const bulkCatMutation = useMutation({
+    mutationFn: (cat: string | null) => bulkUpdateCategory([...selectedIds], cat),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['transactions'] })
+      setSelectedIds(new Set())
+      setShowBulkCat(false)
+    },
   })
 
   const range = getPeriodRange(period)
@@ -360,6 +381,37 @@ export default function ExpensesPage() {
     })
   }, [transactions, showSaleLinked, catFilter, search])
 
+  // Trade-linked transactions have locked categories (edited via the trade),
+  // so they're excluded from bulk selection.
+  const selectable = useMemo(() => filtered.filter(t => !t.trade_id), [filtered])
+
+  // Clear any selection when the visible set changes, so a bulk action never
+  // silently applies to rows the user can no longer see. Render-phase reset
+  // (React's "storing info from previous renders" pattern) rather than an effect.
+  const filterSig = `${range.start}|${range.end}|${search}|${catFilter}|${showSaleLinked}`
+  const [lastFilterSig, setLastFilterSig] = useState(filterSig)
+  if (filterSig !== lastFilterSig) {
+    setLastFilterSig(filterSig)
+    setSelectedIds(new Set())
+    setShowBulkCat(false)
+  }
+
+  const allSelected = selectable.length > 0 && selectable.every(t => selectedIds.has(t.id))
+  const someSelected = selectedIds.size > 0
+
+  function toggleRow(id: string) {
+    setSelectedIds(prev => {
+      const next = new Set(prev)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      return next
+    })
+  }
+
+  function toggleAll() {
+    setSelectedIds(allSelected ? new Set() : new Set(selectable.map(t => t.id)))
+  }
+
   const income = filtered.filter(t => t.amount > 0 && t.record_type !== 'settlement').reduce((s, t) => s + t.amount, 0)
   const expenses = filtered.filter(t => t.amount < 0).reduce((s, t) => s + Math.abs(t.amount), 0)
   const uncategorized = transactions.filter(t =>
@@ -380,7 +432,7 @@ export default function ExpensesPage() {
   return (
     <div className="flex h-full">
       {/* Main content */}
-      <div className="flex-1 flex flex-col overflow-hidden">
+      <div className="relative flex-1 flex flex-col overflow-hidden">
         <div className="p-6 border-b border-gray-200 bg-white space-y-3">
           <div className="flex items-center justify-between">
             <h1 className="text-lg font-semibold text-gray-900">Expenses</h1>
@@ -455,6 +507,16 @@ export default function ExpensesPage() {
             <table className="w-full text-sm">
               <thead className="sticky top-0 bg-gray-50 border-b border-gray-200 z-10">
                 <tr>
+                  <th className="px-4 py-2.5 w-10">
+                    <input
+                      type="checkbox"
+                      checked={allSelected}
+                      onChange={toggleAll}
+                      disabled={selectable.length === 0}
+                      title="Select all"
+                      className="align-middle accent-gray-900 disabled:opacity-40"
+                    />
+                  </th>
                   <th className="text-left px-4 py-2.5 text-xs font-medium text-gray-500 w-24">Date</th>
                   <th className="text-left px-4 py-2.5 text-xs font-medium text-gray-500">Merchant / Notes</th>
                   <th className="text-left px-4 py-2.5 text-xs font-medium text-gray-500 w-44">Category</th>
@@ -469,9 +531,19 @@ export default function ExpensesPage() {
                   return (
                     <tr
                       key={tx.id}
-                      className={`data-row border-b border-gray-100 ${selected?.id === tx.id ? 'selected' : ''}`}
+                      className={`data-row border-b border-gray-100 ${selected?.id === tx.id ? 'selected' : ''} ${selectedIds.has(tx.id) ? 'bg-gray-50' : ''}`}
                       onClick={() => setSelected(tx)}
                     >
+                      <td className="px-4 py-2.5" onClick={e => e.stopPropagation()}>
+                        <input
+                          type="checkbox"
+                          checked={selectedIds.has(tx.id)}
+                          onChange={() => toggleRow(tx.id)}
+                          disabled={!!tx.trade_id}
+                          title={tx.trade_id ? 'Locked — part of a trade' : undefined}
+                          className="align-middle accent-gray-900 disabled:opacity-40 disabled:cursor-not-allowed"
+                        />
+                      </td>
                       <td className="px-4 py-2.5 text-xs text-gray-500 whitespace-nowrap">{tx.date}</td>
                       <td className="px-4 py-2.5">
                         <div className="flex items-center gap-1.5 font-medium text-gray-900 text-sm">
@@ -532,6 +604,42 @@ export default function ExpensesPage() {
         <div className="px-4 py-2 border-t border-gray-200 bg-white text-xs text-gray-400">
           {filtered.length} transactions
         </div>
+
+        {/* Bulk action bar */}
+        {someSelected && (
+          <div className="absolute bottom-6 left-1/2 -translate-x-1/2 z-40">
+            <div className="flex items-center gap-3 bg-gray-900 text-white rounded-full shadow-xl pl-4 pr-2 py-2">
+              <span className="text-sm font-medium whitespace-nowrap">{selectedIds.size} selected</span>
+              <div className="relative">
+                <button
+                  type="button"
+                  onClick={() => setShowBulkCat(s => !s)}
+                  disabled={bulkCatMutation.isPending}
+                  className="flex items-center gap-1.5 bg-white/10 hover:bg-white/20 rounded-full px-3 py-1.5 text-sm font-medium transition-colors disabled:opacity-50"
+                >
+                  <Tag size={13} /> {bulkCatMutation.isPending ? 'Applying…' : 'Set category'}
+                  <ChevronDown size={13} />
+                </button>
+                {showBulkCat && (
+                  <div className="absolute bottom-full right-0 mb-2">
+                    <CategoryDropdown
+                      onSelect={(v) => bulkCatMutation.mutate(v)}
+                      onManage={() => { setShowBulkCat(false); setShowManage(true) }}
+                    />
+                  </div>
+                )}
+              </div>
+              <button
+                type="button"
+                onClick={() => { setSelectedIds(new Set()); setShowBulkCat(false) }}
+                title="Clear selection"
+                className="text-gray-400 hover:text-white p-1.5 rounded-full hover:bg-white/10 transition-colors"
+              >
+                <X size={15} />
+              </button>
+            </div>
+          </div>
+        )}
       </div>
 
       {/* Detail panel */}

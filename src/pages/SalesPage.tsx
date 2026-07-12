@@ -1,6 +1,6 @@
 import { useState, useMemo } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { Plus, Link2, Pencil, Trash2 } from 'lucide-react'
+import { Plus, Link2, Pencil, Trash2, RotateCcw } from 'lucide-react'
 import { supabase } from '../lib/supabase'
 import { getPeriodRange, type PeriodPreset } from '../lib/periods'
 import { formatUSD, formatDate } from '../lib/utils'
@@ -11,11 +11,15 @@ import ConfirmDialog from '../components/ConfirmDialog'
 import RecordSaleModal from '../components/modals/RecordSaleModal'
 import EditSaleModal from '../components/modals/EditSaleModal'
 import LinkSaleToItemModal from '../components/modals/LinkSaleToItemModal'
+import ProcessReturnModal from '../components/modals/ProcessReturnModal'
 import { saleProfit } from '../lib/saleProfit'
 import type { Sale } from '../lib/types'
 import TradeDetailSlideOver from '../components/TradeDetailSlideOver'
 
-async function fetchSales(start: string | null, end: string | null): Promise<Sale[]> {
+async function fetchSales(start: string | null, end: string | null): Promise<{
+  sales: Sale[]
+  netPayoutBySale: Record<string, number>
+}> {
   let q = supabase
     .from('sales')
     .select(`
@@ -29,7 +33,31 @@ async function fetchSales(start: string | null, end: string | null): Promise<Sal
   if (end) q = q.lte('sold_at', end + 'T23:59:59Z')
   const { data, error } = await q.limit(2000)
   if (error) throw error
-  return data ?? []
+  const sales = data ?? []
+
+  // Net payout = sum of every transaction linked to the sale (payout, fees,
+  // shipping, refund, return-shipping) — the true cash impact, including
+  // any returns. Falls back to sale.net_payout for sales with no linked
+  // transactions (e.g. CSV-imported sales, or sales missing fee/shipping).
+  const saleIds = sales.map(s => s.id)
+  let netPayoutBySale: Record<string, number> = {}
+  if (saleIds.length > 0) {
+    const { data: txns, error: txErr } = await supabase
+      .from('transactions')
+      .select('related_sale_id, amount')
+      .in('related_sale_id', saleIds)
+    if (txErr) throw txErr
+    netPayoutBySale = (txns ?? []).reduce((acc, t) => {
+      acc[t.related_sale_id!] = (acc[t.related_sale_id!] ?? 0) + t.amount
+      return acc
+    }, {} as Record<string, number>)
+  }
+
+  return { sales, netPayoutBySale }
+}
+
+function netPayoutFor(sale: Sale, netPayoutBySale: Record<string, number>): number {
+  return netPayoutBySale[sale.id] ?? sale.net_payout ?? (sale.sale_price - (sale.fees ?? 0))
 }
 
 const PLATFORM_COLORS: Record<string, string> = {
@@ -72,15 +100,19 @@ function StatusBadge({ status, type }: { status: string; type: 'inventory' | 're
 
 // ─── Sale detail ──────────────────────────────────────────────────────────────
 
-function SaleDetail({ sale, onLinkItem, onEdit, onDelete, onOpenTrade }: {
+function SaleDetail({ sale, netPayoutBySale, onLinkItem, onEdit, onDelete, onProcessReturn, onOpenTrade }: {
   sale: Sale
+  netPayoutBySale: Record<string, number>
   onLinkItem: () => void
   onEdit: () => void
   onDelete: () => void
+  onProcessReturn: () => void
   onOpenTrade: (id: string) => void
 }) {
   const { cogs, netRevenue, profit } = saleProfit(sale)
   const hasCogsData = (sale.inventory_movements?.length ?? 0) > 0
+  const canReturn = !sale.trade_id
+  const netPayout = netPayoutFor(sale, netPayoutBySale)
 
   return (
     <div className="space-y-4">
@@ -118,6 +150,15 @@ function SaleDetail({ sale, onLinkItem, onEdit, onDelete, onOpenTrade }: {
         </button>
       </div>
 
+      {canReturn && (
+        <button
+          onClick={onProcessReturn}
+          className="w-full flex items-center justify-center gap-1.5 border border-amber-200 text-amber-700 rounded-lg py-2 text-sm font-medium hover:bg-amber-50 transition-colors"
+        >
+          <RotateCcw size={13} /> {sale.return_status === 'none' ? 'Process Return' : 'Edit Return'}
+        </button>
+      )}
+
       {/* Header */}
       <div className="bg-gray-50 rounded-xl p-4">
         <div className="text-2xl font-bold text-gray-900 tabular-nums">{formatUSD(sale.sale_price)}</div>
@@ -148,12 +189,12 @@ function SaleDetail({ sale, onLinkItem, onEdit, onDelete, onOpenTrade }: {
           { label: 'Quantity', value: String(sale.quantity) },
           { label: 'Platform Fees', value: formatUSD(sale.fees ?? 0) },
           { label: 'Shipping', value: sale.shipping_cost != null ? formatUSD(sale.shipping_cost) : '—' },
-          { label: 'Net Payout', value: formatUSD(sale.net_payout ?? (sale.sale_price - (sale.fees ?? 0))) },
+          { label: 'Net Payout', value: formatUSD(netPayout), negative: netPayout < 0 },
           { label: 'Order ID', value: sale.external_order_id || '—' },
-        ].map(({ label, value }) => (
+        ].map(({ label, value, negative }) => (
           <div key={label} className="bg-gray-50 rounded-lg p-2.5">
             <div className="text-gray-400 mb-0.5">{label}</div>
-            <div className="text-gray-800 font-medium">{value}</div>
+            <div className={`font-medium ${negative ? 'text-red-500' : 'text-gray-800'}`}>{value}</div>
           </div>
         ))}
       </div>
@@ -251,6 +292,7 @@ export default function SalesPage() {
   const [showRecordSale, setShowRecordSale] = useState(false)
   const [linkSale, setLinkSale] = useState<Sale | null>(null)
   const [editSale, setEditSale] = useState<Sale | null>(null)
+  const [returnSale, setReturnSale] = useState<Sale | null>(null)
   const [deleteSaleTarget, setDeleteSaleTarget] = useState<Sale | null>(null)
   const [openTradeId, setOpenTradeId] = useState<string | null>(null)
   const qc = useQueryClient()
@@ -266,7 +308,7 @@ export default function SalesPage() {
     },
   })
 
-  const { data: sales = [], isLoading } = useQuery({
+  const { data: { sales, netPayoutBySale } = { sales: [], netPayoutBySale: {} }, isLoading } = useQuery({
     queryKey: ['sales', range.start, range.end],
     queryFn: () => fetchSales(range.start, range.end),
   })
@@ -383,8 +425,8 @@ export default function SalesPage() {
                     <td className="px-4 py-2.5 text-right font-medium tabular-nums text-gray-900">
                       {formatUSD(sale.sale_price)}
                     </td>
-                    <td className="px-4 py-2.5 text-right font-medium tabular-nums text-gray-700">
-                      {formatUSD(sale.net_payout ?? (sale.sale_price - (sale.fees ?? 0)))}
+                    <td className={`px-4 py-2.5 text-right font-medium tabular-nums ${netPayoutFor(sale, netPayoutBySale) < 0 ? 'text-red-500' : 'text-gray-700'}`}>
+                      {formatUSD(netPayoutFor(sale, netPayoutBySale))}
                     </td>
                     <td className="px-4 py-2.5">
                       <div className="flex gap-1 flex-wrap">
@@ -409,9 +451,11 @@ export default function SalesPage() {
           <SaleDetail
             key={selected.id}
             sale={selected}
+            netPayoutBySale={netPayoutBySale}
             onLinkItem={() => setLinkSale(selected)}
             onEdit={() => setEditSale(selected)}
             onDelete={() => setDeleteSaleTarget(selected)}
+            onProcessReturn={() => setReturnSale(selected)}
             onOpenTrade={(id) => { setSelected(null); setOpenTradeId(id) }}
           />
         )}
@@ -430,6 +474,13 @@ export default function SalesPage() {
           open={!!editSale}
           onClose={() => setEditSale(null)}
           sale={editSale}
+        />
+      )}
+      {returnSale && (
+        <ProcessReturnModal
+          open={!!returnSale}
+          onClose={() => setReturnSale(null)}
+          sale={returnSale}
         />
       )}
       <ConfirmDialog

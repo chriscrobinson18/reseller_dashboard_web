@@ -47,7 +47,7 @@ The relational centerpiece — one row per sale event, FIFO-depletes inventory v
 | `net_payout` | computed client-side as `sale_price - fees - shipping_cost` and written back (see `recordSale`/`updateSale` in mutations.ts) — **not** server-computed |
 | `inventory_status` | `'ok' \| 'oversold' \| 'reconciled'` — set by `record_sale` edge function based on FIFO depletion result |
 | `return_status` | `'none' \| 'partial' \| 'full'` |
-| `refunded_quantity`, `refunded_amount` | populated by the `record_return` edge function (v21, no web UI yet — P1) |
+| `refunded_quantity`, `refunded_amount` | populated by the `record_return` edge function (v21), driven from the web `ProcessReturnModal` (shipped 2026-07-10); decremented by `reverse_return` on return-edit |
 | `sold_at` | full ISO timestamp (not just a date) |
 | `trade_id` | nullable FK to `trades`; set on the sale(s) for items given up in a trade. `ON DELETE SET NULL`. |
 
@@ -70,6 +70,20 @@ A purchase batch of an item at a specific unit cost — FIFO unit of accounting.
 
 ### `inventory_movements`
 Audit trail row created by `record_sale` per lot depleted by a sale. Read-only from the web client (`sale.inventory_movements`); join shape: `{ id, quantity, inventory_lots: { unit_cost, item_id } }`. `quantity * unit_cost` summed across a sale's movements = that sale's COGS.
+
+### `returns`
+One row per return/refund event against a sale. Written by `record_return`, deleted by `reverse_return`, read by `fetchActiveReturn` (in `mutations.ts`) to pre-fill the edit-return form. The web UI (`ProcessReturnModal`) assumes **at most one active return per sale** — `fetchActiveReturn` takes the most-recent row. See [`docs/superpowers/specs/2026-07-10-returns-design.md`](superpowers/specs/2026-07-10-returns-design.md).
+
+| column | notes |
+|---|---|
+| `id`, `user_id`, `created_at` | RLS-scoped; `created_at` is the ordering key for "most recent return" |
+| `sale_id` | FK to `sales` |
+| `quantity` | units returned; `record_return` validates `≤ sale.quantity − refunded_quantity` |
+| `refund_amount` | buyer refund (money returned to the buyer); **excludes** the seller's return-shipping label cost |
+| `reason` | nullable free text |
+| `source` | `'manual'` today (the only path); reserved for `'csv_import'` when marketplace-return reconciliation ships |
+
+The return's side effects live outside this table: `record_return` restores `inventory_lots.quantity_remaining` (LIFO), updates the sale's `refunded_*`/`return_status`/`inventory_status`, and inserts a `returns_allowances` refund `transactions` row (+ a `shipping_postage` row for the return label if given), all carrying `related_sale_id`. See the edge-function notes below and [data-flows.md](data-flows.md#revenue-net-of-returns).
 
 ### `trades`
 Barter exchange record — one row per trade event. See [`docs/superpowers/specs/2026-06-23-trades-design.md`](superpowers/specs/2026-06-23-trades-design.md) for the full accounting model and mutation sequence.
@@ -114,8 +128,13 @@ Per-user, tax-aware Schedule C categories. See [`docs/superpowers/specs/2026-06-
 Three are now committed in [`supabase/functions/`](../supabase/functions/) (the ones touched in the P0 pass). The rest are known by name/contract from client usage; they'll be backfilled into the repo as future passes touch them.
 
 - **`record_sale`** ([source](../supabase/functions/record_sale/index.ts)) — `supabase.functions.invoke('record_sale', { body: { item_id, quantity, sale_price, platform, sold_at, source, external_order_id } })`. Inserts the `sales` row, FIFO-depletes `inventory_lots.quantity_remaining`, creates `inventory_movements` rows. Returns `{ sale_id, inventory_status, unfulfilled_quantity }`. **Does not persist `fees`/`shipping_cost`/`net_payout`** — the web client writes those onto the `sales` row in a follow-up `.update()` call (see `recordSale` in mutations.ts). Verified end-to-end in the P0 pass; the source has a contract header comment spelling this out.
-- **`record_return`** (v21, [source](../supabase/functions/record_return/index.ts)) — no web UI calls it yet (P1). Fixed in the P0 pass: reverses `inventory_movements` LIFO and restores `quantity_remaining` on the original source lots at the lots' original `unit_cost` (no more fake new-lot-at-sale-price), and inserts a `transactions` row for the refund with `amount: -refund_amount`, `schedule_c_category: 'returns_allowances'`, `related_sale_id`, `source: 'manual'`.
+- **`record_return`** (v21 deployed; local source ahead — see Deployment note below, [source](../supabase/functions/record_return/index.ts)) — called by `ProcessReturnModal` via `recordReturn`. Fixed in the P0 pass: reverses `inventory_movements` LIFO and restores `quantity_remaining` on the original source lots at the lots' original `unit_cost` (no more fake new-lot-at-sale-price), and inserts a `transactions` row for the refund with `amount: -refund_amount`, `schedule_c_category: 'returns_allowances'`, `related_sale_id`, `source: 'manual'`. Also accepts optional `return_shipping_cost`, which inserts a second `transactions` row (`schedule_c_category: 'shipping_postage'`) for the seller's cost of shipping the item back. Both refund-related rows use `type: 'refund'`.
+- **`reverse_return`** (not yet deployed — see Deployment note below, [source](../supabase/functions/reverse_return/index.ts)) — called by `ProcessReturnModal`'s edit flow via `reverseReturn`. Re-depletes inventory FIFO for the return's quantity (mirrors `record_sale`'s lot-selection algorithm), decrements the sale's `refunded_quantity`/`refunded_amount` and recomputes `return_status`/`inventory_status`, deletes the refund + return-shipping `transactions` rows (`related_sale_id` + `type = 'refund'`), and deletes the `returns` row. Assumes at most one active return per sale (current UI scope). Not atomic — sequential service-role calls, same as `record_return`.
 - **`reverse_sale`** (v1, [source](../supabase/functions/reverse_sale/index.ts)) — thin wrapper around the `public.reverse_sale(uuid)` RPC. Invoked by the client's `deleteSale` mutation. Atomically restores depleted lots, deletes `inventory_movements`, deletes linked manual `transactions`, soft-deletes the sale. Errors mapped to 400/403/404/409 (404 = sale not found, 409 = already soft-deleted, replay guard).
+
+### Deployment note
+
+`record_return`'s `return_shipping_cost` param and the new `reverse_return` function exist only as source in this repo as of this change — they have not been deployed (`supabase functions deploy record_return reverse_return`) or exercised against a live/local Supabase stack in this session (no CLI/credentials available here). Deploy and run the Deno e2e tests (`supabase/functions/record_return/index.test.ts`, `supabase/functions/reverse_return/index.test.ts`) against a local stack before relying on this in production.
 - **`import_marketplace_csv`** — referenced in TASKS.md as already shared/working server-side (v16); no web UI calls it yet. Not committed in-repo.
 - Plaid functions: `plaid_create_link_token`, `plaid_exchange_token`, `plaid_sync_transactions`, `plaid_sync_scheduled`, `plaid_remove_item`, `plaid_oauth_redirect`, `plaid_backfill_*` — not called from web yet (Plaid Link for Web is a P1 item). Not committed in-repo.
 - Marketplace OAuth: `marketplace_auth_url`, `marketplace_exchange_token` — referenced in TASKS.md as part of the eBay/Amazon connect flow; no web UI yet.
