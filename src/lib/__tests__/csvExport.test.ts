@@ -1,5 +1,8 @@
 import { describe, it, expect } from 'vitest'
-import { scheduleCExportRows, buildScheduleCTransactionsCSV, SCHEDULE_C_EXPORT_HEADERS } from '../csvExport'
+import {
+  scheduleCExportRows, buildScheduleCTransactionsCSV, SCHEDULE_C_EXPORT_HEADERS,
+  computeScheduleCSummary, buildScheduleCSummaryCSV,
+} from '../csvExport'
 import type { Transaction } from '../types'
 
 function tx(overrides: Partial<Transaction> = {}): Transaction {
@@ -113,5 +116,110 @@ describe('buildScheduleCTransactionsCSV', () => {
   it('quotes cells containing commas', () => {
     const csv = buildScheduleCTransactionsCSV([tx({ merchant: 'Smith, Jones & Co' })], [])
     expect(csv).toContain('"Smith, Jones & Co"')
+  })
+})
+
+describe('computeScheduleCSummary', () => {
+  it('puts returns on Line 2 (never netted into Line 1 gross receipts)', () => {
+    const s = computeScheduleCSummary([
+      tx({ amount: 1000, schedule_c_category: 'payout', related_sale_id: 's1' }),
+      tx({ amount: -150, schedule_c_category: 'returns_allowances', related_sale_id: 's1' }),
+    ], [])
+    expect(s.grossReceipts).toBe(1000)
+    expect(s.returns).toBe(150)
+    expect(s.netReceipts).toBe(850)
+  })
+
+  it('includes sale-linked income in gross receipts', () => {
+    const s = computeScheduleCSummary([
+      tx({ amount: 500, schedule_c_category: 'payout', related_sale_id: 's1' }),
+      tx({ amount: 200, schedule_c_category: 'payout' }),
+    ], [])
+    expect(s.grossReceipts).toBe(700)
+  })
+
+  it('takes COGS from cost_of_goods transactions (purchases), as a positive magnitude', () => {
+    const s = computeScheduleCSummary([tx({ amount: -300, schedule_c_category: 'cost_of_goods' })], [])
+    expect(s.cogs).toBe(300)
+  })
+
+  it('applies the 50% deduction to meals on Line 24b', () => {
+    const s = computeScheduleCSummary([tx({ amount: -80, schedule_c_category: 'meals' })], [])
+    expect(s.expensesByLine['Line 24b']).toBe(40)
+    expect(s.totalExpenses).toBe(40)
+  })
+
+  it('aggregates shipping_postage and other_expense into Line 27a', () => {
+    const s = computeScheduleCSummary([
+      tx({ amount: -10, schedule_c_category: 'shipping_postage' }),
+      tx({ amount: -5, schedule_c_category: 'other_expense' }),
+    ], [])
+    expect(s.expensesByLine['Line 27a']).toBe(15)
+  })
+
+  it('computes the full profit chain incl. home office on Line 30', () => {
+    const s = computeScheduleCSummary([
+      tx({ amount: 1000, schedule_c_category: 'payout' }),
+      tx({ amount: -100, schedule_c_category: 'returns_allowances' }),
+      tx({ amount: -300, schedule_c_category: 'cost_of_goods' }),
+      tx({ amount: -50, schedule_c_category: 'advertising' }),
+      tx({ amount: -200, schedule_c_category: 'home_office' }),
+    ], [])
+    expect(s.netReceipts).toBe(900)   // 1000 - 100
+    expect(s.grossProfit).toBe(600)   // 900 - 300
+    expect(s.grossIncome).toBe(600)
+    expect(s.totalExpenses).toBe(50)  // advertising only; home office is separate
+    expect(s.tentativeProfit).toBe(550)
+    expect(s.homeOffice).toBe(200)
+    expect(s.netProfit).toBe(350)     // 550 - 200
+  })
+
+  it('a refund against an expense category reduces that line (signed sum before abs)', () => {
+    const s = computeScheduleCSummary([
+      tx({ amount: -100, schedule_c_category: 'supplies' }),
+      tx({ amount: 30, schedule_c_category: 'supplies' }), // refund
+    ], [])
+    expect(s.expensesByLine['Line 22']).toBe(70)
+  })
+
+  it('excludes settlement and Non-Business rows', () => {
+    const s = computeScheduleCSummary([
+      tx({ amount: 500, schedule_c_category: 'payout', record_type: 'settlement' }),
+      tx({ amount: -40, schedule_c_category: 'personal' }),
+      tx({ amount: -25, schedule_c_category: 'transfer' }),
+    ], [])
+    expect(s.grossReceipts).toBe(0)
+    expect(s.totalExpenses).toBe(0)
+    expect(s.netProfit).toBe(0)
+  })
+
+  it('reports uncategorized business rows separately, not in net profit', () => {
+    const s = computeScheduleCSummary([
+      tx({ amount: 1000, schedule_c_category: 'payout' }),
+      tx({ amount: -60, schedule_c_category: undefined }),
+    ], [])
+    expect(s.netProfit).toBe(1000)
+    expect(s.uncategorizedCount).toBe(1)
+    expect(s.uncategorizedNet).toBe(-60)
+  })
+})
+
+describe('buildScheduleCSummaryCSV', () => {
+  it('emits a period/basis header and the Line/Description/Amount table with net profit', () => {
+    const csv = buildScheduleCSummaryCSV([
+      tx({ amount: 1000, schedule_c_category: 'payout' }),
+      tx({ amount: -50, schedule_c_category: 'advertising' }),
+    ], [], 'Year to Date')
+    expect(csv).toContain('Schedule C Summary')
+    expect(csv).toContain('Period,Year to Date')
+    expect(csv).toContain('1,Gross receipts,1000.00')
+    expect(csv).toContain('Line 8,Advertising,50.00')
+    expect(csv).toContain('31,Net profit or (loss),950.00')
+  })
+
+  it('omits Part II lines with no activity', () => {
+    const csv = buildScheduleCSummaryCSV([tx({ amount: -50, schedule_c_category: 'advertising' })], [], 'YTD')
+    expect(csv).toContain('Line 8,Advertising')
+    expect(csv).not.toContain('Line 22,Supplies')
   })
 })

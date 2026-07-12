@@ -21,14 +21,27 @@ All three transaction-aggregating functions (KPI row, Schedule C breakdown, mont
 
 `PeriodPicker` drives a single `period` state (`PeriodPreset`, default `'ytd'`); both queries key off `getPeriodRange(period)` so changing the period refetches both transactions and sales.
 
-## Export CSV
+## CSV export (two buttons)
 
-The header **Export CSV** button downloads the selected period's business transactions as a Schedule C ledger via `buildScheduleCTransactionsCSV` + `downloadCSV` ([`src/lib/csvExport.ts`](../../src/lib/csvExport.ts)). Disabled when the period has no transactions.
+The header has two export buttons — **Summary CSV** and **Transactions CSV** — both driven by [`src/lib/csvExport.ts`](../../src/lib/csvExport.ts) + `downloadCSV`, disabled when the period has no transactions.
+
+### Transactions CSV (`buildScheduleCTransactionsCSV`)
+
+The period's business transactions as a Schedule C ledger.
 
 - **Scope — all business rows** (`scheduleCExportRows`): every fetched transaction EXCEPT `record_type === 'settlement'` and rows whose resolved category is `isExcluded` (Transfer / Personal / Settlement / Balance Adjustment + customs inheriting that flag). **Deliberately different from the Schedule C Breakdown card**, which routes through `bucketTransaction` and therefore drops sale-linked / `csv_import` rows. The export *keeps* those — that is where sales income and selling costs live — plus uncategorized rows (labeled `Uncategorized`) so nothing is silently dropped from an accountant-facing ledger.
 - **Sign convention:** `Amount` is always absolute; the `Type` column (`Income` / `Expense`) carries the direction. A `returns_allowances` refund (negative) exports as an `Expense`-direction row under the Returns & Allowances category. The meals 50% multiplier is **not** applied — a ledger shows the actual dollar amount.
-- **Columns:** Date, Type, Category, Schedule C Line, Merchant, Platform, Gross Amount (`gross_amount` if present else abs amount), Amount, Notes. Rows sorted ascending by date; RFC-4180 quoting. Covered by `src/lib/__tests__/csvExport.test.ts`.
-- The "form" view (one row per IRS line with net profit) is the separate P1 **Schedule C Summary export**, not yet built.
+- **Columns:** Date, Type, Category, Schedule C Line, Merchant, Platform, Gross Amount (`gross_amount` if present else abs amount), Amount, Notes. Rows sorted ascending by date; RFC-4180 quoting.
+
+### Summary CSV (`buildScheduleCSummaryCSV` / `computeScheduleCSummary`)
+
+The "form" view — one row per IRS Schedule C line with net profit at the bottom, preceded by a period + basis header.
+
+- **Same source as the transaction export** (all business rows), rolled up by Schedule C line, so the two files tie out — the one exception is Line 24b, where the summary shows the **50%-deductible** meals amount while the ledger shows the actual dollar amount.
+- **Line mapping:** Line 1 gross receipts = Part I income **excluding** `returns_allowances`; Line 2 = returns & allowances (kept separate, never netted into Line 1 — 1099-K guardrail); Line 4 COGS; Lines 8–27a Part II expenses (nonzero only); Line 28 total expenses; Line 29 tentative profit; Line 30 home office (separate from Line 28); Line 31 net profit. `shipping_postage` + `other_expense` aggregate into Line 27a. Custom categories flow to their resolved line automatically.
+- **COGS sourcing (chosen model):** Line 4 = the sum of `cost_of_goods` **transactions** — inventory *purchases* in the period, a cash-basis treatment — **not** the FIFO cost of items sold from `inventory_movements`. The CSV header states this basis. (Because `recordSale` posts no COGS transaction, FIFO COGS lives only on the `sales` table / Profitability card; sourcing the summary from transactions keeps it consistent with the transaction export.)
+- **Uncategorized** business rows can't be placed on a form line, so they are summed into a trailing `Uncategorized — NOT included above` row rather than silently dropped from net profit.
+- Both exports covered by `src/lib/__tests__/csvExport.test.ts`.
 
 ## Things to know before changing this page
 
