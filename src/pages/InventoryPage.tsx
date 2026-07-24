@@ -1,7 +1,7 @@
 import { useState, useMemo, Fragment } from 'react'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { ArrowLeftRight, ChevronDown, ChevronRight, Plus, Pencil, Trash2 } from 'lucide-react'
-import { formatUSD, formatDate } from '../lib/utils'
+import { formatUSD, formatDate, formatMonthYear, monthKey } from '../lib/utils'
 import { deleteItem, deleteLot } from '../lib/mutations'
 import type { InventoryLot } from '../lib/types'
 import { useItems, type ItemWithLots } from '../lib/queries'
@@ -151,10 +151,144 @@ function LotRows({ lots, onAddLot, onEditLot, onDeleteLot, onTradePillClick, onT
 }
 
 
+// ─── Date view (lot ledger) ───────────────────────────────────────────────────
+
+interface LedgerRow {
+  lot: InventoryLot
+  itemName: string
+}
+
+/** A lot's effective date — purchase_date when set, else the created_at fallback. */
+function lotDate(lot: InventoryLot): string {
+  return lot.purchase_date ?? lot.created_at
+}
+
+/**
+ * Flat, newest-first ledger of every lot across all items, grouped into months
+ * with a per-month spend subtotal. Complements the item view: this is the shape
+ * you want when reconciling purchases against bank transactions chronologically.
+ */
+function LotLedger({ rows, onEditLot, onDeleteLot, onTradePillClick, onTxClick }: {
+  rows: LedgerRow[]
+  onEditLot: (lot: InventoryLot) => void
+  onDeleteLot: (lot: InventoryLot) => void
+  onTradePillClick: (tradeId: string) => void
+  onTxClick: (lot: InventoryLot, itemName: string) => void
+}) {
+  const months = useMemo(() => {
+    const groups = new Map<string, LedgerRow[]>()
+    for (const row of rows) {
+      const key = monthKey(lotDate(row.lot))
+      const bucket = groups.get(key)
+      if (bucket) bucket.push(row)
+      else groups.set(key, [row])
+    }
+    return [...groups.entries()]
+  }, [rows])
+
+  return (
+    <table className="w-full text-sm">
+      <thead className="sticky top-0 bg-gray-50 border-b border-gray-200 z-10">
+        <tr>
+          <th className="text-left px-4 py-2.5 text-xs font-medium text-gray-500 w-32">Date</th>
+          <th className="text-left px-4 py-2.5 text-xs font-medium text-gray-500">Item</th>
+          <th className="text-center px-3 py-2.5 text-xs font-medium text-gray-500 w-24">Purchased</th>
+          <th className="text-center px-3 py-2.5 text-xs font-medium text-gray-500 w-24">Remaining</th>
+          <th className="text-right px-3 py-2.5 text-xs font-medium text-gray-500 w-24">Unit Cost</th>
+          <th className="text-right px-3 py-2.5 text-xs font-medium text-gray-500 w-28">Lot Cost</th>
+          <th className="text-left px-3 py-2.5 text-xs font-medium text-gray-500 w-36">Purchase Tx</th>
+          <th className="w-16" />
+        </tr>
+      </thead>
+      <tbody>
+        {months.map(([key, monthRows]) => {
+          const spend = monthRows.reduce((s, r) => s + r.lot.quantity_purchased * r.lot.unit_cost, 0)
+          return (
+            <Fragment key={key}>
+              <tr className="bg-gray-50/80 border-y border-gray-100">
+                <td colSpan={5} className="px-4 py-1.5 text-xs font-semibold text-gray-600">
+                  {formatMonthYear(lotDate(monthRows[0].lot))}
+                  <span className="ml-2 font-normal text-gray-400">
+                    {monthRows.length} {monthRows.length === 1 ? 'lot' : 'lots'}
+                  </span>
+                </td>
+                <td className="px-3 py-1.5 text-right text-xs font-semibold tabular-nums text-gray-600">
+                  {formatUSD(spend)}
+                </td>
+                <td colSpan={2} />
+              </tr>
+              {monthRows.map(({ lot, itemName }) => (
+                <tr key={lot.id} className="group border-b border-gray-100 hover:bg-gray-50/60">
+                  <td className="px-4 py-2.5 text-xs text-gray-600">{formatDate(lotDate(lot))}</td>
+                  <td className="px-4 py-2.5">
+                    <div className="flex items-center gap-1.5">
+                      <span className="font-medium text-gray-900 text-xs">{itemName}</span>
+                      {lot.trade_id && (
+                        <button
+                          onClick={() => onTradePillClick(lot.trade_id!)}
+                          className="px-1.5 py-0.5 rounded text-[10px] font-medium bg-purple-100 text-purple-700 hover:bg-purple-200"
+                        >
+                          Trade
+                        </button>
+                      )}
+                    </div>
+                  </td>
+                  <td className="px-3 py-2.5 text-xs text-gray-700 text-center">{lot.quantity_purchased}</td>
+                  <td className="px-3 py-2.5 text-center">
+                    <span className={`text-xs font-medium px-1.5 py-0.5 rounded ${
+                      lot.quantity_remaining === 0
+                        ? 'bg-gray-100 text-gray-400'
+                        : lot.quantity_remaining < lot.quantity_purchased
+                        ? 'bg-amber-100 text-amber-700'
+                        : 'bg-green-100 text-green-700'
+                    }`}>
+                      {lot.quantity_remaining}
+                    </span>
+                  </td>
+                  <td className="px-3 py-2.5 text-xs tabular-nums text-gray-700 text-right">
+                    {formatUSD(lot.unit_cost)}
+                  </td>
+                  <td className="px-3 py-2.5 text-xs tabular-nums text-gray-900 font-medium text-right">
+                    {formatUSD(lot.quantity_purchased * lot.unit_cost)}
+                  </td>
+                  <td className="px-3 py-2.5">
+                    <button
+                      onClick={() => onTxClick(lot, itemName)}
+                      className={`text-xs rounded px-1 -mx-1 hover:underline ${
+                        lot.transaction_id ? 'text-blue-600' : 'text-gray-400 italic hover:text-blue-600'
+                      }`}
+                      title={lot.transaction_id ? 'View purchase transaction' : 'Find and link the purchase transaction'}
+                    >
+                      {lot.transaction_id ? 'Linked' : 'No purchase record'}
+                    </button>
+                  </td>
+                  <td className="px-3 py-2.5">
+                    <div className="flex gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
+                      <button onClick={() => onEditLot(lot)} className="p-1 text-gray-400 hover:text-gray-700" title="Edit lot">
+                        <Pencil size={12} />
+                      </button>
+                      <button onClick={() => onDeleteLot(lot)} className="p-1 text-gray-400 hover:text-red-500" title="Delete lot">
+                        <Trash2 size={12} />
+                      </button>
+                    </div>
+                  </td>
+                </tr>
+              ))}
+            </Fragment>
+          )
+        })}
+      </tbody>
+    </table>
+  )
+}
+
 // ─── Page ─────────────────────────────────────────────────────────────────────
+
+type InventoryView = 'item' | 'date'
 
 export default function InventoryPage() {
   const [search, setSearch] = useState('')
+  const [view, setView] = useState<InventoryView>('item')
   const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set())
   const [showAddItem, setShowAddItem] = useState(false)
   const [addLotFor, setAddLotFor] = useState<ItemWithLots | null>(null)
@@ -187,6 +321,17 @@ export default function InventoryPage() {
     )
   }, [items, search])
 
+  /** Every lot across the (search-filtered) items, newest purchase first. */
+  const ledgerRows = useMemo(() => {
+    const rows: LedgerRow[] = filtered.flatMap(item =>
+      (item.inventory_lots ?? []).map(lot => ({ lot, itemName: item.name }))
+    )
+    return rows.sort((a, b) => {
+      const diff = lotDate(b.lot).localeCompare(lotDate(a.lot))
+      return diff !== 0 ? diff : b.lot.created_at.localeCompare(a.lot.created_at)
+    })
+  }, [filtered])
+
   const totals = useMemo(() => {
     const allLots = items.flatMap(i => i.inventory_lots ?? [])
     const totalUnits = allLots.reduce((s, l) => s + l.quantity_remaining, 0)
@@ -216,12 +361,27 @@ export default function InventoryPage() {
           </div>
         </div>
         <div className="flex items-center justify-between">
-          <input
-            value={search}
-            onChange={e => setSearch(e.target.value)}
-            placeholder="Search items…"
-            className="w-64 border border-gray-200 rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-gray-900"
-          />
+          <div className="flex items-center gap-2">
+            <input
+              value={search}
+              onChange={e => setSearch(e.target.value)}
+              placeholder="Search items…"
+              className="w-64 border border-gray-200 rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-gray-900"
+            />
+            <div className="flex gap-0.5 bg-gray-100 rounded-lg p-0.5">
+              {([['item', 'By Item'], ['date', 'By Date']] as const).map(([v, label]) => (
+                <button
+                  key={v}
+                  onClick={() => setView(v)}
+                  className={`px-2.5 py-1 rounded-md text-xs font-medium transition-colors ${
+                    view === v ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500 hover:text-gray-700'
+                  }`}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+          </div>
           <div className="flex items-center gap-2">
             <button
               onClick={() => setShowRecordTrade(true)}
@@ -247,6 +407,20 @@ export default function InventoryPage() {
           <div className="p-8 text-center text-gray-400 text-sm">
             {search ? 'No items found.' : 'No inventory items yet. Click "Add Item" to start.'}
           </div>
+        ) : view === 'date' ? (
+          ledgerRows.length === 0 ? (
+            <div className="p-8 text-center text-gray-400 text-sm">
+              {search ? 'No lots on the matching items.' : 'No purchase lots yet. Add one from an item in the By Item view.'}
+            </div>
+          ) : (
+            <LotLedger
+              rows={ledgerRows}
+              onEditLot={setEditLot}
+              onDeleteLot={setDeleteLotTarget}
+              onTradePillClick={setOpenTradeId}
+              onTxClick={(lot, itemName) => setTxLot({ lot, itemName })}
+            />
+          )
         ) : (
           <table className="w-full text-sm">
             <thead className="sticky top-0 bg-gray-50 border-b border-gray-200 z-10">
@@ -333,7 +507,9 @@ export default function InventoryPage() {
       </div>
 
       <div className="px-4 py-2 border-t border-gray-200 bg-white text-xs text-gray-400">
-        {filtered.length} items
+        {view === 'date'
+          ? `${ledgerRows.length} ${ledgerRows.length === 1 ? 'lot' : 'lots'}`
+          : `${filtered.length} items`}
       </div>
 
       <RecordTradeModal open={showRecordTrade} onClose={() => setShowRecordTrade(false)} />

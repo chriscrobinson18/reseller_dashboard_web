@@ -7,7 +7,16 @@ Item + lot management. The only page that uses the centralized `useItems()` hook
 - `useItems()` → `fetchItemsWithLots()`: fetches `items` joined with `inventory_lots(...)`, filters `deleted_at is null` on items, then client-side filters out soft-deleted lots per item (`.filter(l => !l.deleted_at)` — the join itself can't apply that filter). Ordered by item `name`.
 - `itemUnitsInStock(item)` and `itemAvgCost(item)` (also in `queries.ts`) are the shared helpers for "units remaining" and "weighted-average unit cost" — reused by the page's `getItemSummary`-style totals. Note `itemAvgCost` weights by `quantity_purchased`, not `quantity_remaining` — it's "what did this item cost on average across all purchases ever," not "average cost of what's left."
 
-## List view
+## Views
+
+A segmented control next to the search box switches between two views over the same `useItems()` data (`view: 'item' | 'date'`, local state — not persisted or in the URL). The search box filters items by name/category in both.
+
+- **By Item** (default) — the expandable item/lot tree described below.
+- **By Date** — `LotLedger`, a flat newest-first ledger of *every* lot across all items, grouped into months with a per-month lot count and spend subtotal. Sorted by effective lot date (`purchase_date ?? created_at`), tie-broken on `created_at`. This is the shape to use when reconciling purchases against bank transactions chronologically; the Purchase Tx cell, trade pill, and edit/delete actions behave identically to the item view.
+
+The footer count reflects the active view — items in By Item, lots in By Date.
+
+## List view (By Item)
 
 - Expandable rows (`expandedIds: Set<string>`, click anywhere on the item row to toggle) revealing a sub-table of that item's lots.
 - Header totals: item count, total units in stock (sum across ALL items' lots, not just filtered/visible ones), total value at cost.
