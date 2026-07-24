@@ -109,22 +109,42 @@ export async function linkLotToTransaction(lotId: string, transactionId: string)
 
 /**
  * Links a lot to a purchase transaction, optionally recategorizing that
- * transaction as Cost of Goods in the same step.
+ * transaction as Cost of Goods and stamping the lot with the transaction's date.
  *
  * Exists because lots are often reconciled *backwards* — the user knows they
  * bought inventory and goes hunting for the bank transaction, which is
  * typically still uncategorized. Linking and categorizing separately would
  * leave a lot pointing at a non-COGS transaction, which breaks Part III.
+ *
+ * `purchaseDate` matters for the same reason: `AddLotModal` defaults a new lot
+ * to *today*, so a lot entered now for a purchase made weeks ago carries a date
+ * that misorders FIFO until it's corrected to the transaction's date.
  */
 export async function linkLotToPurchase(params: {
   lotId: string
   transactionId: string
   markAsCogs: boolean
+  /** When set, overwrites the lot's purchase_date (use the transaction's date). */
+  purchaseDate?: string | null
 }) {
-  await linkLotToTransaction(params.lotId, params.transactionId)
+  const patch: Record<string, unknown> = { transaction_id: params.transactionId }
+  if (params.purchaseDate) patch.purchase_date = params.purchaseDate
+
+  const { error } = await supabase.from('inventory_lots').update(patch).eq('id', params.lotId)
+  if (error) throw error
+
   if (params.markAsCogs) {
     await updateTransactionCategory(params.transactionId, 'cost_of_goods')
   }
+}
+
+/** Corrects just a lot's purchase date — used to align it with its linked transaction. */
+export async function setLotPurchaseDate(lotId: string, purchaseDate: string) {
+  const { error } = await supabase
+    .from('inventory_lots')
+    .update({ purchase_date: purchaseDate })
+    .eq('id', lotId)
+  if (error) throw error
 }
 
 export async function unlinkLotFromTransaction(lotId: string) {

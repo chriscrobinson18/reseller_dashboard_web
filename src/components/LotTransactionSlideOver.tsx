@@ -5,9 +5,9 @@ import SlideOver from './SlideOver'
 import CategoryBadge from './CategoryBadge'
 import { inputCls } from './Modal'
 import { useTransaction, useLotLinkCandidates } from '../lib/queries'
-import { linkLotToPurchase, unlinkLotFromTransaction, fetchLotsForTransaction } from '../lib/mutations'
+import { linkLotToPurchase, unlinkLotFromTransaction, setLotPurchaseDate, fetchLotsForTransaction } from '../lib/mutations'
 import { formatUSD, formatDate } from '../lib/utils'
-import type { InventoryLot } from '../lib/types'
+import type { InventoryLot, Transaction } from '../lib/types'
 
 interface Props {
   lot: InventoryLot | null
@@ -19,6 +19,7 @@ export default function LotTransactionSlideOver({ lot, itemName, onClose }: Prop
   const qc = useQueryClient()
   const [search, setSearch] = useState('')
   const [markAsCogs, setMarkAsCogs] = useState(true)
+  const [syncDate, setSyncDate] = useState(true)
   const [error, setError] = useState<string | null>(null)
 
   const isLinked = !!lot?.transaction_id
@@ -42,14 +43,21 @@ export default function LotTransactionSlideOver({ lot, itemName, onClose }: Prop
     onClose()
   }
 
-  function reset() { setSearch(''); setMarkAsCogs(true); setError(null) }
+  function reset() { setSearch(''); setMarkAsCogs(true); setSyncDate(true); setError(null) }
 
   const link = useMutation({
-    mutationFn: (txId: string) => linkLotToPurchase({
+    mutationFn: (candidate: Transaction) => linkLotToPurchase({
       lotId: lot!.id,
-      transactionId: txId,
+      transactionId: candidate.id,
       markAsCogs,
+      purchaseDate: syncDate ? candidate.date : null,
     }),
+    onSuccess: done,
+    onError: (e: Error) => setError(e.message),
+  })
+
+  const alignDate = useMutation({
+    mutationFn: () => setLotPurchaseDate(lot!.id, tx!.date),
     onSuccess: done,
     onError: (e: Error) => setError(e.message),
   })
@@ -67,6 +75,11 @@ export default function LotTransactionSlideOver({ lot, itemName, onClose }: Prop
   const txTotal = tx ? Math.abs(tx.amount) : 0
   const unallocated = txTotal - allocated
   const reconciled = Math.abs(unallocated) < 0.01
+
+  // Lot dates fall out of step with their transaction because AddLotModal
+  // defaults to today; compare on the date part only (created_at is a timestamp).
+  const lotDateStr = lot ? (lot.purchase_date ?? lot.created_at).slice(0, 10) : ''
+  const dateMismatch = !!tx && lotDateStr !== tx.date.slice(0, 10)
 
   const isAmountMatch = useCallback(
     (amount: number) => Math.abs(Math.abs(amount) - lotTotal) < 0.01,
@@ -124,6 +137,22 @@ export default function LotTransactionSlideOver({ lot, itemName, onClose }: Prop
                   </div>
                   {tx.notes && <div className="text-xs text-gray-600 border-t border-gray-100 pt-2">{tx.notes}</div>}
                 </div>
+
+                {dateMismatch && (
+                  <div className="text-xs bg-blue-50 border border-blue-200 rounded-lg px-3 py-2 flex items-start justify-between gap-3">
+                    <span className="text-blue-900">
+                      This lot is dated {formatDate(lot.purchase_date ?? lot.created_at)}, but the
+                      transaction is {formatDate(tx.date)}. FIFO orders by the lot's date.
+                    </span>
+                    <button
+                      onClick={() => alignDate.mutate()}
+                      disabled={alignDate.isPending}
+                      className="shrink-0 font-medium text-blue-700 hover:text-blue-900 underline disabled:opacity-50"
+                    >
+                      {alignDate.isPending ? 'Updating…' : 'Use tx date'}
+                    </button>
+                  </div>
+                )}
 
                 {/* Allocation across every lot on this purchase */}
                 <div className="border border-gray-200 rounded-xl p-3 space-y-2">
@@ -196,20 +225,36 @@ export default function LotTransactionSlideOver({ lot, itemName, onClose }: Prop
                 uncategorized or already Cost of Goods.
               </p>
 
-              <label className="flex items-start gap-2 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2 cursor-pointer">
-                <input
-                  type="checkbox"
-                  checked={markAsCogs}
-                  onChange={e => setMarkAsCogs(e.target.checked)}
-                  className="mt-0.5 accent-gray-900"
-                />
-                <span className="text-xs text-amber-900">
-                  Also categorize it as <strong>Cost of Goods</strong>
-                  <span className="block text-amber-700 mt-0.5">
-                    Inventory purchases belong in Part III. Untick to leave the category alone.
+              <div className="bg-amber-50 border border-amber-200 rounded-lg px-3 py-2 space-y-2">
+                <label className="flex items-start gap-2 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={markAsCogs}
+                    onChange={e => setMarkAsCogs(e.target.checked)}
+                    className="mt-0.5 accent-gray-900"
+                  />
+                  <span className="text-xs text-amber-900">
+                    Also categorize it as <strong>Cost of Goods</strong>
+                    <span className="block text-amber-700 mt-0.5">
+                      Inventory purchases belong in Part III. Untick to leave the category alone.
+                    </span>
                   </span>
-                </span>
-              </label>
+                </label>
+                <label className="flex items-start gap-2 cursor-pointer border-t border-amber-200 pt-2">
+                  <input
+                    type="checkbox"
+                    checked={syncDate}
+                    onChange={e => setSyncDate(e.target.checked)}
+                    className="mt-0.5 accent-gray-900"
+                  />
+                  <span className="text-xs text-amber-900">
+                    Also set the lot's <strong>purchase date</strong> to the transaction's
+                    <span className="block text-amber-700 mt-0.5">
+                      Currently {formatDate(lot.purchase_date ?? lot.created_at)}. Untick to keep it.
+                    </span>
+                  </span>
+                </label>
+              </div>
 
               <div className="relative">
                 <Search size={13} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-gray-400" />
@@ -237,7 +282,7 @@ export default function LotTransactionSlideOver({ lot, itemName, onClose }: Prop
                     return (
                       <button
                         key={t.id}
-                        onClick={() => link.mutate(t.id)}
+                        onClick={() => link.mutate(t)}
                         disabled={link.isPending}
                         className="w-full flex items-center gap-2 text-left bg-white border border-gray-200 rounded-lg px-3 py-2 hover:border-gray-400 hover:bg-gray-50 disabled:opacity-50 transition-colors"
                       >

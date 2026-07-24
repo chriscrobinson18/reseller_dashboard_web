@@ -67,7 +67,11 @@ That panel fetches *every* lot on the transaction (`fetchLotsForTransaction`, ca
 - under → amber "$X of this purchase isn't assigned to inventory yet"
 - over → amber "the lots exceed the transaction total by $X"
 
+A blue notice appears above the allocation panel when the lot's effective date disagrees with the transaction's, with a **Use tx date** action (`setLotPurchaseDate`). This is the cleanup path for lots linked before date-syncing existed — `AddLotModal` defaults new lots to *today*, so a lot entered now for an older purchase carries a date that misorders FIFO. Comparison is on the date part only, since `created_at` is a timestamp while `transactions.date` is `yyyy-MM-dd`.
+
 **Unlinked** — a merchant-searchable picker over `useLotLinkCandidates()`: money-out transactions that are either **uncategorized or already Cost of Goods**, newest first, capped at 500. Rows already categorized as something else are treated as settled and hidden. Each row shows its current category (or an italic `Uncategorized`). Candidates whose absolute amount equals the lot total within $0.01 get a green "match" pill and are **sorted to the top**; everything else keeps the query's date-desc order (the sort is stable). Both the pill and the sort read the same `isAmountMatch` helper so they can't drift apart.
+
+Linking offers two default-on checkboxes, both applied by `linkLotToPurchase()`: **categorize as Cost of Goods** (see below) and **set the lot's purchase date to the transaction's**. Linking does *not* touch `purchase_date` unless that second box is ticked — the lot and transaction dates are genuinely different events (order placed vs. charge posted), so the overwrite is offered rather than forced.
 
 ### Why the picker isn't COGS-only
 
