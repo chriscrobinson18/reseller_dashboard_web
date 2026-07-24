@@ -50,7 +50,13 @@ Read-only slide-over (drawer pattern). Shows trade date, counterparty, FMV sourc
 
 The "Purchase Tx" cell in each lot sub-row is a button opening `LotTransactionSlideOver` (`src/components/LotTransactionSlideOver.tsx`), which handles both states.
 
-**Linked** — shows the transaction (merchant, date, amount, `CategoryBadge`, source, notes) plus an **Unlink transaction** action (`unlinkLotFromTransaction`). Warns in amber when the lot total (`quantity_purchased × unit_cost`) differs from the transaction amount by ≥ $0.01, since one purchase legitimately covers several lots.
+**Linked** — shows the transaction (merchant, date, amount, `CategoryBadge`, source, notes) plus an **Unlink transaction** action (`unlinkLotFromTransaction`), followed by a **Purchase allocation** panel.
+
+That panel fetches *every* lot on the transaction (`fetchLotsForTransaction`, cache key `['lots-for-tx', txId]`, shared with `TransactionInventorySection`), lists them with the clicked one marked `(this lot)`, and compares their **sum** against the transaction amount. Reconciliation is deliberately an aggregate check — one purchase routinely covers several lots, so comparing a single lot against the whole transaction amount flags every legitimate multi-lot purchase as a mismatch. Only the aggregate is warned on:
+
+- within $0.01 → the allocated figure turns green, no warning
+- under → amber "$X of this purchase isn't assigned to inventory yet"
+- over → amber "the lots exceed the transaction total by $X"
 
 **Unlinked** — a merchant-searchable picker over `useLotLinkCandidates()`: money-out transactions that are either **uncategorized or already Cost of Goods**, newest first, capped at 500. Rows already categorized as something else are treated as settled and hidden. Each row shows its current category (or an italic `Uncategorized`). Candidates whose absolute amount equals the lot total within $0.01 get a green "match" pill and are **sorted to the top**; everything else keeps the query's date-desc order (the sort is stable). Both the pill and the sort read the same `isAmountMatch` helper so they can't drift apart.
 

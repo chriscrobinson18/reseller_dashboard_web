@@ -1,11 +1,11 @@
 import { useState, useMemo, useCallback } from 'react'
-import { useMutation, useQueryClient } from '@tanstack/react-query'
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { Link2Off, Search, Check } from 'lucide-react'
 import SlideOver from './SlideOver'
 import CategoryBadge from './CategoryBadge'
 import { inputCls } from './Modal'
 import { useTransaction, useLotLinkCandidates } from '../lib/queries'
-import { linkLotToPurchase, unlinkLotFromTransaction } from '../lib/mutations'
+import { linkLotToPurchase, unlinkLotFromTransaction, fetchLotsForTransaction } from '../lib/mutations'
 import { formatUSD, formatDate } from '../lib/utils'
 import type { InventoryLot } from '../lib/types'
 
@@ -24,6 +24,14 @@ export default function LotTransactionSlideOver({ lot, itemName, onClose }: Prop
   const isLinked = !!lot?.transaction_id
   const { data: tx, isLoading: txLoading } = useTransaction(lot?.transaction_id)
   const { data: candidates = [], isLoading: candLoading } = useLotLinkCandidates(!!lot && !isLinked)
+
+  // Every lot on this purchase, not just the one clicked — a transaction
+  // legitimately covers several lots, so reconciliation is an aggregate check.
+  const { data: txLots = [], isLoading: txLotsLoading } = useQuery({
+    queryKey: ['lots-for-tx', lot?.transaction_id],
+    enabled: !!lot?.transaction_id,
+    queryFn: () => fetchLotsForTransaction(lot!.transaction_id!),
+  })
 
   function done() {
     qc.invalidateQueries({ queryKey: ['items'] })
@@ -53,6 +61,12 @@ export default function LotTransactionSlideOver({ lot, itemName, onClose }: Prop
   })
 
   const lotTotal = lot ? lot.quantity_purchased * lot.unit_cost : 0
+
+  // Reconciliation is aggregate: sum every lot on the purchase, not just this one.
+  const allocated = txLots.reduce((s, l) => s + l.quantity_purchased * l.unit_cost, 0)
+  const txTotal = tx ? Math.abs(tx.amount) : 0
+  const unallocated = txTotal - allocated
+  const reconciled = Math.abs(unallocated) < 0.01
 
   const isAmountMatch = useCallback(
     (amount: number) => Math.abs(Math.abs(amount) - lotTotal) < 0.01,
@@ -111,10 +125,58 @@ export default function LotTransactionSlideOver({ lot, itemName, onClose }: Prop
                   {tx.notes && <div className="text-xs text-gray-600 border-t border-gray-100 pt-2">{tx.notes}</div>}
                 </div>
 
-                {Math.abs(Math.abs(tx.amount) - lotTotal) >= 0.01 && (
+                {/* Allocation across every lot on this purchase */}
+                <div className="border border-gray-200 rounded-xl p-3 space-y-2">
+                  <div className="text-xs font-semibold text-gray-500 uppercase tracking-wide">
+                    Purchase allocation
+                  </div>
+                  {txLotsLoading ? (
+                    <div className="text-xs text-gray-400">Loading lots…</div>
+                  ) : (
+                    <>
+                      <div className="space-y-1">
+                        {txLots.map(l => (
+                          <div
+                            key={l.id}
+                            className={`flex justify-between gap-2 text-xs ${
+                              l.id === lot.id ? 'text-gray-900 font-medium' : 'text-gray-600'
+                            }`}
+                          >
+                            <span className="truncate">
+                              {l.items?.name ?? 'Item'} · {l.quantity_purchased} × {formatUSD(l.unit_cost)}
+                              {l.id === lot.id && <span className="text-gray-400 font-normal"> (this lot)</span>}
+                            </span>
+                            <span className="tabular-nums shrink-0">
+                              {formatUSD(l.quantity_purchased * l.unit_cost)}
+                            </span>
+                          </div>
+                        ))}
+                      </div>
+                      <div className="flex justify-between text-xs border-t border-gray-100 pt-1.5">
+                        <span className="text-gray-500">
+                          {txLots.length} {txLots.length === 1 ? 'lot' : 'lots'} of {formatUSD(txTotal)}
+                        </span>
+                        <span className={`font-semibold tabular-nums ${reconciled ? 'text-green-600' : 'text-gray-900'}`}>
+                          {formatUSD(allocated)}
+                        </span>
+                      </div>
+                    </>
+                  )}
+                </div>
+
+                {!txLotsLoading && !reconciled && (
                   <div className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
-                    This lot ({formatUSD(lotTotal)}) doesn't match the transaction total ({formatUSD(Math.abs(tx.amount))}).
-                    That's expected if the purchase covers several lots.
+                    {unallocated > 0 ? (
+                      <>
+                        <strong>{formatUSD(unallocated)}</strong> of this purchase isn't assigned to inventory yet.
+                        Add the remaining lots from this transaction on the Expenses page.
+                      </>
+                    ) : (
+                      <>
+                        The lots on this purchase exceed the transaction total by{' '}
+                        <strong>{formatUSD(-unallocated)}</strong>.
+                      </>
+                    )}
                   </div>
                 )}
 
