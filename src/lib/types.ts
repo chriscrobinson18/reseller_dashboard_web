@@ -87,6 +87,7 @@ export interface InventoryLot {
   quantity_purchased: number
   quantity_remaining: number
   unit_cost: number
+  purchase_date?: string | null
   created_at: string
   deleted_at?: string
 }

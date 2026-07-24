@@ -71,7 +71,7 @@ function LotRows({ lots, onAddLot, onEditLot, onDeleteLot, onTradePillClick }: {
     <>
       {/* Sub-header */}
       <tr className="bg-blue-50/40 border-b border-blue-100">
-        <td className="pl-12 py-1.5 text-xs font-medium text-gray-500">Date Added</td>
+        <td className="pl-12 py-1.5 text-xs font-medium text-gray-500">Purchase Date</td>
         <td className="px-3 py-1.5 text-xs font-medium text-gray-500 text-center">Purchased</td>
         <td className="px-3 py-1.5 text-xs font-medium text-gray-500 text-center">Remaining</td>
         <td className="px-3 py-1.5 text-xs font-medium text-gray-500 text-right">Unit Cost</td>
@@ -85,7 +85,7 @@ function LotRows({ lots, onAddLot, onEditLot, onDeleteLot, onTradePillClick }: {
           : 0
         return (
           <tr key={lot.id} className="group bg-blue-50/20 border-b border-blue-50">
-            <td className="pl-12 py-2 text-xs text-gray-600">{formatDate(lot.created_at)}</td>
+            <td className="pl-12 py-2 text-xs text-gray-600">{formatDate(lot.purchase_date ?? lot.created_at)}</td>
             <td className="px-3 py-2 text-xs text-gray-700 text-center">{lot.quantity_purchased}</td>
             <td className="px-3 py-2 text-center">
               <span className={`text-xs font-medium px-1.5 py-0.5 rounded ${

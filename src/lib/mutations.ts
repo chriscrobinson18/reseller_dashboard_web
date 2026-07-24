@@ -64,6 +64,7 @@ export async function createLot(params: {
       quantity_purchased: params.quantity,
       quantity_remaining: params.quantity,
       unit_cost: params.unitCost,
+      purchase_date: params.purchaseDate ?? null,
     })
     .select()
     .single()
@@ -71,10 +72,10 @@ export async function createLot(params: {
   return data as InventoryLot
 }
 
-export async function updateLot(id: string, unitCost: number, quantityPurchased: number, quantityRemaining: number) {
+export async function updateLot(id: string, unitCost: number, quantityPurchased: number, quantityRemaining: number, purchaseDate: string | null) {
   const { error } = await supabase
     .from('inventory_lots')
-    .update({ unit_cost: unitCost, quantity_purchased: quantityPurchased, quantity_remaining: quantityRemaining })
+    .update({ unit_cost: unitCost, quantity_purchased: quantityPurchased, quantity_remaining: quantityRemaining, purchase_date: purchaseDate })
     .eq('id', id)
   if (error) throw error
 }

@@ -12,7 +12,7 @@ Item + lot management. The only page that uses the centralized `useItems()` hook
 - Expandable rows (`expandedIds: Set<string>`, click anywhere on the item row to toggle) revealing a sub-table of that item's lots.
 - Header totals: item count, total units in stock (sum across ALL items' lots, not just filtered/visible ones), total value at cost.
 - Per-item row: name, category (free-text product category — NOT a Schedule C category), units in stock, value at cost, avg cost, lot count, expand chevron. "Sold out" label when `unitsInStock === 0`.
-- Per-lot sub-row: date added (`created_at` — there's no separate purchase date, see schema gap below), purchased/remaining quantities, unit cost, value (`remaining * unit_cost`), purchase-transaction link status (`Linked` vs. italic `No purchase record`), and a "% sold" progress bar (`(purchased - remaining) / purchased * 100`).
+- Per-lot sub-row: purchase date (`purchase_date`, falling back to `created_at` for lots entered before the column was added), purchased/remaining quantities, unit cost, value (`remaining * unit_cost`), purchase-transaction link status (`Linked` vs. italic `No purchase record`), and a "% sold" progress bar (`(purchased - remaining) / purchased * 100`).
 - "Add purchase lot" row always rendered at the bottom of an expanded item's lot list, even when the item has zero lots.
 
 ## Mutations
@@ -45,9 +45,9 @@ Lots with `trade_id != null` display a small purple **"Trade"** pill in the lot 
 
 Read-only slide-over (drawer pattern). Shows trade date, counterparty, FMV source notes, notes; given-side and received-side line items with links to the sale/item; cash boot amount and link to the bank transaction if present; all linked transactions (income, COGS, cash boot). **Delete trade** button → `ConfirmDialog` with lifecycle and FIFO-reversal warnings; disabled if any received lot has been depleted.
 
-## Known schema gap affecting this page
+## Purchase date
 
-`inventory_lots` has no `purchase_date` column — the "Date Added" column shown is actually `created_at`, which breaks correct FIFO ordering if a lot is entered into the system after the fact for a date in the past. This is a tracked schema gap (TASKS.md), not a UI bug — fixing it requires a migration plus updating `createLot`/`updateLot` and this page's date column.
+`inventory_lots` has a `purchase_date date` column (nullable). All new lots get a `purchase_date` set from the date picker (defaults to today). Lots created before the column was added show their `created_at` date as a fallback. The `purchase_date` is editable via the Edit Lot modal and is what the page's "Purchase Date" column displays.
 
 ## Gaps vs. mobile (TASKS.md backlog)
 

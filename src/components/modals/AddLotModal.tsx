@@ -1,7 +1,7 @@
 import { useState, type FormEvent } from 'react'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import Modal, { Field, inputCls, ModalActions } from '../Modal'
-import { createLot } from '../../lib/mutations'
+import { createLot, todayStr } from '../../lib/mutations'
 import { formatUSD } from '../../lib/utils'
 
 interface Props {
@@ -15,6 +15,7 @@ export default function AddLotModal({ open, onClose, itemId, itemName }: Props) 
   const qc = useQueryClient()
   const [quantity, setQuantity] = useState('1')
   const [unitCost, setUnitCost] = useState('')
+  const [date, setDate] = useState(todayStr)
   const [error, setError] = useState<string | null>(null)
 
   const mutation = useMutation({
@@ -22,6 +23,7 @@ export default function AddLotModal({ open, onClose, itemId, itemName }: Props) 
       itemId,
       quantity: parseInt(quantity, 10),
       unitCost: parseFloat(unitCost),
+      purchaseDate: date || null,
     }),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['items'] })
@@ -31,7 +33,7 @@ export default function AddLotModal({ open, onClose, itemId, itemName }: Props) 
     onError: (e: Error) => setError(e.message),
   })
 
-  function reset() { setQuantity('1'); setUnitCost(''); setError(null) }
+  function reset() { setQuantity('1'); setUnitCost(''); setDate(todayStr()); setError(null) }
 
   function submit(e: FormEvent) {
     e.preventDefault()
@@ -48,9 +50,12 @@ export default function AddLotModal({ open, onClose, itemId, itemName }: Props) 
   return (
     <Modal open={open} onClose={() => { reset(); onClose() }} title={`Add Purchase Lot — ${itemName}`}>
       <form onSubmit={submit}>
+        <Field label="Purchase Date">
+          <input autoFocus type="date" value={date} onChange={e => setDate(e.target.value)} className={inputCls} />
+        </Field>
         <div className="grid grid-cols-2 gap-3">
           <Field label="Quantity Purchased">
-            <input autoFocus type="number" min="1" value={quantity} onChange={e => setQuantity(e.target.value)} className={inputCls} />
+            <input type="number" min="1" value={quantity} onChange={e => setQuantity(e.target.value)} className={inputCls} />
           </Field>
           <Field label="Unit Cost">
             <input type="number" step="0.01" min="0" value={unitCost} onChange={e => setUnitCost(e.target.value)} className={inputCls} placeholder="0.00" />

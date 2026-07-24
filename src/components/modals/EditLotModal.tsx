@@ -13,6 +13,7 @@ interface Props {
 
 export default function EditLotModal({ open, onClose, lot }: Props) {
   const qc = useQueryClient()
+  const [date, setDate] = useState(lot.purchase_date ?? lot.created_at.split('T')[0])
   const [unitCost, setUnitCost] = useState(String(lot.unit_cost))
   const [qtyPurchased, setQtyPurchased] = useState(String(lot.quantity_purchased))
   const [qtyRemaining, setQtyRemaining] = useState(String(lot.quantity_remaining))
@@ -24,6 +25,7 @@ export default function EditLotModal({ open, onClose, lot }: Props) {
       parseFloat(unitCost),
       parseInt(qtyPurchased, 10),
       parseInt(qtyRemaining, 10),
+      date || null,
     ),
     onSuccess: () => { qc.invalidateQueries({ queryKey: ['items'] }); onClose() },
     onError: (e: Error) => setError(e.message),
@@ -45,8 +47,11 @@ export default function EditLotModal({ open, onClose, lot }: Props) {
   return (
     <Modal open={open} onClose={onClose} title="Edit Lot">
       <form onSubmit={submit}>
+        <Field label="Purchase Date">
+          <input autoFocus type="date" value={date} onChange={e => setDate(e.target.value)} className={inputCls} />
+        </Field>
         <Field label="Unit Cost">
-          <input autoFocus type="number" step="0.01" min="0" value={unitCost} onChange={e => setUnitCost(e.target.value)} className={inputCls} />
+          <input type="number" step="0.01" min="0" value={unitCost} onChange={e => setUnitCost(e.target.value)} className={inputCls} />
         </Field>
         <div className="grid grid-cols-2 gap-3">
           <Field label="Qty Purchased">

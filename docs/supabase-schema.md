@@ -86,7 +86,7 @@ A purchase batch of an item at a specific unit cost — FIFO unit of accounting.
 | `transaction_id` | nullable FK to the COGS purchase transaction; `ON DELETE SET NULL` (deleting the transaction unlinks, doesn't delete, the lot). On trade-acquired lots, points to the trade's `cogs_transaction_id`. |
 | `quantity_purchased`, `quantity_remaining` | `quantity_remaining` is depleted FIFO by `record_sale`, restored by `reverse_sale` (on sale delete) and by `record_return` v21 (on partial/full refund) |
 | `unit_cost` | |
-| **no `purchase_date`** | only `created_at` exists; TASKS.md flags this as blocking correct FIFO ordering for back-dated entries |
+| `purchase_date` | nullable `date`; set from the Add/Edit Lot modal date picker (defaults to today). Lots predating the column show `created_at` as a fallback in the UI. |
 | `trade_id` | nullable FK to `trades`; set on lots created from received-in-trade items. `ON DELETE SET NULL`. |
 
 ### `inventory_movements`
