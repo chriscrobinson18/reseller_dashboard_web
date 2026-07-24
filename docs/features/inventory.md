@@ -51,7 +51,7 @@ The "Purchase Tx" cell in each lot sub-row is a button opening `LotTransactionSl
 
 **Linked** — shows the transaction (merchant, date, amount, `CategoryBadge`, source, notes) plus an **Unlink transaction** action (`unlinkLotFromTransaction`). Warns in amber when the lot total (`quantity_purchased × unit_cost`) differs from the transaction amount by ≥ $0.01, since one purchase legitimately covers several lots.
 
-**Unlinked** — a merchant-searchable picker over `useLotLinkCandidates()`: money-out transactions that are either **uncategorized or already Cost of Goods**, newest first, capped at 500. Rows already categorized as something else are treated as settled and hidden. Each row shows its current category (or an italic `Uncategorized`), and candidates whose absolute amount equals the lot total within $0.01 get a green "match" pill.
+**Unlinked** — a merchant-searchable picker over `useLotLinkCandidates()`: money-out transactions that are either **uncategorized or already Cost of Goods**, newest first, capped at 500. Rows already categorized as something else are treated as settled and hidden. Each row shows its current category (or an italic `Uncategorized`). Candidates whose absolute amount equals the lot total within $0.01 get a green "match" pill and are **sorted to the top**; everything else keeps the query's date-desc order (the sort is stable). Both the pill and the sort read the same `isAmountMatch` helper so they can't drift apart.
 
 ### Why the picker isn't COGS-only
 

@@ -1,4 +1,4 @@
-import { useState, useMemo } from 'react'
+import { useState, useMemo, useCallback } from 'react'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { Link2Off, Search, Check } from 'lucide-react'
 import SlideOver from './SlideOver'
@@ -52,13 +52,21 @@ export default function LotTransactionSlideOver({ lot, itemName, onClose }: Prop
     onError: (e: Error) => setError(e.message),
   })
 
-  const filtered = useMemo(() => {
-    if (!search) return candidates
-    const q = search.toLowerCase()
-    return candidates.filter(t => (t.merchant ?? '').toLowerCase().includes(q))
-  }, [candidates, search])
-
   const lotTotal = lot ? lot.quantity_purchased * lot.unit_cost : 0
+
+  const isAmountMatch = useCallback(
+    (amount: number) => Math.abs(Math.abs(amount) - lotTotal) < 0.01,
+    [lotTotal],
+  )
+
+  /** Amount matches float to the top; everything else keeps the query's date-desc order. */
+  const filtered = useMemo(() => {
+    const q = search.toLowerCase()
+    const rows = search
+      ? candidates.filter(t => (t.merchant ?? '').toLowerCase().includes(q))
+      : candidates
+    return [...rows].sort((a, b) => Number(isAmountMatch(b.amount)) - Number(isAmountMatch(a.amount)))
+  }, [candidates, search, isAmountMatch])
 
   return (
     <SlideOver
@@ -163,7 +171,7 @@ export default function LotTransactionSlideOver({ lot, itemName, onClose }: Prop
               ) : (
                 <div className="space-y-1.5">
                   {filtered.map(t => {
-                    const exact = Math.abs(Math.abs(t.amount) - lotTotal) < 0.01
+                    const exact = isAmountMatch(t.amount)
                     return (
                       <button
                         key={t.id}
