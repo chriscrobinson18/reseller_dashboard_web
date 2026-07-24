@@ -1,7 +1,7 @@
 import { useState, useMemo, Fragment } from 'react'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { ArrowLeftRight, ChevronDown, ChevronRight, Plus, Pencil, Trash2 } from 'lucide-react'
-import { formatUSD, formatDate, formatMonthYear, monthKey } from '../lib/utils'
+import { formatUSD, formatDate } from '../lib/utils'
 import { deleteItem, deleteLot } from '../lib/mutations'
 import type { InventoryLot } from '../lib/types'
 import { useItems, type ItemWithLots } from '../lib/queries'
@@ -164,9 +164,9 @@ function lotDate(lot: InventoryLot): string {
 }
 
 /**
- * Flat, newest-first ledger of every lot across all items, grouped into months
- * with a per-month spend subtotal. Complements the item view: this is the shape
- * you want when reconciling purchases against bank transactions chronologically.
+ * Flat, newest-first ledger of every lot across all items. Complements the item
+ * view: this is the shape you want when reconciling purchases against bank
+ * transactions chronologically.
  */
 function LotLedger({ rows, onEditLot, onDeleteLot, onTradePillClick, onTxClick }: {
   rows: LedgerRow[]
@@ -175,17 +175,6 @@ function LotLedger({ rows, onEditLot, onDeleteLot, onTradePillClick, onTxClick }
   onTradePillClick: (tradeId: string) => void
   onTxClick: (lot: InventoryLot, itemName: string) => void
 }) {
-  const months = useMemo(() => {
-    const groups = new Map<string, LedgerRow[]>()
-    for (const row of rows) {
-      const key = monthKey(lotDate(row.lot))
-      const bucket = groups.get(key)
-      if (bucket) bucket.push(row)
-      else groups.set(key, [row])
-    }
-    return [...groups.entries()]
-  }, [rows])
-
   return (
     <table className="w-full text-sm">
       <thead className="sticky top-0 bg-gray-50 border-b border-gray-200 z-10">
@@ -201,82 +190,63 @@ function LotLedger({ rows, onEditLot, onDeleteLot, onTradePillClick, onTxClick }
         </tr>
       </thead>
       <tbody>
-        {months.map(([key, monthRows]) => {
-          const spend = monthRows.reduce((s, r) => s + r.lot.quantity_purchased * r.lot.unit_cost, 0)
-          return (
-            <Fragment key={key}>
-              <tr className="bg-gray-50/80 border-y border-gray-100">
-                <td colSpan={5} className="px-4 py-1.5 text-xs font-semibold text-gray-600">
-                  {formatMonthYear(lotDate(monthRows[0].lot))}
-                  <span className="ml-2 font-normal text-gray-400">
-                    {monthRows.length} {monthRows.length === 1 ? 'lot' : 'lots'}
-                  </span>
-                </td>
-                <td className="px-3 py-1.5 text-right text-xs font-semibold tabular-nums text-gray-600">
-                  {formatUSD(spend)}
-                </td>
-                <td colSpan={2} />
-              </tr>
-              {monthRows.map(({ lot, itemName }) => (
-                <tr key={lot.id} className="group border-b border-gray-100 hover:bg-gray-50/60">
-                  <td className="px-4 py-2.5 text-xs text-gray-600">{formatDate(lotDate(lot))}</td>
-                  <td className="px-4 py-2.5">
-                    <div className="flex items-center gap-1.5">
-                      <span className="font-medium text-gray-900 text-xs">{itemName}</span>
-                      {lot.trade_id && (
-                        <button
-                          onClick={() => onTradePillClick(lot.trade_id!)}
-                          className="px-1.5 py-0.5 rounded text-[10px] font-medium bg-purple-100 text-purple-700 hover:bg-purple-200"
-                        >
-                          Trade
-                        </button>
-                      )}
-                    </div>
-                  </td>
-                  <td className="px-3 py-2.5 text-xs text-gray-700 text-center">{lot.quantity_purchased}</td>
-                  <td className="px-3 py-2.5 text-center">
-                    <span className={`text-xs font-medium px-1.5 py-0.5 rounded ${
-                      lot.quantity_remaining === 0
-                        ? 'bg-gray-100 text-gray-400'
-                        : lot.quantity_remaining < lot.quantity_purchased
-                        ? 'bg-amber-100 text-amber-700'
-                        : 'bg-green-100 text-green-700'
-                    }`}>
-                      {lot.quantity_remaining}
-                    </span>
-                  </td>
-                  <td className="px-3 py-2.5 text-xs tabular-nums text-gray-700 text-right">
-                    {formatUSD(lot.unit_cost)}
-                  </td>
-                  <td className="px-3 py-2.5 text-xs tabular-nums text-gray-900 font-medium text-right">
-                    {formatUSD(lot.quantity_purchased * lot.unit_cost)}
-                  </td>
-                  <td className="px-3 py-2.5">
-                    <button
-                      onClick={() => onTxClick(lot, itemName)}
-                      className={`text-xs rounded px-1 -mx-1 hover:underline ${
-                        lot.transaction_id ? 'text-blue-600' : 'text-gray-400 italic hover:text-blue-600'
-                      }`}
-                      title={lot.transaction_id ? 'View purchase transaction' : 'Find and link the purchase transaction'}
-                    >
-                      {lot.transaction_id ? 'Linked' : 'No purchase record'}
-                    </button>
-                  </td>
-                  <td className="px-3 py-2.5">
-                    <div className="flex gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
-                      <button onClick={() => onEditLot(lot)} className="p-1 text-gray-400 hover:text-gray-700" title="Edit lot">
-                        <Pencil size={12} />
-                      </button>
-                      <button onClick={() => onDeleteLot(lot)} className="p-1 text-gray-400 hover:text-red-500" title="Delete lot">
-                        <Trash2 size={12} />
-                      </button>
-                    </div>
-                  </td>
-                </tr>
-              ))}
-            </Fragment>
-          )
-        })}
+        {rows.map(({ lot, itemName }) => (
+          <tr key={lot.id} className="group border-b border-gray-100 hover:bg-gray-50/60">
+            <td className="px-4 py-2.5 text-xs text-gray-600">{formatDate(lotDate(lot))}</td>
+            <td className="px-4 py-2.5">
+              <div className="flex items-center gap-1.5">
+                <span className="font-medium text-gray-900 text-xs">{itemName}</span>
+                {lot.trade_id && (
+                  <button
+                    onClick={() => onTradePillClick(lot.trade_id!)}
+                    className="px-1.5 py-0.5 rounded text-[10px] font-medium bg-purple-100 text-purple-700 hover:bg-purple-200"
+                  >
+                    Trade
+                  </button>
+                )}
+              </div>
+            </td>
+            <td className="px-3 py-2.5 text-xs text-gray-700 text-center">{lot.quantity_purchased}</td>
+            <td className="px-3 py-2.5 text-center">
+              <span className={`text-xs font-medium px-1.5 py-0.5 rounded ${
+                lot.quantity_remaining === 0
+                  ? 'bg-gray-100 text-gray-400'
+                  : lot.quantity_remaining < lot.quantity_purchased
+                  ? 'bg-amber-100 text-amber-700'
+                  : 'bg-green-100 text-green-700'
+              }`}>
+                {lot.quantity_remaining}
+              </span>
+            </td>
+            <td className="px-3 py-2.5 text-xs tabular-nums text-gray-700 text-right">
+              {formatUSD(lot.unit_cost)}
+            </td>
+            <td className="px-3 py-2.5 text-xs tabular-nums text-gray-900 font-medium text-right">
+              {formatUSD(lot.quantity_purchased * lot.unit_cost)}
+            </td>
+            <td className="px-3 py-2.5">
+              <button
+                onClick={() => onTxClick(lot, itemName)}
+                className={`text-xs rounded px-1 -mx-1 hover:underline ${
+                  lot.transaction_id ? 'text-blue-600' : 'text-gray-400 italic hover:text-blue-600'
+                }`}
+                title={lot.transaction_id ? 'View purchase transaction' : 'Find and link the purchase transaction'}
+              >
+                {lot.transaction_id ? 'Linked' : 'No purchase record'}
+              </button>
+            </td>
+            <td className="px-3 py-2.5">
+              <div className="flex gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
+                <button onClick={() => onEditLot(lot)} className="p-1 text-gray-400 hover:text-gray-700" title="Edit lot">
+                  <Pencil size={12} />
+                </button>
+                <button onClick={() => onDeleteLot(lot)} className="p-1 text-gray-400 hover:text-red-500" title="Delete lot">
+                  <Trash2 size={12} />
+                </button>
+              </div>
+            </td>
+          </tr>
+        ))}
       </tbody>
     </table>
   )
