@@ -12,7 +12,7 @@ Item + lot management. The only page that uses the centralized `useItems()` hook
 - Expandable rows (`expandedIds: Set<string>`, click anywhere on the item row to toggle) revealing a sub-table of that item's lots.
 - Header totals: item count, total units in stock (sum across ALL items' lots, not just filtered/visible ones), total value at cost.
 - Per-item row: name, category (free-text product category — NOT a Schedule C category), units in stock, value at cost, avg cost, lot count, expand chevron. "Sold out" label when `unitsInStock === 0`.
-- Per-lot sub-row: purchase date (`purchase_date`, falling back to `created_at` for lots entered before the column was added), purchased/remaining quantities, unit cost, value (`remaining * unit_cost`), purchase-transaction link status (`Linked` vs. italic `No purchase record`), and a "% sold" progress bar (`(purchased - remaining) / purchased * 100`).
+- Per-lot sub-row: purchase date (`purchase_date`, falling back to `created_at` for lots entered before the column was added), purchased/remaining quantities, unit cost, value (`remaining * unit_cost`), purchase-transaction link status (`Linked` vs. italic `No purchase record` — clickable, see below), and a "% sold" progress bar (`(purchased - remaining) / purchased * 100`).
 - "Add purchase lot" row always rendered at the bottom of an expanded item's lot list, even when the item has zero lots.
 
 ## Mutations
@@ -44,6 +44,22 @@ Lots with `trade_id != null` display a small purple **"Trade"** pill in the lot 
 ### `TradeDetailSlideOver`
 
 Read-only slide-over (drawer pattern). Shows trade date, counterparty, FMV source notes, notes; given-side and received-side line items with links to the sale/item; cash boot amount and link to the bank transaction if present; all linked transactions (income, COGS, cash boot). **Delete trade** button → `ConfirmDialog` with lifecycle and FIFO-reversal warnings; disabled if any received lot has been depleted.
+
+## Purchase Tx cell → `LotTransactionSlideOver`
+
+The "Purchase Tx" cell in each lot sub-row is a button opening `LotTransactionSlideOver` (`src/components/LotTransactionSlideOver.tsx`), which handles both states.
+
+**Linked** — shows the transaction (merchant, date, amount, `CategoryBadge`, source, notes) plus an **Unlink transaction** action (`unlinkLotFromTransaction`). Warns in amber when the lot total (`quantity_purchased × unit_cost`) differs from the transaction amount by ≥ $0.01, since one purchase legitimately covers several lots.
+
+**Unlinked** — a merchant-searchable picker over `useLotLinkCandidates()`: money-out transactions that are either **uncategorized or already Cost of Goods**, newest first, capped at 500. Rows already categorized as something else are treated as settled and hidden. Each row shows its current category (or an italic `Uncategorized`), and candidates whose absolute amount equals the lot total within $0.01 get a green "match" pill.
+
+### Why the picker isn't COGS-only
+
+This flow exists to reconcile **backwards** — the user knows they bought inventory and goes hunting for the bank transaction, which in a messy ledger is usually still uncategorized. A COGS-only picker would be empty in exactly the case the feature is for. So the picker includes uncategorized rows, and linking offers a default-on **"Also categorize it as Cost of Goods"** checkbox; `linkLotToPurchase()` in `mutations.ts` performs the link and the recategorization together. Unticking links without touching the category, which leaves a lot pointing at a non-COGS transaction — valid mid-cleanup, but it will under-report Part III until fixed.
+
+Both paths invalidate `['items']`, `['lots-for-tx']`, `['transactions']`, and `['lot-link-candidates']` so this page, the Expenses page, and `TransactionInventorySection` stay in sync.
+
+`useTransaction(id)` (in `queries.ts`) fetches the linked transaction directly by id rather than reusing the Expenses page's fetch — that one is period-scoped (YTD by default), so a lot linked to an older purchase would otherwise not be found. `useLotLinkCandidates()` is unscoped for the same reason.
 
 ## Purchase date
 

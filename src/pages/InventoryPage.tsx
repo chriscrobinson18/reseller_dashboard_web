@@ -12,6 +12,7 @@ import EditItemModal from '../components/modals/EditItemModal'
 import EditLotModal from '../components/modals/EditLotModal'
 import ConfirmDialog from '../components/ConfirmDialog'
 import TradeDetailSlideOver from '../components/TradeDetailSlideOver'
+import LotTransactionSlideOver from '../components/LotTransactionSlideOver'
 
 interface ItemSummary {
   unitsInStock: number
@@ -47,12 +48,13 @@ function AddLotRow({ onAddLot }: { onAddLot: () => void }) {
   )
 }
 
-function LotRows({ lots, onAddLot, onEditLot, onDeleteLot, onTradePillClick }: {
+function LotRows({ lots, onAddLot, onEditLot, onDeleteLot, onTradePillClick, onTxClick }: {
   lots: InventoryLot[]
   onAddLot: () => void
   onEditLot: (lot: InventoryLot) => void
   onDeleteLot: (lot: InventoryLot) => void
   onTradePillClick: (tradeId: string) => void
+  onTxClick: (lot: InventoryLot) => void
 }) {
   if (lots.length === 0) {
     return (
@@ -103,11 +105,15 @@ function LotRows({ lots, onAddLot, onEditLot, onDeleteLot, onTradePillClick }: {
               {formatUSD(lot.quantity_remaining * lot.unit_cost)}
             </td>
             <td className="px-3 py-2">
-              {lot.transaction_id ? (
-                <span className="text-xs text-blue-600">Linked</span>
-              ) : (
-                <span className="text-xs text-gray-400 italic">No purchase record</span>
-              )}
+              <button
+                onClick={e => { e.stopPropagation(); onTxClick(lot) }}
+                className={`text-xs rounded px-1 -mx-1 hover:underline ${
+                  lot.transaction_id ? 'text-blue-600' : 'text-gray-400 italic hover:text-blue-600'
+                }`}
+                title={lot.transaction_id ? 'View purchase transaction' : 'Find and link the purchase transaction'}
+              >
+                {lot.transaction_id ? 'Linked' : 'No purchase record'}
+              </button>
             </td>
             <td className="px-3 py-2">
               <div className="flex items-center gap-2">
@@ -158,6 +164,7 @@ export default function InventoryPage() {
   const [deleteLotTarget, setDeleteLotTarget] = useState<InventoryLot | null>(null)
   const [showRecordTrade, setShowRecordTrade] = useState(false)
   const [openTradeId, setOpenTradeId] = useState<string | null>(null)
+  const [txLot, setTxLot] = useState<{ lot: InventoryLot; itemName: string } | null>(null)
   const qc = useQueryClient()
 
   const { data: items = [], isLoading } = useItems()
@@ -314,6 +321,7 @@ export default function InventoryPage() {
                         onEditLot={setEditLot}
                         onDeleteLot={setDeleteLotTarget}
                         onTradePillClick={setOpenTradeId}
+                        onTxClick={lot => setTxLot({ lot, itemName: item.name })}
                       />
                     )}
                   </Fragment>
@@ -330,6 +338,11 @@ export default function InventoryPage() {
 
       <RecordTradeModal open={showRecordTrade} onClose={() => setShowRecordTrade(false)} />
       <TradeDetailSlideOver tradeId={openTradeId} onClose={() => setOpenTradeId(null)} />
+      <LotTransactionSlideOver
+        lot={txLot?.lot ?? null}
+        itemName={txLot?.itemName}
+        onClose={() => setTxLot(null)}
+      />
       <AddItemModal open={showAddItem} onClose={() => setShowAddItem(false)} />
       {addLotFor && (
         <AddLotModal

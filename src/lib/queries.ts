@@ -1,6 +1,6 @@
 import { useQuery } from '@tanstack/react-query'
 import { supabase } from './supabase'
-import type { Item, InventoryLot, Trade, PlaidItem, PlaidAccount } from './types'
+import type { Item, InventoryLot, Trade, PlaidItem, PlaidAccount, Transaction } from './types'
 import type { CustomCategory } from './categories'
 import { customCategoryValue } from './categories'
 import type { ColorKey } from './categoryPalette'
@@ -36,6 +36,48 @@ export function itemAvgCost(item: ItemWithLots): number {
   const totalQty = lots.reduce((s, l) => s + l.quantity_purchased, 0)
   if (totalQty === 0) return 0
   return lots.reduce((s, l) => s + l.unit_cost * l.quantity_purchased, 0) / totalQty
+}
+
+/** Single transaction by id. Not period-scoped, unlike the Expenses page fetch. */
+export function useTransaction(id: string | null | undefined) {
+  return useQuery({
+    queryKey: ['transaction', id],
+    enabled: !!id,
+    queryFn: async (): Promise<Transaction> => {
+      const { data, error } = await supabase
+        .from('transactions')
+        .select('*')
+        .eq('id', id!)
+        .single()
+      if (error) throw error
+      return data as Transaction
+    },
+  })
+}
+
+/**
+ * Candidate purchase transactions for linking to an inventory lot: money-out
+ * rows that are either uncategorized or already Cost of Goods. Rows firmly
+ * categorized as something else are excluded as already-settled.
+ *
+ * Not period-scoped — a lot is often reconciled long after the purchase.
+ */
+export function useLotLinkCandidates(enabled: boolean) {
+  return useQuery({
+    queryKey: ['lot-link-candidates'],
+    enabled,
+    queryFn: async (): Promise<Transaction[]> => {
+      const { data, error } = await supabase
+        .from('transactions')
+        .select('*')
+        .lt('amount', 0)
+        .or('schedule_c_category.is.null,schedule_c_category.eq.cost_of_goods')
+        .order('date', { ascending: false })
+        .limit(500)
+      if (error) throw error
+      return (data ?? []) as Transaction[]
+    },
+  })
 }
 
 /**

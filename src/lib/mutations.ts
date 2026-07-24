@@ -97,6 +97,26 @@ export async function linkLotToTransaction(lotId: string, transactionId: string)
   if (error) throw error
 }
 
+/**
+ * Links a lot to a purchase transaction, optionally recategorizing that
+ * transaction as Cost of Goods in the same step.
+ *
+ * Exists because lots are often reconciled *backwards* — the user knows they
+ * bought inventory and goes hunting for the bank transaction, which is
+ * typically still uncategorized. Linking and categorizing separately would
+ * leave a lot pointing at a non-COGS transaction, which breaks Part III.
+ */
+export async function linkLotToPurchase(params: {
+  lotId: string
+  transactionId: string
+  markAsCogs: boolean
+}) {
+  await linkLotToTransaction(params.lotId, params.transactionId)
+  if (params.markAsCogs) {
+    await updateTransactionCategory(params.transactionId, 'cost_of_goods')
+  }
+}
+
 export async function unlinkLotFromTransaction(lotId: string) {
   const { error } = await supabase
     .from('inventory_lots')
