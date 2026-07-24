@@ -18,7 +18,8 @@ Item + lot management. The only page that uses the centralized `useItems()` hook
 ## Mutations
 
 - `createItem`/`updateItem`/`deleteItem` (soft delete) — straightforward, via modals `AddItemModal`/`EditItemModal`.
-- `createLot`/`updateLot`/`deleteLot` (soft delete) via `AddLotModal`/`EditLotModal`. `createLot` accepts an optional `transactionId` to link the new lot directly to a COGS purchase transaction at creation time — the alternative path (linking an *existing* lot after the fact) is `linkLotToTransaction`/`unlinkLotFromTransaction`, exposed via `TransactionInventorySection` on the Expenses page, not from here.
+- `createLotsForPurchase`/`updateLot`/`deleteLot` (soft delete) via `AddLotModal`/`EditLotModal`. `createLotsForPurchase` accepts an optional `transactionId` to link the new lot directly to a COGS purchase transaction at creation time — the alternative path (linking an *existing* lot after the fact) is `linkLotToTransaction`/`unlinkLotFromTransaction`, exposed via `TransactionInventorySection` on the Expenses page and via the Purchase Tx cell here.
+- There is deliberately **no** single-lot `createLot` primitive. Every creation path goes through `createLotsForPurchase` so the penny-splitting below can't be bypassed (the trade flow inserts its own rows directly, since FMV allocation is its own calculation).
 - Edit/delete actions on item and lot rows only appear on hover (`opacity-0 group-hover:opacity-100`) — no keyboard/touch-friendly affordance currently.
 
 ## Recording a trade
@@ -60,6 +61,21 @@ This flow exists to reconcile **backwards** — the user knows they bought inven
 Both paths invalidate `['items']`, `['lots-for-tx']`, `['transactions']`, and `['lot-link-candidates']` so this page, the Expenses page, and `TransactionInventorySection` stay in sync.
 
 `useTransaction(id)` (in `queries.ts`) fetches the linked transaction directly by id rather than reusing the Expenses page's fetch — that one is period-scoped (YTD by default), so a lot linked to an older purchase would otherwise not be found. `useLotLinkCandidates()` is unscoped for the same reason.
+
+## Lot cost entry and penny splitting
+
+`AddLotModal` takes cost as either **total paid** (default) or **cost per unit**, toggled by a segmented control; either way it resolves to a lot total. `TransactionInventorySection` on the Expenses page is total-only, and offers a "Use $X" shortcut that fills in the transaction's still-unallocated remainder.
+
+`unit_cost` is 2dp per-unit money, so a total that doesn't divide evenly can't be represented by one lot: 3 for $10.00 at $3.33/unit is a $9.99 lot, which under-reports COGS by a cent and stops the purchase reconciling against the $10.00 transaction. `splitLotCost()` (`src/lib/lotCost.ts`) instead pushes the remainder cents onto the trailing units and returns **cost tiers**:
+
+```
+splitLotCost(10, 3) → [ { quantity: 2, unitCost: 3.33 },
+                        { quantity: 1, unitCost: 3.34 } ]   // = $10.00 exactly
+```
+
+**Each tier becomes its own `inventory_lots` row** — one row carries a single `unit_cost`, so an uneven purchase legitimately produces two lot rows sharing an item, purchase date, and `transaction_id`. Both modals preview this before submit so the extra row isn't a surprise. The cheaper tier is ordered first, so FIFO consumes base-priced units before rounded-up ones.
+
+`splitLotCost` is covered by `src/lib/__tests__/lotCost.test.ts`, including a sweep asserting the tiers always sum back to the requested total across quantities 1–25.
 
 ## Purchase date
 

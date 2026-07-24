@@ -1,4 +1,5 @@
 import { supabase } from './supabase'
+import { splitLotCost } from './lotCost'
 import type { Item, InventoryLot } from './types'
 import { CATEGORIES } from './categories'
 import { isColorKey, type ColorKey } from './categoryPalette'
@@ -46,30 +47,39 @@ export async function deleteItem(id: string) {
 
 // ─── Inventory lots ───────────────────────────────────────────────────────────
 
-/** Creates an inventory lot. Pass transactionId to link it to a COGS purchase transaction. */
-export async function createLot(params: {
+/**
+ * Creates the lot(s) for a purchase entered as a *total* cost.
+ *
+ * `splitLotCost` may return two tiers when the total doesn't divide evenly into
+ * whole cents (3 for $10.00 → 2 × $3.33 + 1 × $3.34). Each tier needs its own
+ * row because a lot carries a single unit_cost, so this can insert more than
+ * one lot. They share item, purchase date, and transaction link.
+ */
+export async function createLotsForPurchase(params: {
   itemId: string
   quantity: number
-  unitCost: number
+  totalCost: number
   transactionId?: string | null
   purchaseDate?: string | null
-}): Promise<InventoryLot> {
+}): Promise<InventoryLot[]> {
+  const tiers = splitLotCost(params.totalCost, params.quantity)
+  if (tiers.length === 0) throw new Error('Enter a valid quantity and total cost')
+
   const user_id = await getUserId()
   const { data, error } = await supabase
     .from('inventory_lots')
-    .insert({
+    .insert(tiers.map(t => ({
       user_id,
       item_id: params.itemId,
       transaction_id: params.transactionId ?? null,
-      quantity_purchased: params.quantity,
-      quantity_remaining: params.quantity,
-      unit_cost: params.unitCost,
+      quantity_purchased: t.quantity,
+      quantity_remaining: t.quantity,
+      unit_cost: t.unitCost,
       purchase_date: params.purchaseDate ?? null,
-    })
+    })))
     .select()
-    .single()
   if (error) throw error
-  return data as InventoryLot
+  return (data ?? []) as InventoryLot[]
 }
 
 export async function updateLot(id: string, unitCost: number, quantityPurchased: number, quantityRemaining: number, purchaseDate: string | null) {

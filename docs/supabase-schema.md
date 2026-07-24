@@ -85,7 +85,7 @@ A purchase batch of an item at a specific unit cost — FIFO unit of accounting.
 | `id`, `user_id`, `item_id`, `created_at`, `deleted_at` | soft-deleted |
 | `transaction_id` | nullable FK to the COGS purchase transaction; `ON DELETE SET NULL` (deleting the transaction unlinks, doesn't delete, the lot). On trade-acquired lots, points to the trade's `cogs_transaction_id`. |
 | `quantity_purchased`, `quantity_remaining` | `quantity_remaining` is depleted FIFO by `record_sale`, restored by `reverse_sale` (on sale delete) and by `record_return` v21 (on partial/full refund) |
-| `unit_cost` | |
+| `unit_cost` | per-unit, 2dp. A purchase total that doesn't divide evenly is split across **multiple lot rows** rather than rounded — see `splitLotCost` in [`features/inventory.md`](features/inventory.md#lot-cost-entry-and-penny-splitting). |
 | `purchase_date` | nullable `date`; set from the Add/Edit Lot modal date picker (defaults to today). Lots predating the column show `created_at` as a fallback in the UI. |
 | `trade_id` | nullable FK to `trades`; set on lots created from received-in-trade items. `ON DELETE SET NULL`. |
 
