@@ -80,16 +80,25 @@ serve(async (req) => {
       console.warn('Could not fetch institution info (non-fatal):', instErr?.message)
     }
 
-    if (institutionId) {
-      const { data: existing } = await supabase
+    // Match on institution_id OR institution_name. Items created before
+    // institution capture existed have institution_id = NULL, and `.eq()` never
+    // matches NULL — so an id-only lookup silently orphaned the old item and
+    // produced a duplicate connection with the same accounts. Every pre-existing
+    // item is in that state, so the name fallback is load-bearing, not defensive.
+    if (institutionId || institutionName) {
+      const filters = [
+        ...(institutionId ? [`institution_id.eq.${institutionId}`] : []),
+        ...(institutionName ? [`institution_name.eq.${institutionName}`] : []),
+      ].join(',')
+
+      const { data: existingRows } = await supabase
         .from('plaid_items')
         .select('item_id, access_token')
         .eq('user_id', user.id)
-        .eq('institution_id', institutionId)
+        .or(filters)
         .neq('item_id', itemId)
-        .maybeSingle()
 
-      if (existing) {
+      for (const existing of existingRows ?? []) {
         console.log('Replacing existing item for institution:', institutionId, '->', existing.item_id)
         try {
           await plaidClient.itemRemove({ access_token: existing.access_token })
