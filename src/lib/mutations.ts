@@ -324,6 +324,8 @@ export async function recordSale(params: {
   externalOrderId?: string | null
   fees?: number | null
   shippingCost?: number | null
+  /** How the buyer paid — see lib/paymentMethods.ts. */
+  paymentMethod?: string | null
 }): Promise<RecordSaleResult> {
   const soldAtIso = new Date(params.soldAt + 'T12:00:00').toISOString()
 
@@ -344,19 +346,20 @@ export async function recordSale(params: {
   const saleId: string = data.sale_id
   if (!saleId) throw new Error('record_sale returned no sale_id')
 
-  // Persist fee/shipping totals (drives the Profitability card).
-  if (params.fees != null || params.shippingCost != null) {
-    const netPayout = params.salePrice - (params.fees ?? 0) - (params.shippingCost ?? 0)
-    await supabase
-      .from('sales')
-      .update({
-        external_order_id: params.externalOrderId ?? null,
-        fees: params.fees ?? 0,
-        shipping_cost: params.shippingCost ?? null,
-        net_payout: netPayout,
-      })
-      .eq('id', saleId)
+  // Fields the record_sale edge function doesn't accept, written back onto the
+  // row it just created. payment_method is always persisted; fee/shipping totals
+  // (which drive the Profitability card) only when actually supplied, so a blank
+  // fee field can't overwrite something the function already set.
+  const patch: Record<string, unknown> = {
+    payment_method: params.paymentMethod || null,
   }
+  if (params.fees != null || params.shippingCost != null) {
+    patch.external_order_id = params.externalOrderId ?? null
+    patch.fees = params.fees ?? 0
+    patch.shipping_cost = params.shippingCost ?? null
+    patch.net_payout = params.salePrice - (params.fees ?? 0) - (params.shippingCost ?? 0)
+  }
+  await supabase.from('sales').update(patch).eq('id', saleId)
 
   // Create linked transaction rows (payout + fees + shipping).
   await createSaleTransactions({
@@ -436,6 +439,7 @@ export async function updateSale(params: {
   externalOrderId: string | null
   fees: number | null
   shippingCost: number | null
+  paymentMethod?: string | null
 }) {
   const netPayout = params.salePrice - (params.fees ?? 0) - (params.shippingCost ?? 0)
   const { error } = await supabase
@@ -449,6 +453,7 @@ export async function updateSale(params: {
       fees: params.fees ?? 0,
       shipping_cost: params.shippingCost ?? null,
       net_payout: netPayout,
+      payment_method: params.paymentMethod || null,
     })
     .eq('id', params.id)
   if (error) throw error

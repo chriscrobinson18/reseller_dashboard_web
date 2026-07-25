@@ -69,6 +69,7 @@ The relational centerpiece — one row per sale event, FIFO-depletes inventory v
 | `inventory_status` | `'ok' \| 'oversold' \| 'reconciled'` — set by `record_sale` edge function based on FIFO depletion result |
 | `return_status` | `'none' \| 'partial' \| 'full'` |
 | `refunded_quantity`, `refunded_amount` | populated by the `record_return` edge function (v21), driven from the web `ProcessReturnModal` (shipped 2026-07-10); decremented by `reverse_return` on return-edit |
+| `payment_method` | nullable text — how the buyer paid (`cash`, `venmo`, `cashapp`, `paypal`, `apple_pay`, `zelle`, `card`, `other`). **Orthogonal to `platform`**, which is *where* the sale happened: an eBay sale and a face-to-face sale can both settle over PayPal, and an in-person sale has no marketplace at all. Deliberately unconstrained — payment rails change faster than migrations, so the known list lives in `src/lib/paymentMethods.ts`. Null on sales predating the column. |
 | `sold_at` | full ISO timestamp (not just a date) |
 | `trade_id` | nullable FK to `trades`; set on the sale(s) for items given up in a trade. `ON DELETE SET NULL`. |
 

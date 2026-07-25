@@ -3,6 +3,7 @@ import { useMutation, useQueryClient } from '@tanstack/react-query'
 import Modal, { Field, inputCls, ModalActions } from '../Modal'
 import { updateSale } from '../../lib/mutations'
 import { formatUSD } from '../../lib/utils'
+import { PAYMENT_METHODS } from '../../lib/paymentMethods'
 import type { Sale } from '../../lib/types'
 
 const PLATFORMS = ['ebay', 'amazon', 'tcgplayer', 'mercari', 'stockx', 'goat', 'whatnot', 'manual']
@@ -20,6 +21,7 @@ export default function EditSaleModal({ open, onClose, sale }: Props) {
   const [salePrice, setSalePrice] = useState(String(sale.sale_price))
   const [soldAt, setSoldAt] = useState(sale.sold_at.slice(0, 10))
   const [orderId, setOrderId] = useState(sale.external_order_id ?? '')
+  const [paymentMethod, setPaymentMethod] = useState(sale.payment_method ?? '')
   const [fees, setFees] = useState(sale.fees ? String(sale.fees) : '')
   const [shipping, setShipping] = useState(sale.shipping_cost != null ? String(sale.shipping_cost) : '')
   const [error, setError] = useState<string | null>(null)
@@ -35,6 +37,7 @@ export default function EditSaleModal({ open, onClose, sale }: Props) {
       externalOrderId: orderId.trim() || null,
       fees: fees ? parseFloat(fees) : null,
       shippingCost: shipping ? parseFloat(shipping) : null,
+      paymentMethod: paymentMethod || null,
     }),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['sales'] })
@@ -68,6 +71,12 @@ export default function EditSaleModal({ open, onClose, sale }: Props) {
           <Field label="Platform">
             <select value={platform} onChange={e => setPlatform(e.target.value)} className={inputCls + ' capitalize bg-white'}>
               {PLATFORMS.map(p => <option key={p} value={p} className="capitalize">{p}</option>)}
+            </select>
+          </Field>
+          <Field label="Payment Method" hint={platform === 'manual' ? 'How you were paid' : 'Optional'}>
+            <select value={paymentMethod} onChange={e => setPaymentMethod(e.target.value)} className={inputCls + ' bg-white'}>
+              <option value="">—</option>
+              {PAYMENT_METHODS.map(m => <option key={m.value} value={m.value}>{m.label}</option>)}
             </select>
           </Field>
           <Field label="Sale Date">

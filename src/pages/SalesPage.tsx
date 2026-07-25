@@ -13,6 +13,7 @@ import EditSaleModal from '../components/modals/EditSaleModal'
 import LinkSaleToItemModal from '../components/modals/LinkSaleToItemModal'
 import ProcessReturnModal from '../components/modals/ProcessReturnModal'
 import { saleProfit } from '../lib/saleProfit'
+import { paymentMethodLabel } from '../lib/paymentMethods'
 import type { Sale } from '../lib/types'
 import TradeDetailSlideOver from '../components/TradeDetailSlideOver'
 
@@ -167,6 +168,11 @@ function SaleDetail({ sale, netPayoutBySale, onLinkItem, onEdit, onDelete, onPro
         </div>
         <div className="flex items-center gap-2 mt-1.5 flex-wrap">
           <PlatformBadge platform={sale.platform} />
+          {paymentMethodLabel(sale.payment_method) && (
+            <span className="text-xs px-2 py-0.5 rounded-full border border-gray-200 text-gray-600">
+              {paymentMethodLabel(sale.payment_method)}
+            </span>
+          )}
           <StatusBadge status={sale.inventory_status} type="inventory" />
           <StatusBadge status={sale.return_status} type="return" />
         </div>
@@ -319,7 +325,9 @@ export default function SalesPage() {
     return sales.filter(s =>
       (s.items?.name ?? '').toLowerCase().includes(q) ||
       (s.external_order_id ?? '').toLowerCase().includes(q) ||
-      (s.platform ?? '').toLowerCase().includes(q)
+      (s.platform ?? '').toLowerCase().includes(q) ||
+      (s.payment_method ?? '').toLowerCase().includes(q) ||
+      (paymentMethodLabel(s.payment_method) ?? '').toLowerCase().includes(q)
     )
   }, [sales, search])
 
@@ -352,7 +360,7 @@ export default function SalesPage() {
             <input
               value={search}
               onChange={e => setSearch(e.target.value)}
-              placeholder="Search item, order ID, platform…"
+              placeholder="Search item, order ID, platform, payment…"
               className="w-64 border border-gray-200 rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-gray-900"
             />
             <button
@@ -418,7 +426,14 @@ export default function SalesPage() {
                           Trade
                         </span>
                       ) : (
-                        <PlatformBadge platform={sale.platform} />
+                        <div className="flex items-center gap-1.5">
+                          <PlatformBadge platform={sale.platform} />
+                          {paymentMethodLabel(sale.payment_method) && (
+                            <span className="text-[10px] text-gray-500">
+                              {paymentMethodLabel(sale.payment_method)}
+                            </span>
+                          )}
+                        </div>
                       )}
                     </td>
                     <td className="px-4 py-2.5 text-center text-gray-700">{sale.quantity}</td>

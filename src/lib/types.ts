@@ -51,6 +51,8 @@ export interface Sale {
   shipping_cost?: number
   net_payout?: number
   external_order_id?: string
+  /** How the buyer paid — see lib/paymentMethods.ts. Orthogonal to `platform`. */
+  payment_method?: string | null
   inventory_status: 'ok' | 'oversold' | 'reconciled'
   return_status: 'none' | 'partial' | 'full'
   refunded_quantity: number

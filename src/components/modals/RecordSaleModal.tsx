@@ -6,6 +6,7 @@ import ItemPicker from '../ItemPicker'
 import { recordSale, todayStr } from '../../lib/mutations'
 import { itemUnitsInStock, type ItemWithLots } from '../../lib/queries'
 import { formatUSD } from '../../lib/utils'
+import { PAYMENT_METHODS } from '../../lib/paymentMethods'
 
 const PLATFORMS = ['ebay', 'amazon', 'tcgplayer', 'mercari', 'stockx', 'goat', 'whatnot', 'manual']
 
@@ -15,6 +16,7 @@ export default function RecordSaleModal({ open, onClose }: { open: boolean; onCl
   const [quantity, setQuantity] = useState('1')
   const [salePrice, setSalePrice] = useState('')
   const [platform, setPlatform] = useState('ebay')
+  const [paymentMethod, setPaymentMethod] = useState('')
   const [soldAt, setSoldAt] = useState(todayStr())
   const [fees, setFees] = useState('')
   const [shipping, setShipping] = useState('')
@@ -32,6 +34,7 @@ export default function RecordSaleModal({ open, onClose }: { open: boolean; onCl
       externalOrderId: orderId.trim() || null,
       fees: fees ? parseFloat(fees) : null,
       shippingCost: shipping ? parseFloat(shipping) : null,
+      paymentMethod: paymentMethod || null,
     }),
     onSuccess: (result) => {
       // Touches sales, inventory_lots, inventory_movements and transactions — refresh all.
@@ -51,6 +54,7 @@ export default function RecordSaleModal({ open, onClose }: { open: boolean; onCl
 
   function reset() {
     setItem(null); setQuantity('1'); setSalePrice(''); setPlatform('ebay')
+    setPaymentMethod('')
     setSoldAt(todayStr()); setFees(''); setShipping(''); setOrderId(''); setError(null)
   }
 
@@ -93,6 +97,12 @@ export default function RecordSaleModal({ open, onClose }: { open: boolean; onCl
           <Field label="Platform">
             <select value={platform} onChange={e => setPlatform(e.target.value)} className={inputCls + ' capitalize bg-white'}>
               {PLATFORMS.map(p => <option key={p} value={p} className="capitalize">{p}</option>)}
+            </select>
+          </Field>
+          <Field label="Payment Method" hint={platform === 'manual' ? 'How you were paid' : 'Optional'}>
+            <select value={paymentMethod} onChange={e => setPaymentMethod(e.target.value)} className={inputCls + ' bg-white'}>
+              <option value="">—</option>
+              {PAYMENT_METHODS.map(m => <option key={m.value} value={m.value}>{m.label}</option>)}
             </select>
           </Field>
           <Field label="Sale Date">
