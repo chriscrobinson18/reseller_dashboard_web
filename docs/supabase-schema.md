@@ -100,7 +100,9 @@ Funding links between a lot and the transaction(s) that paid for it — added by
 | `allocated_amount` | unsigned magnitude this transaction contributed to the lot's cost; `check (>= 0)` |
 | | `unique (lot_id, transaction_id)` |
 
-**This table is the source of truth for the web client.** `inventory_lots.transaction_id` is kept as a denormalized mirror of the *primary* (oldest) link, recomputed by `syncPrimaryLotTransaction()` on every link/unlink, purely so the sibling iOS app keeps working. Don't add new web reads against that column.
+**This table is the source of truth for the web client.** `inventory_lots.transaction_id` is kept as a denormalized mirror of the *primary* (oldest) link, purely so the sibling iOS app keeps working. Don't add new web reads against that column.
+
+That mirror is maintained by the **`inventory_lot_transactions_sync_primary` trigger** (`sync_lot_primary_transaction()`, added 2026-07-24), which fires on insert/update/delete and recomputes the column in one statement. Do **not** maintain it from client code: the original client-side read-then-write raced — a concurrent link and unlink on the same lot could interleave so the stale reader won and left `transaction_id` pointing at an already-deleted link. The FK still resolved, so nothing errored; iOS simply showed a purchase link the web app no longer had. Being a trigger also keeps it correct for writers the web client never sees, including `ON DELETE CASCADE` from a hard-deleted transaction.
 
 Two sums matter, and they answer different questions:
 - **Per lot** — `sum(allocated_amount)` should equal `quantity_purchased * unit_cost`. Shortfall = the lot isn't fully funded (a payment method is missing). Surfaced in `LotTransactionSlideOver`.

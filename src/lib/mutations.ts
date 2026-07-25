@@ -113,27 +113,11 @@ export async function deleteLot(id: string) {
   if (error) throw error
 }
 
-/**
- * Recomputes `inventory_lots.transaction_id` from the lot's funding links,
- * pointing it at the oldest one. The column is denormalized and only exists so
- * the sibling iOS app keeps working; the join table is the source of truth.
- */
-async function syncPrimaryLotTransaction(lotId: string) {
-  const { data, error } = await supabase
-    .from('inventory_lot_transactions')
-    .select('transaction_id')
-    .eq('lot_id', lotId)
-    .order('created_at', { ascending: true })
-    .limit(1)
-  if (error) throw error
-
-  const primary = data?.[0]?.transaction_id ?? null
-  const { error: upErr } = await supabase
-    .from('inventory_lots')
-    .update({ transaction_id: primary })
-    .eq('id', lotId)
-  if (upErr) throw upErr
-}
+// `inventory_lots.transaction_id` is a denormalized mirror of the oldest funding
+// link, kept only for the sibling iOS app. It is maintained by the
+// `inventory_lot_transactions_sync_primary` database trigger — deliberately NOT
+// from here. The client-side read-then-write it replaced could race with a
+// concurrent unlink and leave the column pointing at a deleted link.
 
 /** Links an existing lot to a purchase (COGS) transaction. */
 export async function linkLotToTransaction(lotId: string, transactionId: string, allocatedAmount: number) {
@@ -145,7 +129,6 @@ export async function linkLotToTransaction(lotId: string, transactionId: string,
       { onConflict: 'lot_id,transaction_id' },
     )
   if (error) throw error
-  await syncPrimaryLotTransaction(lotId)
 }
 
 /** Changes how much of an already-linked transaction funds this lot. */
@@ -209,7 +192,6 @@ export async function unlinkLotFromTransaction(lotId: string, transactionId?: st
   if (transactionId) q = q.eq('transaction_id', transactionId)
   const { error } = await q
   if (error) throw error
-  await syncPrimaryLotTransaction(lotId)
 }
 
 /**
