@@ -78,21 +78,10 @@ export interface Sale {
   deleted_at?: string
   // from joins
   items?: { id: string; name: string; category?: string } | null
-  /**
-   * FIFO depletion audit rows. Usually all lots of `item_id`, but a sale can
-   * also carry *cost components* — extra items included in the sale with no
-   * price of their own (a remote sold with a VHS). Those show up here as
-   * movements whose `inventory_lots.item_id` differs from the sale's
-   * `item_id`. COGS is the sum across all of them either way.
-   */
   inventory_movements?: Array<{
     id: string
     quantity: number
-    inventory_lots: {
-      unit_cost: number
-      item_id: string
-      items?: { name: string } | null
-    } | null
+    inventory_lots: { unit_cost: number; item_id: string } | null
   }>
 }
 

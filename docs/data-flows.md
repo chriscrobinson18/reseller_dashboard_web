@@ -27,9 +27,8 @@ Rules — first match wins, anything that returns `bucket: null` is excluded:
 ## Recording a sale (`recordSale` in `mutations.ts`)
 
 1. Calls the `record_sale` edge function → inserts the `sales` row, FIFO-depletes `inventory_lots.quantity_remaining` oldest-lot-first, writes `inventory_movements` audit rows. Returns `sale_id`, `inventory_status` (`ok`/`oversold`/`reconciled`), `unfulfilled_quantity`.
-2. If `components` were passed, calls the `add_sale_cost_components` RPC → FIFO-depletes each component item's lots and writes **additional** `inventory_movements` rows against the same sale (see [Cost components](#cost-components-multi-item-cogs) below). Skipped entirely when there are none, so an ordinary sale's path is byte-for-byte what it was.
-3. If `fees`/`shippingCost` were passed, the client computes `net_payout = sale_price - fees - shipping_cost` and `.update()`s the `sales` row directly — **this is client-computed, not server-computed**. `updateSale` later recomputes the same way on edit.
-4. Calls `createSaleTransactions` → inserts up to 3 `transactions` rows, all tagged `related_sale_id: saleId`, `source: 'manual'`:
+2. If `fees`/`shippingCost` were passed, the client computes `net_payout = sale_price - fees - shipping_cost` and `.update()`s the `sales` row directly — **this is client-computed, not server-computed**. `updateSale` later recomputes the same way on edit.
+3. Calls `createSaleTransactions` → inserts up to 3 `transactions` rows, all tagged `related_sale_id: saleId`, `source: 'manual'`:
    - payout row: `amount: +salePrice`, category `payout`
    - fee row (if `fees > 0`): `amount: -fees`, category `commissions_fees`
    - shipping row (if `shippingCost > 0`): `amount: -shippingCost`, category `shipping_postage`
@@ -49,25 +48,6 @@ One order, several **different** items, one combined payout — a multi-item mar
 **Why not just call `recordSale()` N times:** that would run step 3's transaction-creation logic once per line, multiplying the real order payout by the number of items. The one-`sale_bundles`-header-plus-N-plain-`sales`-rows shape mirrors `trades` (below) rather than restructuring `sales` into a header/line-item table — FIFO depletion, returns, and `reverse_sale` all keep working on bundle lines completely unmodified.
 
 **Order-level fees/shipping are allocated back at read time.** Storing `fees: 0` on each line keeps the write side honest (the real charge exists once, on the bundle) but makes every line *look* free to sell. `fetchSales` therefore splits the bundle's fees and shipping across its lines **proportionally by line price** — a $100 line in a $200 order bears half — writing them to the client-only `allocated_fees` / `allocated_shipping` fields. `saleProfit()` prefers those over the row's zeroed `fees`/`shipping_cost`; without this, every bundle line overstates profit by its share of both.
-
-Each bundle **line** may also carry its own cost components (step 2 of `recordSale` above runs per line). Components change only that line's COGS — the order-level fee allocation is by line *price*, which a component never touches.
-
-## Cost components (multi-item COGS)
-
-A sale whose cost comes from more than one inventory item: a VHS sold for $40 with a remote, bought separately for $8, included to raise its value. One sale, one price, COGS of $8 + the VHS's lot cost.
-
-**This needed no schema change.** `inventory_movements` is `(sale_id, inventory_lot_id, quantity)` with no link back to `sales.item_id`, and COGS was always `sum(movement.quantity × lot.unit_cost)` across *all* of a sale's movements. A component is therefore just an extra movement pointing at a different item's lot. `sales.item_id` stays the primary item; a movement whose lot's `item_id` differs from it **is** the component.
-
-What this buys, in the parts of the system that needed zero changes:
-
-- `saleProfit()` ([`src/lib/saleProfit.ts`](../src/lib/saleProfit.ts)) already sums every movement, never reading `item_id`.
-- `reverse_sale` restores stock by joining movements → lots, also item-agnostic — deleting such a sale correctly returns **both** items to inventory and deletes both movements.
-- `updateSale` never re-runs FIFO, so editing a sale can't desync its components.
-- The Dashboard Profitability card sums movements the same way.
-
-**Not a bundle.** A bundle splits one payout across several *separately priced* items. A component has no price at all — it only adds cost to a single price. Recording the remote as a $0 bundle line would instead create a second `sales` row with zero revenue, polluting per-item reporting and the bundle's price-proportional fee allocation.
-
-**Known gap — partial returns.** `record_return` reverses movements LIFO *by unit count*, with no notion of which item a unit belongs to. On a component sale, returning 1 of 2 units would restore the remote's stock instead of the VHS's. `ProcessReturnModal` therefore pins a component sale to a **full** return (which reverses every movement and is correct). See [`features/sales.md`](features/sales.md#cost-components-multi-item-cogs).
 
 These stay separate from `fees`/`shipping_cost` rather than overwriting them, because `EditSaleModal` seeds its form from those columns — overwriting would persist an allocated share onto the line the first time anyone edited it. The same allocation drives the Sales list's **Net** column: a bundle's transactions carry `related_bundle_id`, so the `related_sale_id` lookup finds nothing and would otherwise fall back to the gross line price.
 

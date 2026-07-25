@@ -65,23 +65,6 @@ describe('saleProfit', () => {
     expect(result.profit).toBe(100 - 30 - 12.5 - 4)
   })
 
-  // Cost components: a VHS sold with a remote bought separately to raise its
-  // value. Both purchases are COGS for the one $100 sale, so movements span
-  // two different item_ids and must sum — this is the whole basis of the
-  // feature, and it works because saleProfit never reads item_id.
-  it('sums COGS across movements for different items (cost components)', () => {
-    const result = saleProfit(sale({
-      item_id: 'i1',
-      inventory_movements: [
-        { id: 'm1', quantity: 1, inventory_lots: { unit_cost: 30, item_id: 'i1' } },
-        { id: 'm2', quantity: 1, inventory_lots: { unit_cost: 8, item_id: 'i2' } },
-      ],
-    }))
-    expect(result.cogs).toBe(38)
-    expect(result.netRevenue).toBe(100)
-    expect(result.profit).toBe(100 - 38 - 10 - 5)
-  })
-
   it('prefers allocated values even when they are zero', () => {
     const result = saleProfit(sale({
       fees: 10,
