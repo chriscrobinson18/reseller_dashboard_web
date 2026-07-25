@@ -1,6 +1,7 @@
 import { supabase } from './supabase'
-import { splitLotCost } from './lotCost'
-import type { Item, InventoryLot } from './types'
+import { splitLotCost, basisFromAdjustments, type LotBasis } from './lotCost'
+import { ADJUSTMENT_LABELS } from './lotAdjustments'
+import type { Item, InventoryLot, LotAdjustmentType } from './types'
 import { CATEGORIES } from './categories'
 import { isColorKey, type ColorKey } from './categoryPalette'
 
@@ -106,11 +107,187 @@ export async function updateLot(id: string, unitCost: number, quantityPurchased:
 }
 
 export async function deleteLot(id: string) {
+  const deleted_at = new Date().toISOString()
   const { error } = await supabase
     .from('inventory_lots')
-    .update({ deleted_at: new Date().toISOString() })
+    .update({ deleted_at })
     .eq('id', id)
   if (error) throw error
+
+  // Cascade to the lot's capitalized costs so they can't resurface as orphans.
+  // Their `transactions` deliberately survive: deleting a lot means "I'm no
+  // longer tracking this card", but the grading fee was still really paid and
+  // is still deductible. Same reasoning as deleteSale keeping bank rows.
+  const { error: adjErr } = await supabase
+    .from('lot_cost_adjustments')
+    .update({ deleted_at })
+    .eq('lot_id', id)
+    .is('deleted_at', null)
+  if (adjErr) throw adjErr
+}
+
+// ─── Lot cost adjustments (capitalized basis) ─────────────────────────────────
+
+/**
+ * Recomputes a lot's `unit_cost` from its active adjustments and writes it.
+ *
+ * Reads the full adjustment set every time and rebuilds the number from
+ * `initial_unit_cost` rather than nudging the stored value — see
+ * `basisFromAdjustments` in lib/lotCost.ts for why incremental updates drift.
+ *
+ * `initial_unit_cost` is null on lots created before that column existed; those
+ * have no adjustments yet, so the current `unit_cost` *is* the initial basis and
+ * we backfill it on first touch.
+ */
+async function recomputeLotBasis(lotId: string): Promise<LotBasis> {
+  const { data: lot, error: lotErr } = await supabase
+    .from('inventory_lots')
+    .select('id, unit_cost, initial_unit_cost, quantity_purchased')
+    .eq('id', lotId)
+    .single()
+  if (lotErr) throw lotErr
+  if (!lot) throw new Error('Lot not found')
+
+  const initial = lot.initial_unit_cost ?? lot.unit_cost
+
+  const { data: adjustments, error: adjErr } = await supabase
+    .from('lot_cost_adjustments')
+    .select('amount')
+    .eq('lot_id', lotId)
+    .is('deleted_at', null)
+  if (adjErr) throw adjErr
+
+  const basis = basisFromAdjustments(
+    initial,
+    lot.quantity_purchased,
+    (adjustments ?? []).map(a => Number(a.amount)),
+  )
+
+  const { error: updErr } = await supabase
+    .from('inventory_lots')
+    .update({ unit_cost: basis.unitCost, initial_unit_cost: initial })
+    .eq('id', lotId)
+  if (updErr) throw updErr
+
+  return basis
+}
+
+/**
+ * Capitalizes a cost into a lot's basis — a grading fee, shipping the card to
+ * the grader, or any other direct cost of preparing that item for sale.
+ *
+ * The transaction is either created or linked, never both:
+ *  - `create` posts a `cost_of_goods` row (the fee was cash/manual, or hasn't
+ *    synced). This is the Schedule C deduction.
+ *  - `link` points at a transaction that already exists — typically the
+ *    Plaid-synced charge from the grader. Posting another row here would
+ *    deduct the same payment twice.
+ *
+ * Either way the lot's basis rises by `amount`; only the deduction's origin
+ * differs. Schedule C reads transactions, profitability reads lot basis, so the
+ * two tracks stay independent (see the design spec).
+ */
+export async function addLotCostAdjustment(params: {
+  lotId: string
+  adjustmentType: LotAdjustmentType
+  /** Positive dollars. */
+  amount: number
+  incurredOn: string // 'yyyy-MM-dd'
+  grader?: string | null
+  gradeReceived?: string | null
+  notes?: string | null
+  /** Where the deduction comes from — an existing transaction, or a new one. */
+  transaction:
+    | { mode: 'link'; transactionId: string }
+    | { mode: 'create'; merchant?: string | null }
+}): Promise<{ adjustmentId: string; transactionId: string; basis: LotBasis }> {
+  if (!(params.amount > 0)) throw new Error('Amount must be greater than 0')
+
+  const user_id = await getUserId()
+
+  let transactionId: string
+  let createdTransaction = false
+
+  if (params.transaction.mode === 'create') {
+    const merchant = params.transaction.merchant?.trim()
+      || params.grader?.trim()
+      || ADJUSTMENT_LABELS[params.adjustmentType]
+    const { data: txn, error: txErr } = await supabase
+      .from('transactions')
+      .insert({
+        user_id,
+        date: params.incurredOn,
+        amount: -params.amount,
+        merchant,
+        type: 'other',
+        source: 'manual',
+        schedule_c_category: 'cost_of_goods',
+        notes: params.notes ?? null,
+      })
+      .select('id')
+      .single()
+    if (txErr) throw txErr
+    transactionId = txn.id
+    createdTransaction = true
+  } else {
+    transactionId = params.transaction.transactionId
+  }
+
+  const { data: adjustment, error: adjErr } = await supabase
+    .from('lot_cost_adjustments')
+    .insert({
+      user_id,
+      lot_id: params.lotId,
+      transaction_id: transactionId,
+      created_transaction: createdTransaction,
+      adjustment_type: params.adjustmentType,
+      amount: params.amount,
+      incurred_on: params.incurredOn,
+      grader: params.grader?.trim() || null,
+      grade_received: params.gradeReceived?.trim() || null,
+      notes: params.notes?.trim() || null,
+    })
+    .select('id')
+    .single()
+  if (adjErr) throw adjErr
+
+  const basis = await recomputeLotBasis(params.lotId)
+  return { adjustmentId: adjustment.id, transactionId, basis }
+}
+
+/**
+ * Removes a capitalized cost and drops the lot's basis back down.
+ *
+ * Deletes the linked transaction only when this adjustment created it —
+ * removing an adjustment means "I recorded this cost wrong", so the row it
+ * posted was wrong too. A transaction that was merely *linked* is left alone:
+ * it's a real bank record that exists independently of this bookkeeping.
+ */
+export async function deleteLotCostAdjustment(adjustmentId: string): Promise<LotBasis> {
+  const { data: adjustment, error: fetchErr } = await supabase
+    .from('lot_cost_adjustments')
+    .select('id, lot_id, transaction_id, created_transaction')
+    .eq('id', adjustmentId)
+    .single()
+  if (fetchErr) throw fetchErr
+  if (!adjustment) throw new Error('Adjustment not found')
+
+  const { error: delErr } = await supabase
+    .from('lot_cost_adjustments')
+    .update({ deleted_at: new Date().toISOString() })
+    .eq('id', adjustmentId)
+  if (delErr) throw delErr
+
+  if (adjustment.created_transaction && adjustment.transaction_id) {
+    // transactions are hard-deleted in this codebase (see deleteTransaction).
+    const { error: txErr } = await supabase
+      .from('transactions')
+      .delete()
+      .eq('id', adjustment.transaction_id)
+    if (txErr) throw txErr
+  }
+
+  return recomputeLotBasis(adjustment.lot_id)
 }
 
 // `inventory_lots.transaction_id` is a denormalized mirror of the oldest funding

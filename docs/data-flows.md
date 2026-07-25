@@ -77,7 +77,27 @@ COGS for a sale = `sum(inventory_movements.quantity * inventory_movements.invent
 - `DashboardPage.computeProfitability` still inlines the same COGS sum + return-adjustment because it aggregates across many sales rather than calling `saleProfit` per row — if you change the formula, update both call sites or refactor `computeProfitability` to call `saleProfit` per sale.
 - `TransactionInventorySection` on the Expenses side does the per-lot multiplication implicitly (lot-by-lot) and doesn't need `saleProfit`.
 
+`unit_cost` is the lot's **all-in basis**, not just what was paid at purchase — see "Capitalizing a cost into a lot" below. COGS therefore picks up grading and shipping-to-grader fees automatically, with no change to this formula.
+
 `itemAvgCost` in `queries.ts` computes a **weighted-average** unit cost across an item's lots — this is for display only (Inventory page "Avg Cost" column); actual COGS accounting is always FIFO via `inventory_movements`, never the average.
+
+## Capitalizing a cost into a lot (`addLotCostAdjustment` in `mutations.ts`)
+
+Costs incurred *after* purchase that still belong to an item's cost: grading a card, shipping it to the grader. Entered from the receipt icon on any Inventory lot row.
+
+1. Resolve the deduction — **create** a `cost_of_goods` transaction (`amount: -amount`, `date: incurredOn`), or **link** one that already exists (a Plaid-synced grader charge). Never both; posting a row for an already-synced payment would deduct it twice. The choice is recorded on `lot_cost_adjustments.created_transaction`.
+2. Insert the `lot_cost_adjustments` row.
+3. Recompute the lot's `unit_cost` from the invariant and write it back:
+
+```
+unit_cost = (initial_unit_cost × quantity_purchased + Σ active adjustments) / quantity_purchased
+```
+
+Step 3 always rebuilds from `initial_unit_cost` and the *full* adjustment set rather than adding a delta — that's what keeps add/remove cycles from drifting. `basisFromAdjustments()` in [`src/lib/lotCost.ts`](../src/lib/lotCost.ts) does it in integer cents and is unit-tested, including a no-drift property test.
+
+**Removing one** (`deleteLotCostAdjustment`) soft-deletes the row, recomputes the basis back down, and deletes the linked transaction **only if this adjustment created it** — a linked bank row is real history and survives. **Deleting the lot** cascades a soft-delete to its adjustments but keeps every transaction: the fee was genuinely paid, so the deduction stands (same reasoning as `deleteSale`).
+
+**Why this and not sale-level COGS.** An earlier iteration let a *sale* consume lots of several items. It worked, but a grading fee isn't a property of the sale — it's a property of the card, incurred long before any sale exists and true regardless of how (or whether) the card is eventually sold. Modeling it at the lot means the basis is right the moment the fee is paid. That approach was reverted; see `20260726130000_drop_sale_cost_components.sql`.
 
 ## Revenue net of returns
 

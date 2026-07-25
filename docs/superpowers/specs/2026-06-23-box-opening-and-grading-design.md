@@ -1,8 +1,14 @@
 # Box Opening & Grading — Inventory Cost Capitalization
 
-**Status:** Draft — awaiting user review
+**Status:** Partially implemented — **grading/cost-adjustments shipped 2026-07-26**; box opening still draft
 **Date:** 2026-06-23
 **Author:** Brainstormed with Claude
+
+> **What shipped (2026-07-26).** The `lot_cost_adjustments` half: capitalizing grading, shipping-to-grader and other direct costs into a lot's `unit_cost`, with `initial_unit_cost` and the recompute-from-invariant rule exactly as specified below. See [`features/inventory.md`](../../features/inventory.md#capitalized-cost-adjustments-grading-shipping-to-grader).
+>
+> **Deviation from this spec:** `addLotCostAdjustment` does **not** always create a `cost_of_goods` transaction. It offers *create* or *link an existing one*, tracked on a `created_transaction` column that isn't in the table below. The spec predates live Plaid sync; always creating a row would double-deduct any grader fee paid on a synced card. Deletion honors the same distinction — a created transaction goes with the adjustment, a linked one stays.
+>
+> **Not built:** `box_openings`, the relative-sales-value allocation, `inventory_lots.box_opening_id`, `openBox`, and `OpenBoxModal`. Everything about them below is still a proposal.
 
 ## Background
 

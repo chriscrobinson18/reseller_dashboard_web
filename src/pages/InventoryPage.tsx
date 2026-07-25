@@ -1,15 +1,18 @@
 import { useState, useMemo, Fragment } from 'react'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
-import { ArrowLeftRight, ChevronDown, ChevronRight, Plus, Pencil, Trash2 } from 'lucide-react'
+import { ArrowLeftRight, ChevronDown, ChevronRight, Plus, Pencil, Trash2, Receipt } from 'lucide-react'
 import { formatUSD, formatDate } from '../lib/utils'
-import { deleteItem, deleteLot } from '../lib/mutations'
-import type { InventoryLot } from '../lib/types'
+import { deleteItem, deleteLot, deleteLotCostAdjustment } from '../lib/mutations'
+import { basisFromAdjustments } from '../lib/lotCost'
+import { adjustmentLabel } from '../lib/lotAdjustments'
+import type { InventoryLot, LotCostAdjustment } from '../lib/types'
 import { useItems, type ItemWithLots } from '../lib/queries'
 import AddItemModal from '../components/modals/AddItemModal'
 import RecordTradeModal from '../components/modals/RecordTradeModal'
 import AddLotModal from '../components/modals/AddLotModal'
 import EditItemModal from '../components/modals/EditItemModal'
 import EditLotModal from '../components/modals/EditLotModal'
+import AddLotCostAdjustmentModal from '../components/modals/AddLotCostAdjustmentModal'
 import ConfirmDialog from '../components/ConfirmDialog'
 import TradeDetailSlideOver from '../components/TradeDetailSlideOver'
 import LotTransactionSlideOver from '../components/LotTransactionSlideOver'
@@ -55,13 +58,17 @@ function AddLotRow({ onAddLot }: { onAddLot: () => void }) {
   )
 }
 
-function LotRows({ lots, onAddLot, onEditLot, onDeleteLot, onTradePillClick, onTxClick }: {
+function LotRows({ lots, onAddLot, onEditLot, onDeleteLot, onTradePillClick, onTxClick, onAddCost, onDeleteAdjustment, expandedBasis, onToggleBasis }: {
   lots: InventoryLot[]
   onAddLot: () => void
   onEditLot: (lot: InventoryLot) => void
   onDeleteLot: (lot: InventoryLot) => void
   onTradePillClick: (tradeId: string) => void
   onTxClick: (lot: InventoryLot) => void
+  onAddCost: (lot: InventoryLot) => void
+  onDeleteAdjustment: (adjustment: LotCostAdjustment) => void
+  expandedBasis: Set<string>
+  onToggleBasis: (lotId: string) => void
 }) {
   if (lots.length === 0) {
     return (
@@ -92,8 +99,12 @@ function LotRows({ lots, onAddLot, onEditLot, onDeleteLot, onTradePillClick, onT
         const pctSold = lot.quantity_purchased > 0
           ? ((lot.quantity_purchased - lot.quantity_remaining) / lot.quantity_purchased) * 100
           : 0
+        // Also gated on having adjustments: removing the last one takes the
+        // disclosure toggle away with it, which would strand an open breakdown.
+        const basisOpen = expandedBasis.has(lot.id) && (lot.lot_cost_adjustments?.length ?? 0) > 0
         return (
-          <tr key={lot.id} className="group bg-blue-50/20 border-b border-blue-50">
+          <Fragment key={lot.id}>
+          <tr className="group bg-blue-50/20 border-b border-blue-50">
             <td className="pl-12 py-2 text-xs text-gray-600">{formatDate(lot.purchase_date ?? lot.created_at)}</td>
             <td className="px-3 py-2 text-xs text-gray-700 text-center">{lot.quantity_purchased}</td>
             <td className="px-3 py-2 text-center">
@@ -107,7 +118,12 @@ function LotRows({ lots, onAddLot, onEditLot, onDeleteLot, onTradePillClick, onT
                 {lot.quantity_remaining}
               </span>
             </td>
-            <td className="px-3 py-2 text-xs tabular-nums text-gray-700 text-right">{formatUSD(lot.unit_cost)}</td>
+            <UnitCostCell
+              lot={lot}
+              expanded={basisOpen}
+              onToggle={() => onToggleBasis(lot.id)}
+              className="px-3 py-2 text-xs tabular-nums text-gray-700 text-right"
+            />
             <td className="px-3 py-2 text-xs tabular-nums text-gray-900 font-medium text-right">
               {formatUSD(lot.quantity_remaining * lot.unit_cost)}
             </td>
@@ -140,6 +156,9 @@ function LotRows({ lots, onAddLot, onEditLot, onDeleteLot, onTradePillClick, onT
                   </span>
                 )}
                 <div className="flex gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
+                  <button onClick={() => onAddCost(lot)} className="p-1 text-gray-400 hover:text-blue-600" title="Add cost to basis (grading, shipping to grader)">
+                    <Receipt size={12} />
+                  </button>
                   <button onClick={() => onEditLot(lot)} className="p-1 text-gray-400 hover:text-gray-700" title="Edit lot">
                     <Pencil size={12} />
                   </button>
@@ -150,6 +169,15 @@ function LotRows({ lots, onAddLot, onEditLot, onDeleteLot, onTradePillClick, onT
               </div>
             </td>
           </tr>
+          {basisOpen && (
+            <BasisBreakdown
+              lot={lot}
+              colSpan={7}
+              indentCls="pl-12"
+              onDeleteAdjustment={onDeleteAdjustment}
+            />
+          )}
+          </Fragment>
         )
       })}
       <AddLotRow onAddLot={onAddLot} />
@@ -157,6 +185,109 @@ function LotRows({ lots, onAddLot, onEditLot, onDeleteLot, onTradePillClick, onT
   )
 }
 
+
+// ─── Cost basis breakdown ─────────────────────────────────────────────────────
+
+/** A lot's basis and the adjustments behind it, when it has any. */
+function lotBasisOf(lot: InventoryLot) {
+  const adjustments = lot.lot_cost_adjustments ?? []
+  const initialUnitCost = lot.initial_unit_cost ?? lot.unit_cost
+  return {
+    adjustments,
+    initialUnitCost,
+    ...basisFromAdjustments(
+      initialUnitCost,
+      lot.quantity_purchased,
+      adjustments.map(a => Number(a.amount)),
+    ),
+  }
+}
+
+/**
+ * Expanded ledger of what a lot's cost is made of — the purchase, then every
+ * capitalized cost since (grading, shipping to the grader).
+ *
+ * Shows the lot *total*, not the per-unit figure: for a multi-unit lot the
+ * rounded per-unit cost can't always express the true share, so the total is
+ * the honest number (see basisFromAdjustments).
+ */
+function BasisBreakdown({ lot, colSpan, indentCls, onDeleteAdjustment }: {
+  lot: InventoryLot
+  colSpan: number
+  indentCls: string
+  onDeleteAdjustment: (adjustment: LotCostAdjustment) => void
+}) {
+  const { adjustments, initialUnitCost, totalBasis } = lotBasisOf(lot)
+  const purchaseTotal = initialUnitCost * lot.quantity_purchased
+
+  return (
+    <tr className="bg-blue-50/10 border-b border-blue-50">
+      <td colSpan={colSpan} className={`${indentCls} py-2 pr-4`}>
+        <div className="text-xs text-gray-600 space-y-1">
+          <div className="font-medium text-gray-700">
+            Basis: <span className="tabular-nums">{formatUSD(totalBasis)}</span>
+            {lot.quantity_purchased > 1 && (
+              <span className="text-gray-400 font-normal">
+                {' '}· {formatUSD(lot.unit_cost)}/unit
+              </span>
+            )}
+          </div>
+          <div className="flex gap-2 text-gray-500">
+            <span className="tabular-nums w-20 text-right">{formatUSD(purchaseTotal)}</span>
+            <span>Purchase · {formatDate(lot.purchase_date ?? lot.created_at)}</span>
+          </div>
+          {adjustments.map(a => (
+            <div key={a.id} className="flex gap-2 text-gray-500 group/adj items-center">
+              <span className="tabular-nums w-20 text-right">{formatUSD(Number(a.amount))}</span>
+              <span>
+                {adjustmentLabel(a.adjustment_type)} · {formatDate(a.incurred_on)}
+                {a.grader && ` · ${a.grader}`}
+                {a.grade_received && ` · ${a.grade_received}`}
+                {!a.created_transaction && (
+                  <span className="ml-1.5 text-[10px] text-gray-400 bg-gray-100 rounded px-1 py-0.5">
+                    linked txn
+                  </span>
+                )}
+              </span>
+              <button
+                onClick={() => onDeleteAdjustment(a)}
+                className="p-0.5 text-gray-300 hover:text-red-500 opacity-0 group-hover/adj:opacity-100 transition-opacity"
+                title="Remove this cost"
+              >
+                <Trash2 size={11} />
+              </button>
+            </div>
+          ))}
+        </div>
+      </td>
+    </tr>
+  )
+}
+
+/** Unit cost with a disclosure toggle when the lot has capitalized costs. */
+function UnitCostCell({ lot, expanded, onToggle, className }: {
+  lot: InventoryLot
+  expanded: boolean
+  onToggle: () => void
+  className: string
+}) {
+  const hasAdjustments = (lot.lot_cost_adjustments?.length ?? 0) > 0
+  if (!hasAdjustments) {
+    return <td className={className}>{formatUSD(lot.unit_cost)}</td>
+  }
+  return (
+    <td className={className}>
+      <button
+        onClick={e => { e.stopPropagation(); onToggle() }}
+        className="inline-flex items-center gap-0.5 hover:text-blue-600 rounded px-1 -mx-1"
+        title={expanded ? 'Hide cost breakdown' : 'Show what this basis is made of'}
+      >
+        {expanded ? <ChevronDown size={11} /> : <ChevronRight size={11} />}
+        {formatUSD(lot.unit_cost)}
+      </button>
+    </td>
+  )
+}
 
 // ─── Date view (lot ledger) ───────────────────────────────────────────────────
 
@@ -175,12 +306,16 @@ function lotDate(lot: InventoryLot): string {
  * view: this is the shape you want when reconciling purchases against bank
  * transactions chronologically.
  */
-function LotLedger({ rows, onEditLot, onDeleteLot, onTradePillClick, onTxClick }: {
+function LotLedger({ rows, onEditLot, onDeleteLot, onTradePillClick, onTxClick, onAddCost, onDeleteAdjustment, expandedBasis, onToggleBasis }: {
   rows: LedgerRow[]
   onEditLot: (lot: InventoryLot) => void
   onDeleteLot: (lot: InventoryLot) => void
   onTradePillClick: (tradeId: string) => void
   onTxClick: (lot: InventoryLot, itemName: string) => void
+  onAddCost: (lot: InventoryLot) => void
+  onDeleteAdjustment: (adjustment: LotCostAdjustment) => void
+  expandedBasis: Set<string>
+  onToggleBasis: (lotId: string) => void
 }) {
   return (
     <table className="w-full text-sm">
@@ -198,7 +333,8 @@ function LotLedger({ rows, onEditLot, onDeleteLot, onTradePillClick, onTxClick }
       </thead>
       <tbody>
         {rows.map(({ lot, itemName }) => (
-          <tr key={lot.id} className="group border-b border-gray-100 hover:bg-gray-50/60">
+          <Fragment key={lot.id}>
+          <tr className="group border-b border-gray-100 hover:bg-gray-50/60">
             <td className="px-4 py-2.5 text-xs text-gray-600">{formatDate(lotDate(lot))}</td>
             <td className="px-4 py-2.5">
               <div className="flex items-center gap-1.5">
@@ -225,9 +361,12 @@ function LotLedger({ rows, onEditLot, onDeleteLot, onTradePillClick, onTxClick }
                 {lot.quantity_remaining}
               </span>
             </td>
-            <td className="px-3 py-2.5 text-xs tabular-nums text-gray-700 text-right">
-              {formatUSD(lot.unit_cost)}
-            </td>
+            <UnitCostCell
+              lot={lot}
+              expanded={expandedBasis.has(lot.id)}
+              onToggle={() => onToggleBasis(lot.id)}
+              className="px-3 py-2.5 text-xs tabular-nums text-gray-700 text-right"
+            />
             <td className="px-3 py-2.5 text-xs tabular-nums text-gray-900 font-medium text-right">
               {formatUSD(lot.quantity_purchased * lot.unit_cost)}
             </td>
@@ -244,6 +383,9 @@ function LotLedger({ rows, onEditLot, onDeleteLot, onTradePillClick, onTxClick }
             </td>
             <td className="px-3 py-2.5">
               <div className="flex gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
+                <button onClick={() => onAddCost(lot)} className="p-1 text-gray-400 hover:text-blue-600" title="Add cost to basis (grading, shipping to grader)">
+                  <Receipt size={12} />
+                </button>
                 <button onClick={() => onEditLot(lot)} className="p-1 text-gray-400 hover:text-gray-700" title="Edit lot">
                   <Pencil size={12} />
                 </button>
@@ -253,6 +395,15 @@ function LotLedger({ rows, onEditLot, onDeleteLot, onTradePillClick, onTxClick }
               </div>
             </td>
           </tr>
+          {expandedBasis.has(lot.id) && (lot.lot_cost_adjustments?.length ?? 0) > 0 && (
+            <BasisBreakdown
+              lot={lot}
+              colSpan={8}
+              indentCls="pl-4"
+              onDeleteAdjustment={onDeleteAdjustment}
+            />
+          )}
+          </Fragment>
         ))}
       </tbody>
     </table>
@@ -276,9 +427,31 @@ export default function InventoryPage() {
   const [showRecordTrade, setShowRecordTrade] = useState(false)
   const [openTradeId, setOpenTradeId] = useState<string | null>(null)
   const [txLot, setTxLot] = useState<{ lot: InventoryLot; itemName: string } | null>(null)
+  const [addCostFor, setAddCostFor] = useState<{ lot: InventoryLot; itemName: string } | null>(null)
+  const [deleteAdjTarget, setDeleteAdjTarget] = useState<LotCostAdjustment | null>(null)
+  const [expandedBasis, setExpandedBasis] = useState<Set<string>>(new Set())
   const qc = useQueryClient()
 
   const { data: items = [], isLoading } = useItems()
+
+  function toggleBasis(lotId: string) {
+    setExpandedBasis(prev => {
+      const next = new Set(prev)
+      if (next.has(lotId)) next.delete(lotId)
+      else next.add(lotId)
+      return next
+    })
+  }
+
+  const delAdjMutation = useMutation({
+    mutationFn: (id: string) => deleteLotCostAdjustment(id),
+    onSuccess: () => {
+      // Drops the lot's basis back down, and may remove a transaction.
+      qc.invalidateQueries({ queryKey: ['items'] })
+      qc.invalidateQueries({ queryKey: ['transactions'] })
+      setDeleteAdjTarget(null)
+    },
+  })
 
   const delItemMutation = useMutation({
     mutationFn: (id: string) => deleteItem(id),
@@ -396,6 +569,13 @@ export default function InventoryPage() {
               onDeleteLot={setDeleteLotTarget}
               onTradePillClick={setOpenTradeId}
               onTxClick={(lot, itemName) => setTxLot({ lot, itemName })}
+              onAddCost={lot => setAddCostFor({
+                lot,
+                itemName: ledgerRows.find(r => r.lot.id === lot.id)?.itemName ?? '',
+              })}
+              onDeleteAdjustment={setDeleteAdjTarget}
+              expandedBasis={expandedBasis}
+              onToggleBasis={toggleBasis}
             />
           )
         ) : (
@@ -473,6 +653,10 @@ export default function InventoryPage() {
                         onDeleteLot={setDeleteLotTarget}
                         onTradePillClick={setOpenTradeId}
                         onTxClick={lot => setTxLot({ lot, itemName: item.name })}
+                        onAddCost={lot => setAddCostFor({ lot, itemName: item.name })}
+                        onDeleteAdjustment={setDeleteAdjTarget}
+                        expandedBasis={expandedBasis}
+                        onToggleBasis={toggleBasis}
                       />
                     )}
                   </Fragment>
@@ -511,6 +695,14 @@ export default function InventoryPage() {
       {editLot && (
         <EditLotModal open={!!editLot} onClose={() => setEditLot(null)} lot={editLot} />
       )}
+      {addCostFor && (
+        <AddLotCostAdjustmentModal
+          open={!!addCostFor}
+          onClose={() => setAddCostFor(null)}
+          lot={addCostFor.lot}
+          itemName={addCostFor.itemName}
+        />
+      )}
       <ConfirmDialog
         open={!!deleteItemTarget}
         title="Delete item?"
@@ -526,6 +718,18 @@ export default function InventoryPage() {
         loading={delLotMutation.isPending}
         onConfirm={() => deleteLotTarget && delLotMutation.mutate(deleteLotTarget.id)}
         onCancel={() => setDeleteLotTarget(null)}
+      />
+      <ConfirmDialog
+        open={!!deleteAdjTarget}
+        title="Remove this cost?"
+        message={
+          deleteAdjTarget?.created_transaction
+            ? "The lot's basis drops back down and the Cost of Goods transaction this created is deleted."
+            : "The lot's basis drops back down. The linked transaction is kept — it's a real payment that exists on its own."
+        }
+        loading={delAdjMutation.isPending}
+        onConfirm={() => deleteAdjTarget && delAdjMutation.mutate(deleteAdjTarget.id)}
+        onCancel={() => setDeleteAdjTarget(null)}
       />
     </div>
   )

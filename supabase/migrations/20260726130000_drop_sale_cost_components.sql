@@ -1,0 +1,21 @@
+-- Drops add_sale_cost_components — superseded by lot-level cost capitalization.
+--
+-- That RPC attached extra COGS to a *sale*: a sale of a VHS could also consume
+-- the lot of a remote bought to sell with it. It worked, but it modeled the
+-- cost at the wrong layer. The costs that actually recur in this business —
+-- grading a card, shipping it to the grader — belong to the inventory unit,
+-- not to whichever sale eventually disposes of it. Attached at the lot, the
+-- basis is right from the moment the fee is paid: before any sale exists, and
+-- regardless of how the card is later sold (or if it's returned, or traded).
+--
+-- Replaced by `lot_cost_adjustments` (next migration), which capitalizes those
+-- costs into inventory_lots.unit_cost per the CPA-reviewed design in
+-- docs/superpowers/specs/2026-06-23-box-opening-and-grading-design.md.
+--
+-- Safe to drop: no production sale ever carried component movements. The
+-- feature shipped and was reverted the same day, and its only two test sales
+-- were deleted via reverse_sale, which restored both items' stock. Verified by
+-- scanning all 344 sales for movements whose lot item_id differed from the
+-- sale's — zero matches. Nothing references this function post-revert.
+
+DROP FUNCTION IF EXISTS public.add_sale_cost_components(uuid, jsonb);

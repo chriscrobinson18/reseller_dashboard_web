@@ -131,6 +131,35 @@ export interface InventoryLotTransaction {
   created_at: string
 }
 
+export type LotAdjustmentType = 'grading' | 'shipping_to_grader' | 'other'
+
+/**
+ * A cost added to a lot after creation and capitalized into its basis —
+ * grading a card, shipping it to the grader. See `basisFromAdjustments` in
+ * lib/lotCost.ts for how these roll into the lot's `unit_cost`.
+ */
+export interface LotCostAdjustment {
+  id: string
+  user_id: string
+  lot_id: string
+  transaction_id?: string | null
+  /**
+   * True when this adjustment posted its own cost_of_goods transaction. Only
+   * those may be deleted along with the adjustment — a transaction that was
+   * merely *linked* (a Plaid-synced PSA charge) is real financial history.
+   */
+  created_transaction: boolean
+  adjustment_type: LotAdjustmentType
+  /** Positive dollars. Basis increases only; negative adjustments are out of scope. */
+  amount: number
+  incurred_on: string // 'yyyy-MM-dd'
+  grader?: string | null
+  grade_received?: string | null
+  notes?: string | null
+  created_at: string
+  deleted_at?: string | null
+}
+
 export interface InventoryLot {
   id: string
   user_id: string
@@ -142,7 +171,12 @@ export interface InventoryLot {
   trade_id?: string
   quantity_purchased: number
   quantity_remaining: number
+  /** All-in current basis per unit, adjustments included. */
   unit_cost: number
+  /** Per-unit basis before any adjustments; null on lots predating the column. */
+  initial_unit_cost?: number | null
+  /** Active (non-soft-deleted) capitalized costs behind `unit_cost`. */
+  lot_cost_adjustments?: LotCostAdjustment[]
   purchase_date?: string | null
   created_at: string
   deleted_at?: string

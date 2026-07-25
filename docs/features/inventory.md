@@ -104,6 +104,48 @@ splitLotCost(10, 3) → [ { quantity: 2, unitCost: 3.33 },
 
 `splitLotCost` is covered by `src/lib/__tests__/lotCost.test.ts`, including a sweep asserting the tiers always sum back to the requested total across quantities 1–25.
 
+## Capitalized cost adjustments (grading, shipping to grader)
+
+A lot's cost doesn't stop at the purchase. Buy a raw card for $10, pay PSA $20 to grade it and $5 to ship it there, and that card's real cost is $35. `lot_cost_adjustments` records those later costs and folds them into the lot's basis.
+
+**Why capitalize instead of expensing.** Both fees are direct costs of preparing one identifiable item for sale, which makes them inventory cost rather than an expense (ASC 330-10-30-1; the IRC §263A costing principle). The rule of thumb is freight-**in** vs freight-**out**: shipping a card *to the grader* capitalizes, shipping a sold item *to a buyer* stays `shipping_postage`. Beyond correctness, expensing severs the fee from the card, so per-item profit reports a margin that card never earned — capitalizing is what makes the profitability number true.
+
+**No double deduction.** Schedule C totals read from `transactions`; per-sale profit reads from `inventory_movements` → `inventory_lots.unit_cost`. The `cost_of_goods` transaction is the deduction, the basis increase is a reporting figure, and the two tracks never meet. See [`docs/superpowers/specs/2026-06-23-box-opening-and-grading-design.md`](../superpowers/specs/2026-06-23-box-opening-and-grading-design.md) for the CPA-reviewed rationale.
+
+### The deduction toggle
+
+`AddLotCostAdjustmentModal` (opened by the receipt icon on any lot row) makes you choose where the deduction comes from — the fee is deductible exactly **once**:
+
+- **Create a transaction** — posts a `cost_of_goods` row dated `incurred_on`. For cash/manual payments, or anything that hasn't synced.
+- **Link an existing one** — points at a transaction already in the books, typically the Plaid-synced charge from the grader. Posts nothing. Candidates come from `useLotLinkCandidates()`, the same unscoped negative/uncategorized-or-COGS query the purchase-linking flow uses.
+
+Without this choice, recording a grading fee paid by a synced card would deduct it twice. Which path was taken is stored on `created_transaction`, and it governs deletion: removing an adjustment deletes a transaction it *created* (that row was wrong too) but never one it merely *linked* (a real bank record that exists independently).
+
+### The basis invariant
+
+`unit_cost` is always the **all-in current basis** per unit, and is recomputed from scratch on every add and remove:
+
+```
+unit_cost = (initial_unit_cost × quantity_purchased + Σ active adjustments) / quantity_purchased
+```
+
+`inventory_lots.initial_unit_cost` stores the pre-adjustment basis so this is computable without inferring history (backfilled to `unit_cost` for existing lots). Recomputing rather than incrementing is deliberate: `basisFromAdjustments()` in [`src/lib/lotCost.ts`](../../src/lib/lotCost.ts) works in integer cents and rebuilds the figure each time, so a lot adjusted and un-adjusted repeatedly always lands back on exactly its original basis. An incremental version accumulates a rounding error every trip.
+
+**Rounding.** For `quantity_purchased = 1` — grading a single identified card, the case this exists for — the math is exact. For multi-unit lots, 2dp per-unit money can't always express the true share, so `unitCost × qty` can sit up to `qty − 1` cents below the real total. `basisFromAdjustments` returns `totalBasis` separately for that reason, and the UI shows the total, which is the honest number.
+
+### Display
+
+A lot with adjustments gets a disclosure arrow on its Unit Cost cell, in both the item-grouped and date-ledger views. Expanding shows what the basis is made of:
+
+```
+Basis: $35.00
+  $10.00  Purchase · 2026-03-12
+  $20.00  Grading · 2026-04-08 · PSA · PSA 10
+   $5.00  Shipping to grader · 2026-04-06   [linked txn]
+```
+
+Each adjustment row can be removed individually; deleting the lot cascades a soft-delete to its adjustments but **keeps** their transactions — the fee was really paid, so the deduction stands (same reasoning as `deleteSale`).
+
 ## Purchase date
 
 `inventory_lots` has a `purchase_date date` column (nullable). All new lots get a `purchase_date` set from the date picker (defaults to today). Lots created before the column was added show their `created_at` date as a fallback. The `purchase_date` is editable via the Edit Lot modal and is what the page's "Purchase Date" column displays.

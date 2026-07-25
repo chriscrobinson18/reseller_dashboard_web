@@ -104,7 +104,8 @@ A purchase batch of an item at a specific unit cost — FIFO unit of accounting.
 | `id`, `user_id`, `item_id`, `created_at`, `deleted_at` | soft-deleted |
 | `transaction_id` | nullable FK to the COGS purchase transaction; `ON DELETE SET NULL`. **Denormalized** — mirrors the primary (oldest) row in `inventory_lot_transactions`, kept only for iOS compatibility. Web reads the join table instead. On trade-acquired lots, points to the trade's `cogs_transaction_id`. |
 | `quantity_purchased`, `quantity_remaining` | `quantity_remaining` is depleted FIFO by `record_sale`, restored by `reverse_sale` (on sale delete) and by `record_return` v21 (on partial/full refund) |
-| `unit_cost` | per-unit, 2dp. A purchase total that doesn't divide evenly is split across **multiple lot rows** rather than rounded — see `splitLotCost` in [`features/inventory.md`](features/inventory.md#lot-cost-entry-and-penny-splitting). |
+| `unit_cost` | per-unit, 2dp — the **all-in current basis**, including any `lot_cost_adjustments` (grading, shipping to grader), not just the purchase price. A purchase total that doesn't divide evenly is split across **multiple lot rows** rather than rounded — see `splitLotCost` in [`features/inventory.md`](features/inventory.md#lot-cost-entry-and-penny-splitting). |
+| `initial_unit_cost` | nullable numeric, added 2026-07-26. Per-unit basis at creation, before adjustments; backfilled to `unit_cost` for existing lots. Lets `unit_cost` be recomputed from the basis invariant instead of mutated incrementally — see [`features/inventory.md`](features/inventory.md#the-basis-invariant). |
 | `purchase_date` | nullable `date`; set from the Add/Edit Lot modal date picker (defaults to today). Lots predating the column show `created_at` as a fallback in the UI. |
 | `trade_id` | nullable FK to `trades`; set on lots created from received-in-trade items. `ON DELETE SET NULL`. |
 
@@ -128,6 +129,23 @@ Two sums matter, and they answer different questions:
 - **Per transaction** — `sum(allocated_amount)` should equal `abs(transactions.amount)`. Shortfall = part of the purchase hasn't become inventory yet. Surfaced in `TransactionInventorySection`.
 
 Migration backfills one link per already-linked lot at its full cost, so pre-existing data reconciles unchanged.
+
+### `lot_cost_adjustments`
+Costs added to a lot after creation and capitalized into its basis — grading fees, shipping to the grader. Added by the `lot_cost_adjustments` migration (2026-07-26). Written by `addLotCostAdjustment`, soft-deleted by `deleteLotCostAdjustment` and by `deleteLot`'s cascade.
+
+| column | notes |
+|---|---|
+| `id`, `user_id`, `created_at`, `deleted_at` | soft-deleted; only non-deleted rows count toward basis |
+| `lot_id` | FK to `inventory_lots`, `ON DELETE CASCADE` |
+| `transaction_id` | nullable FK to the `cost_of_goods` transaction, `ON DELETE SET NULL` — the basis increase survives the transaction |
+| `created_transaction` | boolean; true if this row posted its own transaction, false if it linked an existing one. **Governs deletion** — only a created transaction may be deleted with the adjustment; a linked (e.g. Plaid-synced) one is real history and is kept |
+| `adjustment_type` | `'grading' \| 'shipping_to_grader' \| 'other'`, CHECK-constrained. Display list lives in `src/lib/lotAdjustments.ts`; adding a value needs a migration to extend the constraint |
+| `amount` | positive numeric, `CHECK (amount > 0)`. Basis increases only |
+| `incurred_on` | `date` — when the fee was paid; drives the transaction's Schedule C date |
+| `grader`, `grade_received` | nullable free text (PSA/BGS/SGC…, "PSA 10"); `grade_received` is filled in after the card returns |
+| `notes` | optional |
+
+Why capitalized and not expensed, and why Schedule C doesn't double-count: [`features/inventory.md`](features/inventory.md#capitalized-cost-adjustments-grading-shipping-to-grader).
 
 ### `inventory_movements`
 Audit trail row created by `record_sale` per lot depleted by a sale. Read-only from the web client (`sale.inventory_movements`); join shape: `{ id, quantity, inventory_lots: { unit_cost, item_id } }`. `quantity * unit_cost` summed across a sale's movements = that sale's COGS.

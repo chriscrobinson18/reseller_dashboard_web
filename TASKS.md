@@ -40,6 +40,8 @@ _Created: June 23, 2026. Source of truth for porting the iOS app's feature set t
 - Expandable item list with lot sub-rows, search, totals header (item count / units in stock / value)
 - Add/Edit Item modals, Add/Edit/Delete Lot modals
 - Per-lot "% sold" progress bar, "No purchase record" badge for unlinked lots, linked-transaction indicator
+- **Capitalized cost adjustments** (2026-07-26) — grading / shipping-to-grader / other costs added to a lot's basis via `AddLotCostAdjustmentModal`, with a create-or-link toggle so a Plaid-synced grader fee isn't deducted twice. Expandable basis breakdown on lot rows. Implements the grading half of the box-opening spec; see [`docs/features/inventory.md`](docs/features/inventory.md#capitalized-cost-adjustments-grading-shipping-to-grader).
+- [ ] **Open Box flow** — the other half of [that spec](docs/superpowers/specs/2026-06-23-box-opening-and-grading-design.md): one sealed-box purchase splits into many single-card lots with basis allocated by relative FMV (`box_openings` table, `openBox`, `OpenBoxModal`). Still a draft proposal — not built.
 
 ### Categories
 - All 21 Schedule C categories ported from mobile (`src/lib/categories.ts`), including `meals` 50% multiplier flag and `isExcluded` flag for transfer/personal/settlement/balance_adjustment
