@@ -52,4 +52,26 @@ describe('saleProfit', () => {
     const result = saleProfit(sale({ fees: 0, shipping_cost: undefined }))
     expect(result.profit).toBe(100 - 30 - 0 - 0)
   })
+
+  // Bundle lines store fees=0/shipping=null because an order-level charge can't
+  // belong to any single line; the allocated share is what makes them truthful.
+  it('uses a bundle line\'s allocated share over its zeroed fees/shipping', () => {
+    const result = saleProfit(sale({
+      fees: 0,
+      shipping_cost: null as unknown as undefined,
+      allocated_fees: 12.5,
+      allocated_shipping: 4,
+    }))
+    expect(result.profit).toBe(100 - 30 - 12.5 - 4)
+  })
+
+  it('prefers allocated values even when they are zero', () => {
+    const result = saleProfit(sale({
+      fees: 10,
+      shipping_cost: 5,
+      allocated_fees: 0,
+      allocated_shipping: 0,
+    }))
+    expect(result.profit).toBe(100 - 30)
+  })
 })

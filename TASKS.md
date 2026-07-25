@@ -68,10 +68,10 @@ _These bugs exist in mobile's codebase (see mobile TASKS.md "P0 — June 2026 Au
 _Daily-workflow features mobile has that web doesn't yet. Ordered by how often they're used._
 
 ### Plaid (bank sync)
-- [ ] **Plaid Link for Web** integration — replaces mobile's LinkKit; same `plaid_create_link_token` / `plaid_exchange_token` edge functions, web uses `react-plaid-link` instead of the native SDK
-- [ ] **Manual sync trigger** — "Sync Now" / "Force Full Resync" buttons (mirrors mobile's `BankAccountDetailView`), calls `plaid_sync_transactions`
-- [ ] **Bank account management page** — list connected accounts, per-account sync toggle, disconnect with confirmation (port of `BankAccountDetailView` + `MarketplaceAccountsView` pattern)
-- [ ] **Settings page** — currently doesn't exist on web at all; needed as the home for Plaid management, CSV import, category management, tax settings
+- [x] **Plaid Link for Web** integration — `react-plaid-link` (`usePlaidLink` in `SettingsPage.tsx`), both create mode (Connect Bank) and update mode (Reconnect, passing `item_id` to `plaid_create_link_token`). _Found already shipped while auditing this list 2026-07-25 — predates this session, no closing commit on hand, verified by reading the current code rather than by having built it._
+- [x] **Manual sync trigger** — "Sync Now" / "Force Full Resync" buttons, calls `plaid_sync_transactions`. See [`docs/features/settings.md`](docs/features/settings.md#bank-connections). _Extended 2026-07-25 (`plaid_sync_transactions` v33): non-`PRODUCT_NOT_READY` errors used to be `console.error`-only while the response still said `success: true`, so a dead connection (AmEx, `ITEM_LOGIN_REQUIRED`) rendered a green "Connected" badge for 113 days. Now maps reconnect-class codes to `plaid_items.status='login_required'`, everything else to `'error'`, and returns warnings the client surfaces. Plus a `status`-independent "stale" badge keyed on `last_synced_at` age, which catches failure modes no error code classifies._
+- [x] **Bank account management page** — per-institution card lists its accounts; per-account rename (`display_name`) and `sync_enabled` toggle; Disconnect via kebab → confirm → `plaid_remove_item`. See [`docs/features/settings.md`](docs/features/settings.md#per-account-controls). _Same caveat as Plaid Link above: predates this session, verified by reading current code, not by building it._
+- [x] **Settings page** — exists at `/settings` (`SettingsPage.tsx`): Bank Connections + Custom Categories sections. See [`docs/features/settings.md`](docs/features/settings.md). CSV import and tax settings, named in this item's original scope, are NOT part of it — those stay open below under their own items.
 
 ### CSV Import
 - [ ] **Marketplace CSV import UI** — eBay Transaction Report, Amazon Settlement/Transaction View, Mercari CSV; drag-and-drop or file input calling `import_marketplace_csv` edge function (already shared with mobile — v16)
@@ -113,6 +113,15 @@ _Same priority tier as mobile's P2 — port once the core workflow above is soli
 - [ ] **1099-K reconciliation view** — enter 1099-K amounts per platform, compare to Part I breakdown by platform
 - [ ] **Settlements warning on export** — block/warn CSV export if unbroken settlements exist in the period
 - [ ] **COGS unlinked flag** — surface `cost_of_goods` transactions with no linked lot
+- [ ] **Attach real cost transactions to a sale (many-to-many)** — a sale's true costs often arrive as *several separate charges*, not one number typed into the Record Sale modal. Shipping is frequently paid on its own (Pirate Ship, USPS, a label bought days later), and there can be more than one cost per sale. Today the only path is the single `shipping`/`fees` field on the sale, which auto-creates one `shipping_postage` transaction — meanwhile the real bank row syncs from Plaid unlinked, so the same postage can hit Line 27a twice and per-sale margin uses a typed estimate instead of what was actually paid.
+
+  Wants a `sale_transactions` join table (`sale_id`, `transaction_id`, `allocated_amount`, `kind`) — **directly mirroring [`inventory_lot_transactions`](../supabase/migrations/20260724120000_lot_transaction_links.sql)**, which already solved the identical shape for lot funding, including the DB trigger that keeps a denormalized primary link in sync. Requirements:
+  - Attach N cost transactions to one sale, and split one transaction across N sales (a single $38.77 Pirate Ship charge covering 3 orders).
+  - Sources: a **Plaid-synced transaction** (pick from a candidate list, same UX as the lot funding picker) **or** an **eBay/Amazon CSV import** row.
+  - Per-sale profit reads attached actuals in preference to the typed estimate; reuse the `allocated_*` read-time pattern already used for bundle lines.
+  - Must not double-count: attaching a real bank row should supersede (or reconcile against) the auto-created manual `shipping_postage` row rather than adding to it.
+
+  Blocks trustworthy per-sale margin and clean Line 27a.
 - [ ] **Cash basis disclosure** — "Accounting Method: Cash Basis" note in a Tax Settings page and export header
 - [ ] **Receipt coverage warning** — flag COGS transactions over a threshold with no receipt
 - [ ] **Quarterly estimated tax calendar** — payment dates + estimated amounts based on YTD net profit
@@ -124,8 +133,8 @@ _Same priority tier as mobile's P2 — port once the core workflow above is soli
 - [ ] **Inventory value at cost card** on Dashboard
 - [ ] **Top selling items card** on Dashboard
 - [ ] **Per-platform sales breakdown card** on Dashboard + filter in Sales table
-- [ ] **Plaid webhooks** — `TRANSACTIONS` webhook instead of relying solely on manual/cron sync; web has no "background app refresh" excuse mobile has, so this matters more here
-- [ ] **Duplicate + anomaly detection** — flag same amount + merchant within 3 days
+- [ ] **Plaid webhooks** — `TRANSACTIONS` webhook instead of relying solely on manual/cron sync; web has no "background app refresh" excuse mobile has, so this matters more here. Distinct from and in addition to the `ITEM` webhook family (`ERROR`, `PENDING_EXPIRATION`, `USER_PERMISSION_REVOKED`, `LOGIN_REPAIRED`) — `TRANSACTIONS` alone would NOT have caught the AmEx incident referenced in the Manual sync trigger item above; only an `ITEM` webhook fires on an auth failure without the user pressing Sync. That's currently caught only by the stale-badge heuristic (days since last successful sync), which is reactive, not push-based.
+- [ ] **Duplicate + anomaly detection** — flag same amount + merchant within 3 days. Concretely overdue: an AmEx reconnect on 2026-07-25 re-imported ~4 months of history under a new Plaid item id (see the `plaid_exchange_token` duplicate-connection fix in the Schema/Architecture notes below) and left **74 duplicate groups / 92 extra transaction rows** — 58 from that re-import, 34 pre-existing and unexplained. Not yet cleaned up; a candidate list (no deletions) was offered but not built.
 - [ ] **Low stock alerts** — threshold per item, visual badge (no push notifications needed yet on web — start with in-app banner)
 - [ ] **Realtime updates** — Supabase Realtime subscriptions on `transactions`/`sales` so multi-tab/multi-device usage doesn't need manual refresh (more valuable on web than mobile, since web users are more likely to have multiple tabs open)
 
@@ -172,7 +181,7 @@ _Shipped in v1 (2026-06-24): `recordTrade`, `deleteTrade`, `RecordTradeModal`, `
 
 _Carried over from mobile's "June 2026 Architectural Review" since both clients share the schema — fix once, both clients benefit:_
 
-- [ ] `inventory_lots` needs a `purchase_date` column (currently only has `created_at`) — blocks correct FIFO ordering for back-dated lot entries
+- [x] `inventory_lots` needs a `purchase_date` column (currently only has `created_at`) — blocks correct FIFO ordering for back-dated lot entries. _Closed 2026-07-24 (`purchase_date` migration + `AddLotModal`/`EditLotModal`). Also went further: `inventory_lot_transactions` join table (2026-07-25) lets one lot be funded by several transactions — the split-tender case a single `transaction_id` FK couldn't represent — with `inventory_lots.transaction_id` kept as a denormalized, trigger-maintained mirror for iOS. See [`docs/supabase-schema.md`](docs/supabase-schema.md#inventory_lot_transactions)._
 - [ ] No inventory adjustment type for personal-use withdrawal / shrinkage (Schedule C Line 36 requires excluding these from COGS)
 - [ ] No `quantity` column on `transactions` — root cause of CSV multi-unit sales hardcoding `quantity: 1`
 - [ ] No `tax_profiles` table — Schedule C header fields, home office sqft, vehicle method scattered or missing entirely; prerequisite for multi-device + accountant export features

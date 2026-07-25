@@ -22,6 +22,11 @@ export function saleProfit(sale: Sale): SaleProfit {
   )
   const refund = sale.return_status === 'partial' ? (sale.refunded_amount ?? 0) : 0
   const netRevenue = sale.sale_price - refund
-  const profit = netRevenue - cogs - (sale.fees ?? 0) - (sale.shipping_cost ?? 0)
+  // Bundle lines carry fees=0/shipping=null (the real charge sits once on the
+  // bundle), so fall back to the allocated share or every bundle line reports
+  // profit as though the order were free to sell.
+  const fees = sale.allocated_fees ?? sale.fees ?? 0
+  const shipping = sale.allocated_shipping ?? sale.shipping_cost ?? 0
+  const profit = netRevenue - cogs - fees - shipping
   return { cogs, netRevenue, profit }
 }

@@ -55,6 +55,17 @@ export interface Sale {
   external_order_id?: string
   /** How the buyer paid — see lib/paymentMethods.ts. Orthogonal to `platform`. */
   payment_method?: string | null
+  /**
+   * Client-side only, never persisted. A bundle line's share of its bundle's
+   * order-level fees/shipping, allocated proportionally by line price.
+   *
+   * Kept separate from `fees`/`shipping_cost` rather than overwriting them: those
+   * are genuinely 0 on a bundle line (the real charge lives once on the bundle),
+   * and `EditSaleModal` seeds its form from them — overwriting would silently
+   * persist an allocated share onto the line the first time someone edits it.
+   */
+  allocated_fees?: number
+  allocated_shipping?: number
   inventory_status: 'ok' | 'oversold' | 'reconciled'
   return_status: 'none' | 'partial' | 'full'
   refunded_quantity: number

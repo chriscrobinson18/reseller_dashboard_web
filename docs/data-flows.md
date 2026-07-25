@@ -35,6 +35,24 @@ Rules — first match wins, anything that returns `bucket: null` is excluded:
 
 This is why a single "sale" shows up as one row in Sales but up to three rows in Expenses (visible there only when the "Sale rows" filter toggle is on).
 
+**Exception:** the "all tagged `related_sale_id`" rule above holds only for an ordinary sale. A bundle line's payout/fee/shipping rows are tagged `related_bundle_id` instead — see the next section.
+
+## Recording a bundle sale (`recordBundleSale` in `mutations.ts`)
+
+One order, several **different** items, one combined payout — a multi-item marketplace order, or an in-person mixed lot. Entered from the same `RecordSaleModal` as an ordinary sale: adding a second item row is what turns it into a bundle (see [`features/sales.md`](features/sales.md#bundle-sales-multi-item-orders) for the UI).
+
+1. Inserts one `sale_bundles` header row (date, platform, payment method, order id, **order-level** fees/shipping, notes).
+2. For each item, calls `record_sale` directly — same FIFO depletion, same `inventory_movements`, same per-item `sale_price` as an ordinary sale. Each resulting `sales` row is stamped `bundle_id = <bundle id>`, `fees: 0`, `shipping_cost: null`, `net_payout: <that line's own price>` (mirrors what `recordTrade` does for given-side sales — see below).
+3. Creates **exactly one** payout/fee/shipping transaction set for the whole order, tagged `related_bundle_id` (not `related_sale_id` — no single line owns an order-level fee).
+
+**Why not just call `recordSale()` N times:** that would run step 3's transaction-creation logic once per line, multiplying the real order payout by the number of items. The one-`sale_bundles`-header-plus-N-plain-`sales`-rows shape mirrors `trades` (below) rather than restructuring `sales` into a header/line-item table — FIFO depletion, returns, and `reverse_sale` all keep working on bundle lines completely unmodified.
+
+**Order-level fees/shipping are allocated back at read time.** Storing `fees: 0` on each line keeps the write side honest (the real charge exists once, on the bundle) but makes every line *look* free to sell. `fetchSales` therefore splits the bundle's fees and shipping across its lines **proportionally by line price** — a $100 line in a $200 order bears half — writing them to the client-only `allocated_fees` / `allocated_shipping` fields. `saleProfit()` prefers those over the row's zeroed `fees`/`shipping_cost`; without this, every bundle line overstates profit by its share of both.
+
+These stay separate from `fees`/`shipping_cost` rather than overwriting them, because `EditSaleModal` seeds its form from those columns — overwriting would persist an allocated share onto the line the first time anyone edited it. The same allocation drives the Sales list's **Net** column: a bundle's transactions carry `related_bundle_id`, so the `related_sale_id` lookup finds nothing and would otherwise fall back to the gross line price.
+
+**Deleting a bundle** (`deleteBundleSale`) reverses each line via `reverse_sale` (restores inventory, soft-deletes the line), deletes the bundle's own transactions, and soft-deletes the `sale_bundles` row. No downstream-depletion check is needed first, unlike `deleteTrade` — a bundle sale only depletes inventory, it never creates lots.
+
 ## Editing a sale (`updateSale`)
 
 Updates the `sales` row, recomputes `net_payout`. **Only for `source === 'manual'` sales**, it then re-fetches the linked transaction rows (`related_sale_id = id AND source = 'manual'`) and patches each one's `amount`/`date` to match, keyed by `schedule_c_category` (`payout` → sale price, `commissions_fees` → fees, `shipping_postage` → shipping). CSV-imported or Plaid-derived sales have no linked manual transactions to sync — editing those only touches the `sales` row.

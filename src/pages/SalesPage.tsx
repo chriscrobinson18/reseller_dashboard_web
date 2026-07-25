@@ -55,6 +55,38 @@ async function fetchSales(start: string | null, end: string | null): Promise<{
     }, {} as Record<string, number>)
   }
 
+  // Bundle lines are stamped fees=0/shipping=null because an order-level charge
+  // can't belong to any one line. Without allocating it back, every bundle line
+  // reports profit as though the order cost nothing to sell. Split proportionally
+  // by line price: a $100 line in a $200 order bears half the fee.
+  const bundleIds = [...new Set(sales.map(s => s.bundle_id).filter(Boolean))] as string[]
+  if (bundleIds.length > 0) {
+    const { data: bundles, error: bErr } = await supabase
+      .from('sale_bundles')
+      .select('id, fees, shipping_cost')
+      .in('id', bundleIds)
+    if (bErr) throw bErr
+
+    const grossByBundle: Record<string, number> = {}
+    for (const s of sales) {
+      if (s.bundle_id) grossByBundle[s.bundle_id] = (grossByBundle[s.bundle_id] ?? 0) + s.sale_price
+    }
+
+    const byId = new Map((bundles ?? []).map(b => [b.id, b]))
+    for (const s of sales) {
+      const b = s.bundle_id ? byId.get(s.bundle_id) : null
+      if (!b) continue
+      const gross = grossByBundle[s.bundle_id!] ?? 0
+      const share = gross > 0 ? s.sale_price / gross : 0
+      s.allocated_fees = (Number(b.fees) || 0) * share
+      s.allocated_shipping = (Number(b.shipping_cost) || 0) * share
+      // Same reason the Net column can't use netPayoutBySale here: a bundle's
+      // transactions carry related_bundle_id, so the related_sale_id lookup
+      // above finds nothing and would silently fall back to the gross price.
+      netPayoutBySale[s.id] = s.sale_price - s.allocated_fees - s.allocated_shipping
+    }
+  }
+
   return { sales, netPayoutBySale }
 }
 
