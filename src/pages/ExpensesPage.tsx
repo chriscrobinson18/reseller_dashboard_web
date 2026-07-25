@@ -201,7 +201,17 @@ function TransactionDetail({ tx, onClose, onOpenTrade, onManage }: { tx: Transac
       <div className="flex gap-2">
         {!isPlaid && (
           <button
-            onClick={() => setEditing(!editing)}
+            onClick={() => {
+              // Re-seed from the current tx: the panel now re-renders on refetch,
+              // so fields captured at mount can be stale by the time Edit opens.
+              if (!editing) {
+                setEDate(tx.date)
+                setEAmount(String(Math.abs(tx.amount)))
+                setEDirection(tx.amount < 0 ? 'expense' : 'income')
+                setEMerchant(tx.merchant ?? '')
+              }
+              setEditing(!editing)
+            }}
             disabled={!!tx.trade_id}
             title={tx.trade_id ? 'Locked — part of a trade' : undefined}
             className="flex-1 flex items-center justify-center gap-1.5 border border-gray-200 rounded-lg py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
@@ -474,7 +484,10 @@ export default function ExpensesPage() {
   const [search, setSearch] = useState('')
   const [catFilter, setCatFilter] = useState<string | null>(null)
   const [showSaleLinked, setShowSaleLinked] = useState(false)
-  const [selected, setSelected] = useState<Transaction | null>(null)
+  // Hold only the id, never a snapshot: the detail panel must re-render from
+  // freshly-fetched data after a category/notes/field edit, otherwise it keeps
+  // showing the values captured when the row was clicked until it's reopened.
+  const [selectedId, setSelectedId] = useState<string | null>(null)
   const [ddTxId, setDdTxId] = useState<string | null>(null)
   const [showAddTx, setShowAddTx] = useState(false)
   const [openTradeId, setOpenTradeId] = useState<string | null>(null)
@@ -506,6 +519,13 @@ export default function ExpensesPage() {
     queryKey: ['transactions', range.start, range.end],
     queryFn: () => fetchTransactions(range.start, range.end),
   })
+
+  // Resolved against the unfiltered fetch, so recategorizing a row that the
+  // active category filter then excludes doesn't yank the panel closed.
+  const selected = useMemo(
+    () => transactions.find(t => t.id === selectedId) ?? null,
+    [transactions, selectedId],
+  )
 
   const filtered = useMemo(() => {
     // Whitespace-separated terms must ALL match somewhere in the haystack, so
@@ -679,7 +699,7 @@ export default function ExpensesPage() {
                     <tr
                       key={tx.id}
                       className={`data-row border-b border-gray-100 ${selected?.id === tx.id ? 'selected' : ''} ${selectedIds.has(tx.id) ? 'bg-gray-50' : ''}`}
-                      onClick={() => setSelected(tx)}
+                      onClick={() => setSelectedId(tx.id)}
                     >
                       <td className="px-4 py-2.5" onClick={e => e.stopPropagation()}>
                         <input
@@ -792,14 +812,14 @@ export default function ExpensesPage() {
       {/* Detail panel */}
       <SlideOver
         open={!!selected}
-        onClose={() => setSelected(null)}
+        onClose={() => setSelectedId(null)}
         title="Transaction Detail"
       >
         {selected && (
           <TransactionDetail
             key={selected.id}
             tx={selected}
-            onClose={() => setSelected(null)}
+            onClose={() => setSelectedId(null)}
             onOpenTrade={(id) => setOpenTradeId(id)}
             onManage={() => setShowManage(true)}
           />

@@ -25,6 +25,17 @@ Two deliberate behaviors:
 - **Amounts are indexed in several shapes** — `140.10`, `$140.10`, and `140.1` — and the query has `$` and `,` stripped from each term, so `$1,234.56` and `1234.56` both hit the same row. The sign is dropped; people search the magnitude on the receipt, not `-140.10`. Dates are indexed both ISO (`2026-05-15`) and display (`May 15, 2026`).
 - **Whitespace splits into terms that must ALL match**, so `ebay 140` narrows to eBay rows around $140 instead of unioning the two. The terms match independently anywhere in the haystack, so multi-word queries are a narrowing heuristic, not a phrase match — `may 15, 2026` matches any row containing all three tokens somewhere, not only rows dated May 15.
 
+### Detail panel state
+
+The page stores only `selectedId`, never a `Transaction` snapshot; the panel's `tx` is derived with `transactions.find(t => t.id === selectedId)`. This matters — holding the object captured at row-click time meant a category/notes/field edit refetched the list but left the open panel rendering the pre-edit values until it was closed and reopened.
+
+Two consequences of deriving it:
+
+- Resolution runs against the **unfiltered** `transactions`, not `filtered`, so recategorizing a row that the active category filter then excludes doesn't yank the panel shut mid-edit.
+- A deleted transaction drops out of the array, so `selected` becomes `null` and the panel closes on its own.
+
+Because `tx` now changes identity on refetch (the component doesn't remount — `key` is still the id), the inline edit fields are re-seeded from `tx` when **Edit** is opened rather than only at mount, so they can't show values that went stale while the panel sat open.
+
 ### Category dropdowns (shared)
 
 Every category picker on this page (top-of-page filter, inline category cell, detail-pane dropdown) renders the shared `CategoryDropdown` component with four sections:
