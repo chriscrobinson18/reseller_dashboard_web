@@ -1,3 +1,9 @@
+// plaid_sync_transactions v33
+// v33: surface item failures instead of swallowing them. Any Plaid error other
+// than PRODUCT_NOT_READY now writes plaid_items.status/error_message and returns
+// a warning, and a clean sync resets status to 'active'. Previously these were
+// console.error-only while the response still reported success, so an expired
+// connection kept rendering a green "Connected" badge indefinitely.
 // plaid_sync_transactions v32
 // Adds rich Plaid metadata capture: 14 new columns on transactions (logo, location,
 // payment_channel, authorized_date, pending, detailed PFC + confidence, currency,
@@ -20,6 +26,19 @@ const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
 }
+
+/**
+ * Plaid error codes that mean the user must re-authenticate through Link in
+ * update mode. Retrying the sync — including Force Full Resync, which only
+ * resets the cursor — cannot clear any of these.
+ */
+const NEEDS_RECONNECT = new Set([
+  'ITEM_LOGIN_REQUIRED',
+  'PENDING_EXPIRATION',
+  'USER_PERMISSION_REVOKED',
+  'USER_INPUT_TIMEOUT',
+  'ITEM_LOCKED',
+])
 
 const plaidConfig = new Configuration({
   basePath: PlaidEnvironments[Deno.env.get('PLAID_ENV') || 'sandbox'],
@@ -412,9 +431,16 @@ serve(async (req) => {
           totalRemoved += trulyRemoved.length
         }
 
+        // Clear any prior failure state — otherwise a reconnected item keeps
+        // showing "Reconnect needed" forever.
         await supabase
           .from('plaid_items')
-          .update({ cursor, last_synced_at: new Date().toISOString() })
+          .update({
+            cursor,
+            last_synced_at: new Date().toISOString(),
+            status: 'active',
+            error_message: null,
+          })
           .eq('item_id', item.item_id)
 
         console.log(`Item ${item.item_id} done: +${addedTx.length} ~${modifiedTx.length} -${removedTx.length}`)
@@ -422,13 +448,34 @@ serve(async (req) => {
       } catch (itemErr: any) {
         const plaidError = itemErr?.response?.data
         const errorCode: string = plaidError?.error_code ?? ''
+        const institution = item.institution_name ?? 'Bank'
+
         if (errorCode === 'PRODUCT_NOT_READY') {
           const msg = 'Transaction history is being prepared by your bank. Please sync again in a few minutes.'
           console.log(`Item ${item.item_id}: PRODUCT_NOT_READY`)
           warnings.push(msg)
-        } else {
-          console.error(`Error syncing item ${item.item_id}:`, plaidError ?? itemErr?.message ?? itemErr)
+          continue
         }
+
+        // Everything below used to be console.error only: the failure never
+        // reached plaid_items.status and the response still said success, so a
+        // dead connection kept rendering a green "Connected" badge. One item's
+        // consent expired and went unnoticed for ~4 months.
+        console.error(`Error syncing item ${item.item_id}:`, plaidError ?? itemErr?.message ?? itemErr)
+
+        const status = NEEDS_RECONNECT.has(errorCode) ? 'login_required' : 'error'
+        const detail: string = plaidError?.error_message ?? itemErr?.message ?? errorCode ?? 'Unknown error'
+
+        await supabase
+          .from('plaid_items')
+          .update({ status, error_message: errorCode ? `${errorCode}: ${detail}` : detail })
+          .eq('item_id', item.item_id)
+
+        warnings.push(
+          status === 'login_required'
+            ? `${institution} needs to be reconnected — its login has expired, so new transactions aren't syncing.`
+            : `${institution} failed to sync: ${detail}`,
+        )
       }
     }
 

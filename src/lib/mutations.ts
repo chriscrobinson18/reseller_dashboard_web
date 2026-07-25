@@ -1101,7 +1101,18 @@ export async function plaidExchangeToken(params: {
 }
 
 export interface PlaidSyncResult {
-  /** Server returns the number of newly-inserted transactions (may be undefined on legacy responses). */
+  success?: boolean
+  transactions_added?: number
+  transactions_modified?: number
+  transactions_removed?: number
+  settlements_detected?: number
+  /**
+   * Per-item problems. v33+ reports connections that need reconnecting or
+   * otherwise failed; earlier versions only ever reported PRODUCT_NOT_READY and
+   * swallowed everything else, so `success: true` could hide a dead item.
+   */
+  warnings?: string[]
+  /** Legacy field name — never actually emitted by v32+; kept for old responses. */
   inserted?: number
 }
 

@@ -6,7 +6,7 @@ import { usePlaidAccounts } from '../../lib/queries'
 import { plaidSyncTransactions, plaidRemoveItem } from '../../lib/mutations'
 import ConfirmDialog from '../../components/ConfirmDialog'
 import AccountRow from './AccountRow'
-import { getItemStatus, type ItemStatusBadge } from './itemStatus'
+import { getItemStatus, daysSinceSync, type ItemStatusBadge } from './itemStatus'
 
 interface Props {
   item: PlaidItem
@@ -32,12 +32,14 @@ function StatusBadge({ status, message }: { status: ItemStatusBadge; message?: s
     syncing: 'bg-amber-50 text-amber-700 border-amber-200',
     reconnect: 'bg-red-50 text-red-700 border-red-200',
     error: 'bg-red-50 text-red-700 border-red-200',
+    stale: 'bg-amber-50 text-amber-700 border-amber-200',
   }
   const labels: Record<ItemStatusBadge, string> = {
     connected: 'Connected',
     syncing: 'Syncing…',
     reconnect: 'Reconnect needed',
     error: 'Error',
+    stale: 'Not syncing',
   }
   return (
     <span
@@ -56,18 +58,27 @@ export default function BankItemCard({ item, onReconnect }: Props) {
   const [confirmDisconnect, setConfirmDisconnect] = useState(false)
   const [confirmForceResync, setConfirmForceResync] = useState(false)
   const [successMsg, setSuccessMsg] = useState<string | null>(null)
+  const [warnMsg, setWarnMsg] = useState<string | null>(null)
 
   const syncMutation = useMutation({
     mutationKey: ['plaidSync', item.id],
     mutationFn: (params: { reset_cursor?: boolean }) =>
       plaidSyncTransactions({ item_id: item.item_id, ...params }),
     onSuccess: (data) => {
-      const n = data?.inserted
-      setSuccessMsg(
-        typeof n === 'number'
-          ? `Synced ${n} new transaction${n === 1 ? '' : 's'} from ${item.institution_name ?? 'this bank'}`
-          : 'Sync complete'
-      )
+      // A 200 does not mean this connection synced: the function reports
+      // per-item failures as warnings while still succeeding overall.
+      if (data?.warnings?.length) {
+        setWarnMsg(data.warnings.join(' '))
+        setSuccessMsg(null)
+      } else {
+        const n = data?.transactions_added ?? data?.inserted
+        setWarnMsg(null)
+        setSuccessMsg(
+          typeof n === 'number'
+            ? `Synced ${n} new transaction${n === 1 ? '' : 's'} from ${item.institution_name ?? 'this bank'}`
+            : 'Sync complete'
+        )
+      }
       qc.invalidateQueries({ queryKey: ['plaid_items'] })
       qc.invalidateQueries({ queryKey: ['plaid_accounts', item.item_id] })
       qc.invalidateQueries({ queryKey: ['transactions'] })
@@ -98,8 +109,15 @@ export default function BankItemCard({ item, onReconnect }: Props) {
           </div>
         </div>
         <div className="flex items-center gap-2">
-          <StatusBadge status={status} message={item.error_message} />
-          {status === 'reconnect' && (
+          <StatusBadge
+            status={status}
+            message={
+              status === 'stale'
+                ? `No successful sync in ${daysSinceSync(item)} days — this connection may need reconnecting.`
+                : item.error_message
+            }
+          />
+          {(status === 'reconnect' || status === 'stale') && (
             <button
               type="button"
               onClick={onReconnect}
@@ -154,6 +172,11 @@ export default function BankItemCard({ item, onReconnect }: Props) {
       {successMsg && (
         <div className="px-4 py-2 text-xs text-green-700 bg-green-50 border-b border-green-100">
           ✓ {successMsg}
+        </div>
+      )}
+      {warnMsg && (
+        <div className="px-4 py-2 text-xs text-amber-800 bg-amber-50 border-b border-amber-100">
+          {warnMsg}
         </div>
       )}
       {syncMutation.isError && (
