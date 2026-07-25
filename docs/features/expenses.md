@@ -5,7 +5,7 @@ Transaction list + editing surface. The only page where `transactions` rows are 
 ## List view
 
 - Fetches via local `fetchTransactions(start, end)` (same shape as Dashboard's copy, separately defined — see [architecture.md](../architecture.md)).
-- Client-side filters (all `useMemo`'d together): text search over `merchant`/`notes` (case-insensitive substring), category dropdown filter (exact match on `schedule_c_category`), and a "Sale rows" toggle (`showSaleLinked`) that by default **hides** rows where `related_sale_id` is set or `source === 'csv_import'` — these are the auto-created payout/fee/shipping rows from `recordSale` (see [data-flows.md](../data-flows.md)).
+- Client-side filters (all `useMemo`'d together): text search over `transactionHaystack(t, customs)` (see below), category dropdown filter (exact match on `schedule_c_category`), and a "Sale rows" toggle (`showSaleLinked`) that by default **hides** rows where `related_sale_id` is set or `source === 'csv_import'` — these are the auto-created payout/fee/shipping rows from `recordSale` (see [data-flows.md](../data-flows.md)).
 - Header shows live `income`/`expenses` totals for the *filtered* set (not the exclusion-filtered "business" total Dashboard uses — these are simpler: any positive amount vs. any negative amount in the visible rows) plus an uncategorized-count badge computed from the *unfiltered* period set.
 - Inline category change: clicking the `CategoryBadge` in a row opens the shared [`CategoryDropdown`](../../src/components/CategoryDropdown.tsx), a fixed-position popover positioned via CSS vars (`--dd-top`/`--dd-left`) set from the clicked element's bounding rect — not a `<select>`. Mutates via local `updateCategory`, invalidates `['transactions']`.
 
@@ -15,6 +15,15 @@ Transaction list + editing surface. The only page where `transactions` rows are 
 - When ≥1 row is selected, a floating dark pill bar appears at the bottom of the list: "N selected", a **Set category** dropdown (the same shared `CategoryDropdown`, so custom categories and "Clear category" both work), and a clear-selection ✕.
 - Applying a category runs `bulkUpdateCategory(ids, cat)` — a single `.update({ schedule_c_category }).in('id', ids)` round-trip (not N requests) — then invalidates `['transactions']` and clears the selection.
 - Selection is reset whenever the visible set changes (period / search / category filter / Sale-rows toggle) via a render-phase previous-signature check, so a bulk action can never silently hit rows the user can no longer see.
+
+### Search
+
+`transactionHaystack(t, customs)` flattens every user-visible detail of a transaction into one lowercase string, which the query substring-matches. Covered: merchant, notes, resolved category label (built-in *and* custom) or the literal `uncategorized`, type, source, platform, account display, record type, amount, date, `expense`/`income`, `pending`, and the Plaid enrichment fields (website, city, region, payment channel, plaid category).
+
+Two deliberate behaviors:
+
+- **Amounts are indexed in several shapes** — `140.10`, `$140.10`, and `140.1` — and the query has `$` and `,` stripped from each term, so `$1,234.56` and `1234.56` both hit the same row. The sign is dropped; people search the magnitude on the receipt, not `-140.10`. Dates are indexed both ISO (`2026-05-15`) and display (`May 15, 2026`).
+- **Whitespace splits into terms that must ALL match**, so `ebay 140` narrows to eBay rows around $140 instead of unioning the two. The terms match independently anywhere in the haystack, so multi-word queries are a narrowing heuristic, not a phrase match — `may 15, 2026` matches any row containing all three tokens somewhere, not only rows dated May 15.
 
 ### Category dropdowns (shared)
 

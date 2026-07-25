@@ -3,7 +3,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { Search, Filter, ChevronDown, Plus, Pencil, Trash2, Tag, X, ExternalLink } from 'lucide-react'
 import { supabase } from '../lib/supabase'
 import { getPeriodRange, type PeriodPreset } from '../lib/periods'
-import { resolveCategory } from '../lib/categories'
+import { resolveCategory, type CustomCategory } from '../lib/categories'
 import { formatUSD, formatDate } from '../lib/utils'
 import { updateTransaction, deleteTransaction } from '../lib/mutations'
 import PeriodPicker from '../components/PeriodPicker'
@@ -19,6 +19,50 @@ import MerchantAvatar from '../components/MerchantAvatar'
 import { useTrade, useCustomCategories } from '../lib/queries'
 import CategoryDropdown from '../components/CategoryDropdown'
 import type { Transaction } from '../lib/types'
+
+// ─── Search ──────────────────────────────────────────────────────────────────
+
+/**
+ * Flattens every user-visible detail of a transaction into one lowercase string
+ * for substring matching, so the search box covers anything the row or its
+ * detail panel can show — not just merchant/notes.
+ *
+ * Amounts appear in several shapes on purpose: `140.10` (raw), `$140.10`, and
+ * `140.1`, so both "140.10" and "$140.10" hit. The sign is dropped — people
+ * search the magnitude they saw on the receipt. Dates likewise appear as both
+ * ISO (`2026-05-15`) and display (`May 15, 2026`) form.
+ */
+function transactionHaystack(t: Transaction, customs: CustomCategory[]): string {
+  const abs = Math.abs(t.amount)
+  const parts: (string | null | undefined)[] = [
+    t.merchant,
+    t.notes,
+    resolveCategory(t.schedule_c_category, customs)?.label,
+    t.schedule_c_category ? undefined : 'uncategorized',
+    t.type,
+    t.source,
+    t.platform,
+    t.account_display,
+    t.record_type,
+    // Amount, in the forms a person is likely to type.
+    abs.toFixed(2),
+    formatUSD(abs),
+    String(abs),
+    t.amount < 0 ? 'expense' : 'income',
+    // Date, ISO and display.
+    t.date,
+    formatDate(t.date),
+    // Plaid enrichment.
+    t.merchant_website,
+    t.location_city,
+    t.location_region,
+    t.payment_channel,
+    t.plaid_category,
+    t.plaid_category_detailed,
+    t.pending ? 'pending' : null,
+  ]
+  return parts.filter(Boolean).join(' ').toLowerCase()
+}
 
 // ─── Data ────────────────────────────────────────────────────────────────────
 
@@ -464,18 +508,25 @@ export default function ExpensesPage() {
   })
 
   const filtered = useMemo(() => {
+    // Whitespace-separated terms must ALL match somewhere in the haystack, so
+    // "ebay 140" narrows rather than widening. Currency punctuation is stripped
+    // from the query so "$1,234.56" and "1234.56" behave the same.
+    const terms = search
+      .toLowerCase()
+      .split(/\s+/)
+      .map(t => t.replace(/[$,]/g, ''))
+      .filter(Boolean)
+
     return transactions.filter(t => {
       if (!showSaleLinked && (t.related_sale_id || t.source === 'csv_import')) return false
       if (catFilter && t.schedule_c_category !== catFilter) return false
-      if (search) {
-        const q = search.toLowerCase()
-        const m = (t.merchant ?? '').toLowerCase()
-        const n = (t.notes ?? '').toLowerCase()
-        if (!m.includes(q) && !n.includes(q)) return false
+      if (terms.length > 0) {
+        const hay = transactionHaystack(t, customsAll)
+        if (!terms.every(term => hay.includes(term))) return false
       }
       return true
     })
-  }, [transactions, showSaleLinked, catFilter, search])
+  }, [transactions, showSaleLinked, catFilter, search, customsAll])
 
   // Trade-linked transactions have locked categories (edited via the trade),
   // so they're excluded from bulk selection.
@@ -549,7 +600,7 @@ export default function ExpensesPage() {
               <input
                 value={search}
                 onChange={e => setSearch(e.target.value)}
-                placeholder="Search merchant or notes…"
+                placeholder="Search amount, merchant, category, notes…"
                 className="w-full pl-8 pr-3 py-1.5 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-gray-900"
               />
             </div>
