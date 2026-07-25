@@ -78,11 +78,28 @@ export interface Item {
   inventory_lots?: InventoryLot[]
 }
 
+/**
+ * One funding link between a lot and a transaction that paid for it.
+ * A split-tender purchase produces several of these for the same lot.
+ */
+export interface InventoryLotTransaction {
+  id: string
+  user_id: string
+  lot_id: string
+  transaction_id: string
+  /** Unsigned magnitude this transaction contributed to the lot's cost. */
+  allocated_amount: number
+  created_at: string
+}
+
 export interface InventoryLot {
   id: string
   user_id: string
   item_id: string
+  /** Mirrors the primary link in `inventory_lot_transactions`; kept for iOS. */
   transaction_id?: string
+  /** All funding links. Source of truth for the web client. */
+  inventory_lot_transactions?: InventoryLotTransaction[]
   trade_id?: string
   quantity_purchased: number
   quantity_remaining: number

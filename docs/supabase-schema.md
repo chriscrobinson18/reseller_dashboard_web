@@ -83,11 +83,30 @@ A purchase batch of an item at a specific unit cost — FIFO unit of accounting.
 | column | notes |
 |---|---|
 | `id`, `user_id`, `item_id`, `created_at`, `deleted_at` | soft-deleted |
-| `transaction_id` | nullable FK to the COGS purchase transaction; `ON DELETE SET NULL` (deleting the transaction unlinks, doesn't delete, the lot). On trade-acquired lots, points to the trade's `cogs_transaction_id`. |
+| `transaction_id` | nullable FK to the COGS purchase transaction; `ON DELETE SET NULL`. **Denormalized** — mirrors the primary (oldest) row in `inventory_lot_transactions`, kept only for iOS compatibility. Web reads the join table instead. On trade-acquired lots, points to the trade's `cogs_transaction_id`. |
 | `quantity_purchased`, `quantity_remaining` | `quantity_remaining` is depleted FIFO by `record_sale`, restored by `reverse_sale` (on sale delete) and by `record_return` v21 (on partial/full refund) |
 | `unit_cost` | per-unit, 2dp. A purchase total that doesn't divide evenly is split across **multiple lot rows** rather than rounded — see `splitLotCost` in [`features/inventory.md`](features/inventory.md#lot-cost-entry-and-penny-splitting). |
 | `purchase_date` | nullable `date`; set from the Add/Edit Lot modal date picker (defaults to today). Lots predating the column show `created_at` as a fallback in the UI. |
 | `trade_id` | nullable FK to `trades`; set on lots created from received-in-trade items. `ON DELETE SET NULL`. |
+
+### `inventory_lot_transactions`
+Funding links between a lot and the transaction(s) that paid for it — added by the `lot_transaction_links` migration (2026-07-24) to support **split-tender purchases** (one eBay order paid part on a card that Plaid syncs, part from marketplace balance that never touches a bank).
+
+| column | notes |
+|---|---|
+| `id`, `user_id`, `created_at` | |
+| `lot_id` | FK to `inventory_lots`, `ON DELETE CASCADE` |
+| `transaction_id` | FK to `transactions`, `ON DELETE CASCADE` (transactions are hard-deleted, so the link goes with it) |
+| `allocated_amount` | unsigned magnitude this transaction contributed to the lot's cost; `check (>= 0)` |
+| | `unique (lot_id, transaction_id)` |
+
+**This table is the source of truth for the web client.** `inventory_lots.transaction_id` is kept as a denormalized mirror of the *primary* (oldest) link, recomputed by `syncPrimaryLotTransaction()` on every link/unlink, purely so the sibling iOS app keeps working. Don't add new web reads against that column.
+
+Two sums matter, and they answer different questions:
+- **Per lot** — `sum(allocated_amount)` should equal `quantity_purchased * unit_cost`. Shortfall = the lot isn't fully funded (a payment method is missing). Surfaced in `LotTransactionSlideOver`.
+- **Per transaction** — `sum(allocated_amount)` should equal `abs(transactions.amount)`. Shortfall = part of the purchase hasn't become inventory yet. Surfaced in `TransactionInventorySection`.
+
+Migration backfills one link per already-linked lot at its full cost, so pre-existing data reconciles unchanged.
 
 ### `inventory_movements`
 Audit trail row created by `record_sale` per lot depleted by a sale. Read-only from the web client (`sale.inventory_movements`); join shape: `{ id, quantity, inventory_lots: { unit_cost, item_id } }`. `quantity * unit_cost` summed across a sale's movements = that sale's COGS.

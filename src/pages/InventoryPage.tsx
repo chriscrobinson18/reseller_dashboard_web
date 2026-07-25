@@ -31,6 +31,13 @@ function getItemSummary(lots: InventoryLot[]): ItemSummary {
   return { unitsInStock, totalValue, avgCost, totalPurchased }
 }
 
+/** "Linked" / "2 sources" / "No purchase record" for a lot's Purchase Tx cell. */
+function lotLinkLabel(lot: InventoryLot): string {
+  const n = lot.inventory_lot_transactions?.length ?? (lot.transaction_id ? 1 : 0)
+  if (n === 0) return 'No purchase record'
+  return n === 1 ? 'Linked' : `${n} sources`
+}
+
 // ─── Lot rows ─────────────────────────────────────────────────────────────────
 
 function AddLotRow({ onAddLot }: { onAddLot: () => void }) {
@@ -112,7 +119,7 @@ function LotRows({ lots, onAddLot, onEditLot, onDeleteLot, onTradePillClick, onT
                 }`}
                 title={lot.transaction_id ? 'View purchase transaction' : 'Find and link the purchase transaction'}
               >
-                {lot.transaction_id ? 'Linked' : 'No purchase record'}
+                {lotLinkLabel(lot)}
               </button>
             </td>
             <td className="px-3 py-2">
@@ -232,7 +239,7 @@ function LotLedger({ rows, onEditLot, onDeleteLot, onTradePillClick, onTxClick }
                 }`}
                 title={lot.transaction_id ? 'View purchase transaction' : 'Find and link the purchase transaction'}
               >
-                {lot.transaction_id ? 'Linked' : 'No purchase record'}
+                {lotLinkLabel(lot)}
               </button>
             </td>
             <td className="px-3 py-2.5">

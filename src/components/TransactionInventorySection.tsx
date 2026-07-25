@@ -89,7 +89,10 @@ export default function TransactionInventorySection({ transactionId, transaction
     addMutation.mutate()
   }
 
-  const allocated = lots.reduce((s, l) => s + l.quantity_purchased * l.unit_cost, 0)
+  // Per-link amount, not the lot's full cost: a split-tender lot is only
+  // partly funded by this transaction, and summing full cost would overstate
+  // how much of this purchase has been turned into inventory.
+  const allocated = lots.reduce((s, l) => s + Number(l.allocated_amount), 0)
   const remaining = transactionTotal - allocated
 
   const pendingQty = parseInt(quantity, 10)
@@ -132,8 +135,13 @@ export default function TransactionInventorySection({ transactionId, transaction
                   {lot.quantity_purchased} × {formatUSD(lot.unit_cost)} · {lot.quantity_remaining} left
                 </div>
               </div>
-              <div className="text-xs font-medium tabular-nums text-gray-700">
-                {formatUSD(lot.quantity_purchased * lot.unit_cost)}
+              <div className="text-xs font-medium tabular-nums text-gray-700 text-right">
+                {formatUSD(Number(lot.allocated_amount))}
+                {Math.abs(Number(lot.allocated_amount) - lot.quantity_purchased * lot.unit_cost) >= 0.01 && (
+                  <div className="text-[10px] font-normal text-gray-400">
+                    of {formatUSD(lot.quantity_purchased * lot.unit_cost)} lot
+                  </div>
+                )}
               </div>
               <button
                 onClick={() => removeMutation.mutate(lot.id)}

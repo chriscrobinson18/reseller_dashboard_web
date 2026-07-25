@@ -12,7 +12,7 @@ export interface ItemWithLots extends Item {
 export async function fetchItemsWithLots(): Promise<ItemWithLots[]> {
   const { data, error } = await supabase
     .from('items')
-    .select('*, inventory_lots(id, item_id, user_id, quantity_purchased, quantity_remaining, unit_cost, transaction_id, trade_id, purchase_date, created_at, deleted_at)')
+    .select('*, inventory_lots(id, item_id, user_id, quantity_purchased, quantity_remaining, unit_cost, transaction_id, trade_id, purchase_date, created_at, deleted_at, inventory_lot_transactions(id, user_id, lot_id, transaction_id, allocated_amount, created_at))')
     .is('deleted_at', null)
     .order('name')
   if (error) throw error
@@ -51,6 +51,23 @@ export function useTransaction(id: string | null | undefined) {
         .single()
       if (error) throw error
       return data as Transaction
+    },
+  })
+}
+
+/** Fetches several transactions by id — the funding sources behind one lot. */
+export function useTransactionsByIds(ids: string[]) {
+  const key = [...ids].sort().join(',')
+  return useQuery({
+    queryKey: ['transactions-by-ids', key],
+    enabled: ids.length > 0,
+    queryFn: async (): Promise<Transaction[]> => {
+      const { data, error } = await supabase
+        .from('transactions')
+        .select('*')
+        .in('id', ids)
+      if (error) throw error
+      return (data ?? []) as Transaction[]
     },
   })
 }

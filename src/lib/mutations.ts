@@ -79,7 +79,22 @@ export async function createLotsForPurchase(params: {
     })))
     .select()
   if (error) throw error
-  return (data ?? []) as InventoryLot[]
+
+  const lots = (data ?? []) as InventoryLot[]
+
+  // Mirror the FK into the join table so reconciliation sees the funding.
+  if (params.transactionId) {
+    const { error: linkErr } = await supabase.from('inventory_lot_transactions').insert(
+      lots.map(l => ({
+        user_id,
+        lot_id: l.id,
+        transaction_id: params.transactionId!,
+        allocated_amount: Number((l.quantity_purchased * l.unit_cost).toFixed(2)),
+      })),
+    )
+    if (linkErr) throw linkErr
+  }
+  return lots
 }
 
 export async function updateLot(id: string, unitCost: number, quantityPurchased: number, quantityRemaining: number, purchaseDate: string | null) {
@@ -98,12 +113,47 @@ export async function deleteLot(id: string) {
   if (error) throw error
 }
 
-/** Links an existing lot to a purchase (COGS) transaction. */
-export async function linkLotToTransaction(lotId: string, transactionId: string) {
-  const { error } = await supabase
+/**
+ * Recomputes `inventory_lots.transaction_id` from the lot's funding links,
+ * pointing it at the oldest one. The column is denormalized and only exists so
+ * the sibling iOS app keeps working; the join table is the source of truth.
+ */
+async function syncPrimaryLotTransaction(lotId: string) {
+  const { data, error } = await supabase
+    .from('inventory_lot_transactions')
+    .select('transaction_id')
+    .eq('lot_id', lotId)
+    .order('created_at', { ascending: true })
+    .limit(1)
+  if (error) throw error
+
+  const primary = data?.[0]?.transaction_id ?? null
+  const { error: upErr } = await supabase
     .from('inventory_lots')
-    .update({ transaction_id: transactionId })
+    .update({ transaction_id: primary })
     .eq('id', lotId)
+  if (upErr) throw upErr
+}
+
+/** Links an existing lot to a purchase (COGS) transaction. */
+export async function linkLotToTransaction(lotId: string, transactionId: string, allocatedAmount: number) {
+  const user_id = await getUserId()
+  const { error } = await supabase
+    .from('inventory_lot_transactions')
+    .upsert(
+      { user_id, lot_id: lotId, transaction_id: transactionId, allocated_amount: allocatedAmount },
+      { onConflict: 'lot_id,transaction_id' },
+    )
+  if (error) throw error
+  await syncPrimaryLotTransaction(lotId)
+}
+
+/** Changes how much of an already-linked transaction funds this lot. */
+export async function updateLotTransactionAmount(linkId: string, allocatedAmount: number) {
+  const { error } = await supabase
+    .from('inventory_lot_transactions')
+    .update({ allocated_amount: allocatedAmount })
+    .eq('id', linkId)
   if (error) throw error
 }
 
@@ -124,14 +174,20 @@ export async function linkLotToPurchase(params: {
   lotId: string
   transactionId: string
   markAsCogs: boolean
+  /** Amount of this transaction that funded the lot. */
+  allocatedAmount: number
   /** When set, overwrites the lot's purchase_date (use the transaction's date). */
   purchaseDate?: string | null
 }) {
-  const patch: Record<string, unknown> = { transaction_id: params.transactionId }
-  if (params.purchaseDate) patch.purchase_date = params.purchaseDate
+  await linkLotToTransaction(params.lotId, params.transactionId, params.allocatedAmount)
 
-  const { error } = await supabase.from('inventory_lots').update(patch).eq('id', params.lotId)
-  if (error) throw error
+  if (params.purchaseDate) {
+    const { error } = await supabase
+      .from('inventory_lots')
+      .update({ purchase_date: params.purchaseDate })
+      .eq('id', params.lotId)
+    if (error) throw error
+  }
 
   if (params.markAsCogs) {
     await updateTransactionCategory(params.transactionId, 'cost_of_goods')
@@ -147,24 +203,39 @@ export async function setLotPurchaseDate(lotId: string, purchaseDate: string) {
   if (error) throw error
 }
 
-export async function unlinkLotFromTransaction(lotId: string) {
-  const { error } = await supabase
-    .from('inventory_lots')
-    .update({ transaction_id: null })
-    .eq('id', lotId)
+/** Removes one funding link. Omit transactionId to detach the lot entirely. */
+export async function unlinkLotFromTransaction(lotId: string, transactionId?: string) {
+  let q = supabase.from('inventory_lot_transactions').delete().eq('lot_id', lotId)
+  if (transactionId) q = q.eq('transaction_id', transactionId)
+  const { error } = await q
   if (error) throw error
+  await syncPrimaryLotTransaction(lotId)
 }
 
-/** Fetches non-deleted lots linked to a transaction (for the COGS detail panel). */
-export async function fetchLotsForTransaction(transactionId: string): Promise<(InventoryLot & { items?: { name: string } | null })[]> {
+/**
+ * Fetches non-deleted lots funded by a transaction, each carrying the amount
+ * this particular transaction contributed (`allocated_amount`) — which for a
+ * split-tender purchase is less than the lot's full cost.
+ */
+export async function fetchLotsForTransaction(
+  transactionId: string,
+): Promise<(InventoryLot & { items?: { name: string } | null; allocated_amount: number; link_id: string })[]> {
   const { data, error } = await supabase
-    .from('inventory_lots')
-    .select('*, items(name)')
+    .from('inventory_lot_transactions')
+    .select('id, allocated_amount, inventory_lots!inner(*, items(name))')
     .eq('transaction_id', transactionId)
-    .is('deleted_at', null)
+    .is('inventory_lots.deleted_at', null)
     .order('created_at', { ascending: true })
   if (error) throw error
-  return data ?? []
+
+  return (data ?? []).map(row => {
+    const r = row as unknown as {
+      id: string
+      allocated_amount: number
+      inventory_lots: InventoryLot & { items?: { name: string } | null }
+    }
+    return { ...r.inventory_lots, allocated_amount: Number(r.allocated_amount), link_id: r.id }
+  })
 }
 
 // ─── Transactions ─────────────────────────────────────────────────────────────
@@ -761,6 +832,15 @@ export async function recordTrade(params: {
       .select()
       .single()
     if (lotErr || !lotRow) throw lotErr ?? new Error('Failed to create received lot')
+
+    const { error: linkErr } = await supabase.from('inventory_lot_transactions').insert({
+      user_id,
+      lot_id: lotRow.id,
+      transaction_id: cogsTx.id,
+      allocated_amount: Number((r.fmv * r.quantity).toFixed(2)),
+    })
+    if (linkErr) throw linkErr
+
     lotIds.push(lotRow.id)
   }
 

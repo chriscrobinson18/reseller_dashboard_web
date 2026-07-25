@@ -59,19 +59,23 @@ Read-only slide-over (drawer pattern). Shows trade date, counterparty, FMV sourc
 
 The "Purchase Tx" cell in each lot sub-row is a button opening `LotTransactionSlideOver` (`src/components/LotTransactionSlideOver.tsx`), which handles both states.
 
-**Linked** — shows the transaction (merchant, date, amount, `CategoryBadge`, source, notes) plus an **Unlink transaction** action (`unlinkLotFromTransaction`), followed by a **Purchase allocation** panel.
+**Linked** — a **Funding** panel listing every `inventory_lot_transactions` row for the lot: merchant, date, `CategoryBadge`, source, that transaction's own total, and the amount it contributed. Each row's amount is click-to-edit (`updateLotTransactionAmount`) and carries its own remove ✕ (`unlinkLotFromTransaction(lotId, transactionId)`). The footer reads **Funded of $X**, green once the links sum to the lot's cost:
 
-That panel fetches *every* lot on the transaction (`fetchLotsForTransaction`, cache key `['lots-for-tx', txId]`, shared with `TransactionInventorySection`), lists them with the clicked one marked `(this lot)`, and compares their **sum** against the transaction amount. Reconciliation is deliberately an aggregate check — one purchase routinely covers several lots, so comparing a single lot against the whole transaction amount flags every legitimate multi-lot purchase as a mismatch. Only the aggregate is warned on:
+- within $0.01 → green, no warning
+- under → amber "$X of this lot isn't funded yet — add the other payment method"
+- over → amber "funding exceeds the lot cost by $X"
 
-- within $0.01 → the allocated figure turns green, no warning
-- under → amber "$X of this purchase isn't assigned to inventory yet"
-- over → amber "the lots exceed the transaction total by $X"
+A lot can have **several funding sources**. The motivating case is a split-tender purchase: an eBay order paid $84.23 on a card (which Plaid syncs) and $29.65 from marketplace balance (which never touches a bank and must be entered by hand). **Add funding source** reopens the picker to attach the next one, defaulting its amount to whatever of the lot is still unfunded, capped at that transaction's own total. Already-linked transactions are filtered out of the candidate list.
 
-A blue notice appears above the allocation panel when the lot's effective date disagrees with the transaction's, with a **Use tx date** action (`setLotPurchaseDate`). This is the cleanup path for lots linked before date-syncing existed — `AddLotModal` defaults new lots to *today*, so a lot entered now for an older purchase carries a date that misorders FIFO. Comparison is on the date part only, since `created_at` is a timestamp while `transactions.date` is `yyyy-MM-dd`.
+This replaced an earlier cross-lot "Purchase allocation" panel that compared the sum of a transaction's lots against the transaction amount. That question — *has all of this purchase become inventory?* — now lives where it belongs, on the Expenses side in `TransactionInventorySection`, which sums `allocated_amount` per transaction. The lot panel answers the complementary question, *is this lot fully paid for?*, and neither double-counts a split lot.
+
+The full **Unlink transaction** button at the bottom only applies when there's exactly one source; with several, remove them individually.
+
+A blue notice appears when the lot's effective date disagrees with the transaction's, with a **Use tx date** action (`setLotPurchaseDate`). This is the cleanup path for lots linked before date-syncing existed — `AddLotModal` defaults new lots to *today*, so a lot entered now for an older purchase carries a date that misorders FIFO. Comparison is on the date part only, since `created_at` is a timestamp while `transactions.date` is `yyyy-MM-dd`.
 
 **Unlinked** — a merchant-searchable picker over `useLotLinkCandidates()`: money-out transactions that are either **uncategorized or already Cost of Goods**, newest first, capped at 500. Rows already categorized as something else are treated as settled and hidden. Each row shows its current category (or an italic `Uncategorized`). Candidates whose absolute amount equals the lot total within $0.01 get a green "match" pill and are **sorted to the top**; everything else keeps the query's date-desc order (the sort is stable). Both the pill and the sort read the same `isAmountMatch` helper so they can't drift apart.
 
-Linking offers two default-on checkboxes, both applied by `linkLotToPurchase()`: **categorize as Cost of Goods** (see below) and **set the lot's purchase date to the transaction's**. Linking does *not* touch `purchase_date` unless that second box is ticked — the lot and transaction dates are genuinely different events (order placed vs. charge posted), so the overwrite is offered rather than forced.
+Linking offers two default-on checkboxes, both applied by `linkLotToPurchase()`: **categorize as Cost of Goods** (see below) and **set the lot's purchase date to the transaction's**. Both are shown only for the *first* link — a second funding source shouldn't silently re-date a lot that's already anchored. Linking does *not* touch `purchase_date` unless that second box is ticked — the lot and transaction dates are genuinely different events (order placed vs. charge posted), so the overwrite is offered rather than forced.
 
 ### Why the picker isn't COGS-only
 
