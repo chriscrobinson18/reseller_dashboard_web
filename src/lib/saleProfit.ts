@@ -15,6 +15,22 @@ export interface SaleProfit {
  * to sale_price (refunded_amount is the full sale_price so the dashboard's
  * computeProfitability filter handles full returns separately).
  */
+/**
+ * The sale's *cost component* movements — inventory consumed by the sale that
+ * belongs to some other item than the one being sold (a remote included with a
+ * VHS to raise its value).
+ *
+ * There's no flag for this: a component simply is a movement whose lot's
+ * `item_id` differs from the sale's. Callers use it to label those rows, to
+ * count them on the list, and to block partial returns (which reverse LIFO by
+ * unit count and would restore the wrong item).
+ */
+export function costComponentMovements(sale: Sale) {
+  return (sale.inventory_movements ?? []).filter(
+    m => m.inventory_lots != null && m.inventory_lots.item_id !== sale.item_id,
+  )
+}
+
 export function saleProfit(sale: Sale): SaleProfit {
   const cogs = (sale.inventory_movements ?? []).reduce(
     (s, m) => s + m.quantity * (m.inventory_lots?.unit_cost ?? 0),

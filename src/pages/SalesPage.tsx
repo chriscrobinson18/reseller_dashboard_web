@@ -13,7 +13,7 @@ import BundleDetailSlideOver from '../components/BundleDetailSlideOver'
 import EditSaleModal from '../components/modals/EditSaleModal'
 import LinkSaleToItemModal from '../components/modals/LinkSaleToItemModal'
 import ProcessReturnModal from '../components/modals/ProcessReturnModal'
-import { saleProfit } from '../lib/saleProfit'
+import { saleProfit, costComponentMovements } from '../lib/saleProfit'
 import { paymentMethodLabel } from '../lib/paymentMethods'
 import type { Sale } from '../lib/types'
 import TradeDetailSlideOver from '../components/TradeDetailSlideOver'
@@ -27,7 +27,7 @@ async function fetchSales(start: string | null, end: string | null): Promise<{
     .select(`
       *,
       items(id, name, category),
-      inventory_movements(id, quantity, inventory_lots(unit_cost, item_id))
+      inventory_movements(id, quantity, inventory_lots(unit_cost, item_id, items(name)))
     `)
     .is('deleted_at', null)
     .order('sold_at', { ascending: false })
@@ -146,6 +146,7 @@ function SaleDetail({ sale, netPayoutBySale, onLinkItem, onEdit, onDelete, onPro
 }) {
   const { cogs, netRevenue, profit } = saleProfit(sale)
   const hasCogsData = (sale.inventory_movements?.length ?? 0) > 0
+  const componentMovementIds = new Set(costComponentMovements(sale).map(m => m.id))
   const canReturn = !sale.trade_id
   const netPayout = netPayoutFor(sale, netPayoutBySale)
 
@@ -285,23 +286,37 @@ function SaleDetail({ sale, netPayoutBySale, onLinkItem, onEdit, onDelete, onPro
             <table className="w-full text-xs">
               <thead className="bg-gray-50 border-b border-gray-200">
                 <tr>
+                  <th className="text-left px-3 py-2 text-gray-500 font-medium">Item</th>
                   <th className="text-left px-3 py-2 text-gray-500 font-medium">Qty Used</th>
                   <th className="text-right px-3 py-2 text-gray-500 font-medium">Unit Cost</th>
                   <th className="text-right px-3 py-2 text-gray-500 font-medium">COGS</th>
                 </tr>
               </thead>
               <tbody>
-                {(sale.inventory_movements ?? []).map(m => (
-                  <tr key={m.id} className="border-b border-gray-100 last:border-0">
-                    <td className="px-3 py-2 text-gray-700">{m.quantity}</td>
-                    <td className="px-3 py-2 text-gray-700 text-right tabular-nums">
-                      {m.inventory_lots ? formatUSD(m.inventory_lots.unit_cost) : '—'}
-                    </td>
-                    <td className="px-3 py-2 text-gray-900 font-medium text-right tabular-nums">
-                      {m.inventory_lots ? formatUSD(m.quantity * m.inventory_lots.unit_cost) : '—'}
-                    </td>
-                  </tr>
-                ))}
+                {(sale.inventory_movements ?? []).map(m => {
+                  // A movement against any other item is a cost component —
+                  // something included in the sale that had no price of its own.
+                  const isComponent = componentMovementIds.has(m.id)
+                  return (
+                    <tr key={m.id} className="border-b border-gray-100 last:border-0">
+                      <td className="px-3 py-2 text-gray-700">
+                        {m.inventory_lots?.items?.name ?? '—'}
+                        {isComponent && (
+                          <span className="ml-1.5 text-[10px] text-gray-500 bg-gray-100 rounded px-1 py-0.5 align-middle">
+                            included
+                          </span>
+                        )}
+                      </td>
+                      <td className="px-3 py-2 text-gray-700">{m.quantity}</td>
+                      <td className="px-3 py-2 text-gray-700 text-right tabular-nums">
+                        {m.inventory_lots ? formatUSD(m.inventory_lots.unit_cost) : '—'}
+                      </td>
+                      <td className="px-3 py-2 text-gray-900 font-medium text-right tabular-nums">
+                        {m.inventory_lots ? formatUSD(m.quantity * m.inventory_lots.unit_cost) : '—'}
+                      </td>
+                    </tr>
+                  )
+                })}
               </tbody>
             </table>
           </div>
@@ -457,7 +472,20 @@ export default function SalesPage() {
                     <td className="px-4 py-2.5">
                       {sale.items?.name ? (
                         <>
-                          <div className="font-medium text-gray-900 truncate max-w-xs">{sale.items.name}</div>
+                          <div className="font-medium text-gray-900 truncate max-w-xs">
+                            {sale.items.name}
+                            {/* The row names only the primary item; without this
+                                a sale whose cost spans several items looks like
+                                an ordinary one. */}
+                            {costComponentMovements(sale).length > 0 && (
+                              <span
+                                className="ml-1.5 text-[10px] font-medium text-gray-600 bg-gray-100 rounded px-1.5 py-0.5 align-middle whitespace-nowrap"
+                                title="This sale also used inventory from other items — see Inventory Used in the detail panel"
+                              >
+                                +{costComponentMovements(sale).length} included
+                              </span>
+                            )}
+                          </div>
                           {sale.items.category && (
                             <div className="text-xs text-gray-400">{sale.items.category}</div>
                           )}

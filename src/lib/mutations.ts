@@ -307,11 +307,52 @@ export interface RecordSaleResult {
 }
 
 /**
+ * An extra inventory item consumed by a sale that has no price of its own — a
+ * remote bought to sell alongside a VHS. Its lots are FIFO-depleted onto the
+ * same sale, so its cost lands in that sale's COGS.
+ *
+ * Distinct from a bundle line: a bundle line is a separately *priced* item in
+ * one order; a component adds cost to a single price.
+ */
+export interface SaleCostComponent {
+  itemId: string
+  itemName?: string | null
+  quantity: number
+}
+
+/**
+ * Attaches cost components to a sale that was just created, via the
+ * `add_sale_cost_components` RPC (FIFO-depletes each component item's lots and
+ * writes the inventory_movements rows in one locked transaction).
+ *
+ * Returns the total quantity that couldn't be sourced across all components.
+ * Oversell is non-fatal server-side, so callers fold this into their existing
+ * oversold reporting rather than treating it as an error.
+ */
+async function applySaleCostComponents(
+  saleId: string,
+  components: SaleCostComponent[] | undefined,
+): Promise<number> {
+  if (!components?.length) return 0
+
+  const { data, error } = await supabase.rpc('add_sale_cost_components', {
+    p_sale_id: saleId,
+    p_components: components.map(c => ({ item_id: c.itemId, quantity: c.quantity })),
+  })
+  if (error) throw error
+
+  const unfulfilled = (data?.unfulfilled ?? {}) as Record<string, number>
+  return Object.values(unfulfilled).reduce((s, n) => s + n, 0)
+}
+
+/**
  * Records a sale end-to-end (mirrors iOS recordSale):
  *  1. record_sale edge function — inserts the sale + FIFO-depletes inventory lots
  *     + creates inventory_movements audit rows.
- *  2. Writes fee/shipping/net_payout metadata onto the sale.
- *  3. Auto-creates payout / fee / shipping transaction rows linked via related_sale_id
+ *  2. add_sale_cost_components RPC — same FIFO depletion for any extra items
+ *     consumed by the sale (skipped entirely when there are none).
+ *  3. Writes fee/shipping/net_payout metadata onto the sale.
+ *  4. Auto-creates payout / fee / shipping transaction rows linked via related_sale_id
  *     so the sale flows into Schedule C without double-counting.
  */
 export async function recordSale(params: {
@@ -326,6 +367,12 @@ export async function recordSale(params: {
   shippingCost?: number | null
   /** How the buyer paid — see lib/paymentMethods.ts. */
   paymentMethod?: string | null
+  /**
+   * Extra items consumed by this sale, adding to its COGS only. They have no
+   * price and never touch fees/shipping/net_payout — a component costs money,
+   * it doesn't earn any.
+   */
+  components?: SaleCostComponent[]
 }): Promise<RecordSaleResult> {
   const soldAtIso = new Date(params.soldAt + 'T12:00:00').toISOString()
 
@@ -345,6 +392,11 @@ export async function recordSale(params: {
 
   const saleId: string = data.sale_id
   if (!saleId) throw new Error('record_sale returned no sale_id')
+
+  // Extra items whose cost belongs to this sale. Must run before the update
+  // below: the RPC may flag the sale `oversold`, and nothing in that patch
+  // touches inventory_status, so the flag survives.
+  const componentShortfall = await applySaleCostComponents(saleId, params.components)
 
   // Fields the record_sale edge function doesn't accept, written back onto the
   // row it just created. payment_method is always persisted; fee/shipping totals
@@ -372,10 +424,11 @@ export async function recordSale(params: {
     shippingCost: params.shippingCost ?? null,
   })
 
+  const unfulfilledQuantity = (data.unfulfilled_quantity ?? 0) + componentShortfall
   return {
     saleId,
-    inventoryStatus: data.inventory_status,
-    unfulfilledQuantity: data.unfulfilled_quantity ?? 0,
+    inventoryStatus: unfulfilledQuantity > 0 ? 'oversold' : data.inventory_status,
+    unfulfilledQuantity,
   }
 }
 
@@ -965,6 +1018,12 @@ export async function recordBundleSale(params: {
     quantity: number
     /** Line total (not per-unit) — matches recordSale's sale_price convention. */
     salePrice: number
+    /**
+     * Extra items consumed by THIS line, adding to its COGS only. Order-level
+     * fees/shipping and their proportional allocation are unaffected — a
+     * component changes what the line cost, never what the order earned.
+     */
+    components?: SaleCostComponent[]
   }>
 }): Promise<RecordBundleSaleResult> {
   if (params.items.length < 2) {
@@ -1009,7 +1068,10 @@ export async function recordBundleSale(params: {
     if (saleData?.error) throw new Error(saleData.error)
     const saleId: string = saleData.sale_id
     if (!saleId) throw new Error('record_sale returned no sale_id')
-    if ((saleData.unfulfilled_quantity ?? 0) > 0) oversoldItemIds.push(line.itemId)
+    const componentShortfall = await applySaleCostComponents(saleId, line.components)
+    if ((saleData.unfulfilled_quantity ?? 0) > 0 || componentShortfall > 0) {
+      oversoldItemIds.push(line.itemId)
+    }
 
     // bundle_id links this line to the order. fees/shipping/net_payout are
     // explicitly zeroed rather than left at record_sale's column default

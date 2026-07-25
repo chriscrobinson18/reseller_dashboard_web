@@ -13,6 +13,7 @@ The relational centerpiece of the app — every sale here can cascade into `tran
 
 ## Detail panel (`SaleDetail`, inside a `SlideOver`)
 
+- Inventory Used (FIFO) table: one row per `inventory_movements` entry, with an **Item** column so cost components are distinguishable — see [Cost components](#cost-components-multi-item-cogs).
 - Profit math goes through the shared `saleProfit(sale)` helper in [`src/lib/saleProfit.ts`](../../src/lib/saleProfit.ts) (extracted 2026-06-23): COGS from `inventory_movements` (FIFO), `netRevenue` (return-adjusted), `profit = netRevenue - cogs - fees - shipping`. Unit-tested in `src/lib/__tests__/saleProfit.test.ts` (no return / partial / full / oversold / missing fees).
 - "Link to inventory item" CTA shown when `!sale.item_id`.
 - Inventory Used (FIFO) table: one row per `inventory_movements` entry (qty, unit cost, line COGS). If empty and `inventory_status === 'oversold'`, shows "Sale was oversold."
@@ -57,6 +58,25 @@ Order-level fields (date, platform, payment method, order ID, **fees**, **shippi
 For *display and profit*, though, that order-level charge is allocated back across the lines **proportionally by line price** (a $100 line in a $200 order bears half the fee), into the client-only `allocated_fees`/`allocated_shipping` fields — see [data-flows.md](../data-flows.md#recording-a-bundle-sale-recordbundlesale-in-mutationsts). `saleProfit()` prefers those over the row's zeroed columns; without it every bundle line reports profit as though the order were free to sell. The Sales list's **Net** column uses the same allocation, since a bundle's transactions carry `related_bundle_id` and so are invisible to the `related_sale_id` net-payout lookup.
 
 **Display** (chosen over grouping rows): each line stays its own row so the list's existing sorting, filtering and search keep working untouched; bundle membership shows as a clickable blue **Bundle** pill next to the platform badge. The pill and a banner in the sale detail both open `BundleDetailSlideOver` — lines with per-item prices, Schedule C impact (payout/fees/shipping), and **Delete bundle**, which reverses every line's FIFO depletion via `reverse_sale`, removes the bundle transactions, and soft-deletes the bundle. Unlike a trade, an individual bundle line stays editable and returnable on its own, since it isn't a barter leg with an FMV constraint.
+
+## Cost components (multi-item COGS)
+
+A sale can draw its cost from **several different inventory items** while having a single price: a VHS sold for $40 with a remote, bought separately for $8, thrown in to raise its value. Both purchases are genuinely cost of goods for that one sale.
+
+Entered from the same `RecordSaleModal`: every item row has an **Add included item** link (hinted "cost only — adds to COGS, not to the price") which opens an indented sub-list of item + quantity pickers under that row. Available on ordinary sales **and** on individual bundle lines — a component belongs to a line, not to an order. Components never feed the sale price, the net-payout preview, fees, or shipping; they carry a per-component oversell warning identical to the line-level one.
+
+**Model — no schema change.** Each component's lots are FIFO-depleted onto the *same* sale, producing extra `inventory_movements` rows. Since COGS was already `sum(movement.quantity × lot.unit_cost)` over all of a sale's movements, and that table never referenced `sales.item_id`, `saleProfit()` needed no changes at all. `sales.item_id` remains the primary item; a movement whose `inventory_lots.item_id` differs from it **is** a component. See [data-flows.md](../data-flows.md#cost-components-multi-item-cogs) and the [`add_sale_cost_components` RPC](../supabase-schema.md#supabase-edge-functions).
+
+**Not a bundle.** A bundle splits one payout across several *separately priced* items; a component has no price and only adds cost to one. Recording the remote as a $0 bundle line would create a second zero-revenue `sales` row, polluting per-item reporting and the bundle's price-proportional fee allocation.
+
+**Display.** Two places, both driven by `costComponentMovements(sale)` in [`src/lib/saleProfit.ts`](../../src/lib/saleProfit.ts) (a movement whose lot's `item_id` ≠ the sale's):
+
+- The detail panel's "Inventory Used (FIFO)" table has an **Item** column, with a grey `included` pill on component rows — without it, two movements at different unit costs are indistinguishable.
+- The Sales **list row** appends a `+N included` pill after the item name. The row names only `sales.item_id`, so without it a sale whose cost spans several items is indistinguishable from an ordinary one.
+
+**Deleting works unmodified.** `reverse_sale` restores stock by joining movements → lots and never reads `item_id`, so deleting a component sale returns both items to inventory.
+
+**Limitation — partial returns are blocked.** `record_return` reverses movements LIFO by unit count with no notion of which item a unit belongs to, so returning 1 of 2 units on a component sale would restore the *remote's* stock rather than the VHS's. `ProcessReturnModal` detects components (any movement whose lot's `item_id` ≠ the sale's) and pins the quantity field to a full return with an explanatory note. Full returns reverse every movement and are correct. Logged in [TASKS.md](../../TASKS.md); the eventual fix is teaching `record_return` to reverse the primary item's movements on a partial and components only on a full.
 
 ## Trade-linked sales
 

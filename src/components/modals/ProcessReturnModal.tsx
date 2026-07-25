@@ -2,6 +2,7 @@ import { useState, type FormEvent } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import Modal, { Field, inputCls, ModalActions } from '../Modal'
 import { fetchActiveReturn, recordReturn, reverseReturn, type ActiveReturn } from '../../lib/mutations'
+import { costComponentMovements } from '../../lib/saleProfit'
 import type { Sale } from '../../lib/types'
 
 interface Props {
@@ -47,6 +48,14 @@ function ReturnForm({ sale, isEditing, activeReturn, onClose }: {
   // eligible again; processing a new return is capped by what's left.
   const maxQty = isEditing ? sale.quantity : sale.quantity - sale.refunded_quantity
 
+  // Cost components (extra items included in the sale — see saleProfit.ts) make
+  // partial returns unsafe: record_return reverses movements LIFO by unit
+  // count, so returning 1 of 2 units would restore the *component's* stock
+  // rather than the sold item's. A full return reverses every movement and is
+  // correct, so only the partial path is pinned shut.
+  const hasCostComponents = costComponentMovements(sale).length > 0
+  const forceFullReturn = hasCostComponents && maxQty > 1
+
   const [quantity, setQuantity] = useState(String(activeReturn?.quantity ?? maxQty))
   const [refundAmount, setRefundAmount] = useState(activeReturn ? String(activeReturn.refundAmount) : '')
   const [returnShippingCost, setReturnShippingCost] = useState(
@@ -62,7 +71,7 @@ function ReturnForm({ sale, isEditing, activeReturn, onClose }: {
       }
       return recordReturn({
         saleId: sale.id,
-        quantity: parseInt(quantity, 10),
+        quantity: forceFullReturn ? maxQty : parseInt(quantity, 10),
         refundAmount: parseFloat(refundAmount),
         returnShippingCost: returnShippingCost ? parseFloat(returnShippingCost) : null,
         reason: reason.trim() || null,
@@ -80,7 +89,7 @@ function ReturnForm({ sale, isEditing, activeReturn, onClose }: {
   function submit(e: FormEvent) {
     e.preventDefault()
     setError(null)
-    const q = parseInt(quantity, 10)
+    const q = forceFullReturn ? maxQty : parseInt(quantity, 10)
     const amt = parseFloat(refundAmount)
     if (!q || q <= 0 || q > maxQty) {
       setError(`Quantity must be between 1 and ${maxQty}`)
@@ -98,15 +107,27 @@ function ReturnForm({ sale, isEditing, activeReturn, onClose }: {
       <p className="text-xs text-gray-400 mb-3">
         Restores the returned quantity to its original inventory lot(s) and records Returns &amp; Allowances / return-shipping transactions.
       </p>
+      {forceFullReturn && (
+        <div className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2 mb-3">
+          This sale includes extra items counted toward its cost, so only a
+          <strong> full return</strong> can be processed — a partial one would
+          restore the wrong item to inventory. To change it, delete the sale and
+          re-record it.
+        </div>
+      )}
       <div className="grid grid-cols-2 gap-3">
-        <Field label="Quantity" hint={`${maxQty} available to return`}>
+        <Field
+          label="Quantity"
+          hint={forceFullReturn ? 'Full return only' : `${maxQty} available to return`}
+        >
           <input
             type="number"
             min="1"
             max={maxQty}
-            value={quantity}
+            value={forceFullReturn ? maxQty : quantity}
             onChange={e => setQuantity(e.target.value)}
-            className={inputCls}
+            disabled={forceFullReturn}
+            className={inputCls + (forceFullReturn ? ' bg-gray-50 text-gray-500' : '')}
           />
         </Field>
         <Field label="Refund Amount">
