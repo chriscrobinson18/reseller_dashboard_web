@@ -9,6 +9,8 @@ import PeriodPicker from '../components/PeriodPicker'
 import SlideOver from '../components/SlideOver'
 import ConfirmDialog from '../components/ConfirmDialog'
 import RecordSaleModal from '../components/modals/RecordSaleModal'
+import RecordBundleSaleModal from '../components/modals/RecordBundleSaleModal'
+import BundleDetailSlideOver from '../components/BundleDetailSlideOver'
 import EditSaleModal from '../components/modals/EditSaleModal'
 import LinkSaleToItemModal from '../components/modals/LinkSaleToItemModal'
 import ProcessReturnModal from '../components/modals/ProcessReturnModal'
@@ -101,7 +103,7 @@ function StatusBadge({ status, type }: { status: string; type: 'inventory' | 're
 
 // ─── Sale detail ──────────────────────────────────────────────────────────────
 
-function SaleDetail({ sale, netPayoutBySale, onLinkItem, onEdit, onDelete, onProcessReturn, onOpenTrade }: {
+function SaleDetail({ sale, netPayoutBySale, onLinkItem, onEdit, onDelete, onProcessReturn, onOpenTrade, onOpenBundle }: {
   sale: Sale
   netPayoutBySale: Record<string, number>
   onLinkItem: () => void
@@ -109,6 +111,7 @@ function SaleDetail({ sale, netPayoutBySale, onLinkItem, onEdit, onDelete, onPro
   onDelete: () => void
   onProcessReturn: () => void
   onOpenTrade: (id: string) => void
+  onOpenBundle: (id: string) => void
 }) {
   const { cogs, netRevenue, profit } = saleProfit(sale)
   const hasCogsData = (sale.inventory_movements?.length ?? 0) > 0
@@ -127,6 +130,22 @@ function SaleDetail({ sale, netPayoutBySale, onLinkItem, onEdit, onDelete, onPro
             className="ml-2 underline font-medium"
           >
             Open trade
+          </button>
+        </div>
+      )}
+
+      {/* Bundle banner — informational only; unlike trades, a bundle line's
+          price/return can still be edited independently since it isn't a
+          barter leg with an FMV constraint. */}
+      {sale.bundle_id && !sale.trade_id && (
+        <div className="mb-3 p-2.5 rounded-lg bg-blue-50 border border-blue-200 text-xs text-blue-800">
+          This item was sold as part of a bundle. Fees and shipping apply to the whole order.
+          <button
+            type="button"
+            onClick={() => { onOpenBundle(sale.bundle_id!) }}
+            className="ml-2 underline font-medium"
+          >
+            Open bundle
           </button>
         </div>
       )}
@@ -172,6 +191,9 @@ function SaleDetail({ sale, netPayoutBySale, onLinkItem, onEdit, onDelete, onPro
             <span className="text-xs px-2 py-0.5 rounded-full border border-gray-200 text-gray-600">
               {paymentMethodLabel(sale.payment_method)}
             </span>
+          )}
+          {sale.bundle_id && (
+            <span className="text-xs px-2 py-0.5 rounded-full bg-blue-100 text-blue-700">Bundle</span>
           )}
           <StatusBadge status={sale.inventory_status} type="inventory" />
           <StatusBadge status={sale.return_status} type="return" />
@@ -301,6 +323,8 @@ export default function SalesPage() {
   const [returnSale, setReturnSale] = useState<Sale | null>(null)
   const [deleteSaleTarget, setDeleteSaleTarget] = useState<Sale | null>(null)
   const [openTradeId, setOpenTradeId] = useState<string | null>(null)
+  const [openBundleId, setOpenBundleId] = useState<string | null>(null)
+  const [showRecordBundle, setShowRecordBundle] = useState(false)
   const qc = useQueryClient()
   const range = getPeriodRange(period)
 
@@ -369,6 +393,13 @@ export default function SalesPage() {
             >
               <Plus size={14} /> Record Sale
             </button>
+            <button
+              onClick={() => setShowRecordBundle(true)}
+              className="flex items-center gap-1.5 border border-gray-300 text-gray-700 px-3 py-1.5 rounded-lg text-sm font-medium hover:bg-gray-50 transition-colors"
+              title="One order, several different items, one payout"
+            >
+              <Plus size={14} /> Record Bundle Sale
+            </button>
           </div>
         </div>
 
@@ -428,6 +459,14 @@ export default function SalesPage() {
                       ) : (
                         <div className="flex items-center gap-1.5">
                           <PlatformBadge platform={sale.platform} />
+                          {sale.bundle_id && (
+                            <span
+                              className="inline-block px-1.5 py-0.5 text-[10px] font-medium bg-blue-100 text-blue-700 rounded cursor-pointer hover:bg-blue-200"
+                              onClick={(e) => { e.stopPropagation(); setOpenBundleId(sale.bundle_id!) }}
+                            >
+                              Bundle
+                            </span>
+                          )}
                           {paymentMethodLabel(sale.payment_method) && (
                             <span className="text-[10px] text-gray-500">
                               {paymentMethodLabel(sale.payment_method)}
@@ -472,11 +511,14 @@ export default function SalesPage() {
             onDelete={() => setDeleteSaleTarget(selected)}
             onProcessReturn={() => setReturnSale(selected)}
             onOpenTrade={(id) => { setSelected(null); setOpenTradeId(id) }}
+            onOpenBundle={(id) => { setSelected(null); setOpenBundleId(id) }}
           />
         )}
       </SlideOver>
 
       <RecordSaleModal open={showRecordSale} onClose={() => setShowRecordSale(false)} />
+      <RecordBundleSaleModal open={showRecordBundle} onClose={() => setShowRecordBundle(false)} />
+      <BundleDetailSlideOver bundleId={openBundleId} onClose={() => setOpenBundleId(null)} />
       {linkSale && (
         <LinkSaleToItemModal
           open={!!linkSale}

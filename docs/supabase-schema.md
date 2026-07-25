@@ -75,6 +75,24 @@ The relational centerpiece — one row per sale event, FIFO-depletes inventory v
 
 Joins used: `items(id, name, category)`, `inventory_movements(id, quantity, inventory_lots(unit_cost, item_id))`.
 
+### `sale_bundles`
+One sale event that disposes of several **different** items for one combined payout (multi-item marketplace order, or an in-person mixed lot). Added by the `sale_bundles` migration (2026-07-25).
+
+| column | notes |
+|---|---|
+| `id`, `user_id`, `created_at`, `deleted_at` | soft-deleted |
+| `sold_at` | `date` (not a timestamp, unlike `sales.sold_at`) |
+| `platform`, `payment_method`, `external_order_id`, `notes` | order-level metadata, copied down onto each line for search |
+| `fees`, `shipping_cost` | **order-level** — one number for the whole bundle, not per line |
+
+Link columns: `sales.bundle_id` and `transactions.related_bundle_id`, both nullable + `ON DELETE SET NULL` (same pattern as `trade_id`).
+
+**Why this shape.** `sales` holds a single `item_id`, and `record_sale` FIFO-depletes assuming one item per call. Restructuring `sales` into a header/line-item table would have touched FIFO depletion, `inventory_movements`, returns and `reverse_sale` — all of which already work for the single-item case. So this follows the `trades` precedent instead: each bundle item becomes an ordinary `sales` row (`source='manual'`, shared `bundle_id`) created through the untouched `record_sale` function, carrying its own user-entered price so per-item profit works unmodified.
+
+**The part that can't live on a line.** Fees/shipping/payout are one number per order, not N. `trades` solved the equivalent problem by hanging transaction links off the trade row; this does the same via `related_bundle_id`, so `recordBundleSale()` creates exactly **one** payout/fee/shipping transaction set regardless of line count. Composing this from `recordSale()` would have fired `createSaleTransactions()` per line and multiplied the real payout by the number of items — the failure mode this design exists to avoid.
+
+Bundle lines are stamped `fees=0`, `shipping_cost=null`, `net_payout=<line price>` explicitly (mirroring what `recordTrade` does for given-side sales), so the Sales list shows each line's own price and the true post-fee total lives only on the bundle.
+
 ### `items`
 | `id`, `user_id`, `name`, `category`, `created_at`, `deleted_at` | soft-deleted; `category` here is a free-text/product category, unrelated to `schedule_c_category` |
 

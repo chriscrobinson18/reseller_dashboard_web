@@ -15,6 +15,8 @@ export interface Transaction {
   notes?: string
   net_zero_pair_id?: string
   related_sale_id?: string
+  /** Set on the payout/fee/shipping transactions auto-created by a bundle sale — see SaleBundle. */
+  related_bundle_id?: string
   parent_settlement_id?: string
   csv_transaction_id?: string
   receipt_url?: string
@@ -58,6 +60,8 @@ export interface Sale {
   refunded_quantity: number
   refunded_amount?: number
   trade_id?: string
+  /** Set when this line is part of a multi-item bundle sale — see SaleBundle. */
+  bundle_id?: string
   sold_at: string
   created_at: string
   deleted_at?: string
@@ -68,6 +72,28 @@ export interface Sale {
     quantity: number
     inventory_lots: { unit_cost: number; item_id: string } | null
   }>
+}
+
+/**
+ * One sale event that disposes of several DIFFERENT inventory items for one
+ * combined payout. Each item becomes its own `sales` row (source='manual',
+ * `bundle_id` = this row's id) carrying its own user-entered price, so
+ * per-item profit works unmodified. fees/shipping/payment_method live here,
+ * not on the lines, because they're one number for the whole order — see the
+ * migration comment in sale_bundles.sql for why.
+ */
+export interface SaleBundle {
+  id: string
+  user_id: string
+  created_at: string
+  deleted_at?: string
+  sold_at: string // 'yyyy-MM-dd'
+  platform?: string | null
+  payment_method?: string | null
+  external_order_id?: string | null
+  fees: number
+  shipping_cost?: number | null
+  notes?: string | null
 }
 
 export interface Item {

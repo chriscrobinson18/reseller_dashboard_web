@@ -927,6 +927,179 @@ export async function deleteTrade(tradeId: string): Promise<void> {
   if (tradeDelErr) throw tradeDelErr
 }
 
+// ─── Bundle sales — one payout, several different items ───────────────────────
+
+export interface RecordBundleSaleResult {
+  bundleId: string
+  saleIds: string[]
+  /** item_ids that came back oversold — mirrors recordSale's non-fatal warning. */
+  oversoldItemIds: string[]
+}
+
+/**
+ * Records a multi-item bundle sale: one `sales` row per item (each FIFO-
+ * depleted via the ordinary record_sale edge function, source='manual'), all
+ * stamped with a shared `bundle_id`, plus exactly ONE payout/fee/shipping
+ * transaction set for the combined order total.
+ *
+ * Deliberately does NOT call recordSale()/createSaleTransactions() per line —
+ * that would create a payout/fee/shipping transaction for every item and
+ * multiply the real order total by the line count. See the migration comment
+ * in sale_bundles.sql for the full rationale.
+ *
+ * Oversold lines are non-fatal (matches recordSale's behavior): the sale still
+ * records, flagged `inventory_status: 'oversold'` by record_sale itself, and
+ * the caller decides how to warn.
+ */
+export async function recordBundleSale(params: {
+  soldAt: string // 'yyyy-MM-dd'
+  platform: string
+  paymentMethod?: string | null
+  externalOrderId?: string | null
+  fees?: number | null
+  shippingCost?: number | null
+  notes?: string | null
+  items: Array<{
+    itemId: string
+    itemName?: string | null
+    quantity: number
+    /** Line total (not per-unit) — matches recordSale's sale_price convention. */
+    salePrice: number
+  }>
+}): Promise<RecordBundleSaleResult> {
+  if (params.items.length < 2) {
+    throw new Error('A bundle needs at least 2 items — use Record Sale for a single item')
+  }
+
+  const user_id = await getUserId()
+  const soldAtIso = new Date(params.soldAt + 'T12:00:00').toISOString()
+
+  const { data: bundle, error: bundleErr } = await supabase
+    .from('sale_bundles')
+    .insert({
+      user_id,
+      sold_at: params.soldAt,
+      platform: params.platform,
+      payment_method: params.paymentMethod ?? null,
+      external_order_id: params.externalOrderId ?? null,
+      fees: params.fees ?? 0,
+      shipping_cost: params.shippingCost ?? null,
+      notes: params.notes ?? null,
+    })
+    .select()
+    .single()
+  if (bundleErr || !bundle) throw bundleErr ?? new Error('Failed to create bundle')
+  const bundleId: string = bundle.id
+
+  const saleIds: string[] = []
+  const oversoldItemIds: string[] = []
+  for (const line of params.items) {
+    const { data: saleData, error: saleErr } = await supabase.functions.invoke('record_sale', {
+      body: {
+        item_id: line.itemId,
+        quantity: line.quantity,
+        sale_price: String(line.salePrice),
+        platform: params.platform,
+        sold_at: soldAtIso,
+        source: 'manual',
+        external_order_id: params.externalOrderId ?? null,
+      },
+    })
+    if (saleErr) throw saleErr
+    if (saleData?.error) throw new Error(saleData.error)
+    const saleId: string = saleData.sale_id
+    if (!saleId) throw new Error('record_sale returned no sale_id')
+    if ((saleData.unfulfilled_quantity ?? 0) > 0) oversoldItemIds.push(line.itemId)
+
+    // bundle_id links this line to the order. fees/shipping/net_payout are
+    // explicitly zeroed rather than left at record_sale's column default
+    // (recordTrade does the same for its given-side sales) — there's no
+    // principled per-line split of an order-level fee, so the Sales list
+    // falls back to showing the line's own price as its net payout; the true
+    // post-fee total lives only on the bundle.
+    const { error: stampErr } = await supabase
+      .from('sales')
+      .update({
+        bundle_id: bundleId,
+        payment_method: params.paymentMethod ?? null,
+        external_order_id: params.externalOrderId ?? null,
+        fees: 0,
+        shipping_cost: null,
+        net_payout: line.salePrice,
+      })
+      .eq('id', saleId)
+    if (stampErr) throw stampErr
+
+    saleIds.push(saleId)
+  }
+
+  // One payout/fee/shipping transaction set for the whole order, tagged
+  // related_bundle_id since no single line owns them.
+  const totalPrice = params.items.reduce((s, l) => s + l.salePrice, 0)
+  const merchantNames = params.items.map(l => l.itemName).filter(Boolean).join(', ')
+  const merchant = merchantNames.length > 120 ? merchantNames.slice(0, 117) + '…' : (merchantNames || 'Bundle sale')
+  const platformLabel = params.platform.charAt(0).toUpperCase() + params.platform.slice(1)
+
+  const rows: Record<string, unknown>[] = [
+    {
+      user_id, date: params.soldAt, amount: totalPrice,
+      merchant, type: 'other', source: 'manual',
+      schedule_c_category: 'payout', related_bundle_id: bundleId,
+    },
+  ]
+  if (params.fees && params.fees > 0) {
+    rows.push({
+      user_id, date: params.soldAt, amount: -params.fees,
+      merchant: `${platformLabel} Fee`, type: 'fee', source: 'manual',
+      schedule_c_category: 'commissions_fees', related_bundle_id: bundleId,
+    })
+  }
+  if (params.shippingCost && params.shippingCost > 0) {
+    rows.push({
+      user_id, date: params.soldAt, amount: -params.shippingCost,
+      merchant: 'Shipping', type: 'shipping', source: 'manual',
+      schedule_c_category: 'shipping_postage', related_bundle_id: bundleId,
+    })
+  }
+  const { error: txErr } = await supabase.from('transactions').insert(rows)
+  if (txErr) throw txErr
+
+  return { bundleId, saleIds, oversoldItemIds }
+}
+
+/**
+ * Reverses every line's FIFO depletion (via reverse_sale, which also
+ * soft-deletes each line and cleans up any per-line transactions), then
+ * removes the bundle's own payout/fee/shipping transactions and soft-deletes
+ * the bundle row.
+ *
+ * Simpler than deleteTrade: a bundle sale only depletes inventory, it never
+ * creates lots, so there's no downstream-depletion check to run first.
+ */
+export async function deleteBundleSale(bundleId: string): Promise<void> {
+  const { data: lines, error: linesErr } = await supabase
+    .from('sales')
+    .select('id')
+    .eq('bundle_id', bundleId)
+    .is('deleted_at', null)
+  if (linesErr) throw linesErr
+
+  for (const line of lines ?? []) {
+    const { data, error } = await supabase.functions.invoke('reverse_sale', { body: { sale_id: line.id } })
+    if (error) throw error
+    if (data?.error) throw new Error(data.error)
+  }
+
+  const { error: txErr } = await supabase.from('transactions').delete().eq('related_bundle_id', bundleId)
+  if (txErr) throw txErr
+
+  const { error: bundleDelErr } = await supabase
+    .from('sale_bundles')
+    .update({ deleted_at: new Date().toISOString() })
+    .eq('id', bundleId)
+  if (bundleDelErr) throw bundleDelErr
+}
+
 export { todayStr }
 
 // ─── Custom categories ────────────────────────────────────────────────────────

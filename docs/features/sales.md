@@ -42,6 +42,18 @@ Selectable in both `RecordSaleModal` and `EditSaleModal` (optional; the hint cha
 
 `record_sale` doesn't accept the field, so `recordSale()` writes it back onto the row right after creation — the same pattern already used for fees/shipping.
 
+## Bundle sales (multi-item orders)
+
+A **Record Bundle Sale** button beside Record Sale opens `RecordBundleSaleModal` for one order containing several *different* items sold for one combined payout — a multi-item eBay order, or an in-person mixed lot.
+
+Order-level fields (date, platform, payment method, order ID, **fees**, **shipping**, notes) sit at the top; repeating item lines below take item + quantity + **price per line**, with a running total and a live net-payout readout. Minimum two lines — the delete buttons disable at two with a tooltip saying so, since a one-item bundle is just a sale. Per-line oversell warnings appear inline, and oversold lines are non-fatal (matching `RecordSaleModal`).
+
+**Model.** Each line becomes an ordinary `sales` row via the untouched `record_sale` edge function, sharing a `bundle_id`. FIFO depletion, `inventory_movements`, returns and `reverse_sale` all work unchanged, and per-item profit works unmodified because each line carries its own price — `saleProfit.ts` needed no changes. See [supabase-schema.md](../supabase-schema.md#sale_bundles) for why this follows the `trades` precedent instead of restructuring `sales` into line items.
+
+**Fees and shipping apply once, to the whole order.** They're written as a single payout/fee/shipping transaction set tagged `related_bundle_id`, never per line. Lines are stamped `fees=0`/`net_payout=<line price>`, so the Sales list shows each line's own price while the true post-fee total lives on the bundle. There's deliberately no per-line fee split — any allocation would be arbitrary.
+
+**Display** (chosen over grouping rows): each line stays its own row so the list's existing sorting, filtering and search keep working untouched; bundle membership shows as a clickable blue **Bundle** pill next to the platform badge. The pill and a banner in the sale detail both open `BundleDetailSlideOver` — lines with per-item prices, Schedule C impact (payout/fees/shipping), and **Delete bundle**, which reverses every line's FIFO depletion via `reverse_sale`, removes the bundle transactions, and soft-deletes the bundle. Unlike a trade, an individual bundle line stays editable and returnable on its own, since it isn't a barter leg with an FMV constraint.
+
 ## Trade-linked sales
 
 Sales created as the given side of a barter trade (`source = 'trade'`, `trade_id` set) display a purple **"Trade"** pill in the platform/source column instead of the usual platform badge. Clicking the pill opens `TradeDetailSlideOver` (`src/components/TradeDetailSlideOver.tsx`) for the parent trade.

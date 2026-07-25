@@ -1,6 +1,6 @@
 import { useQuery } from '@tanstack/react-query'
 import { supabase } from './supabase'
-import type { Item, InventoryLot, Trade, PlaidItem, PlaidAccount, Transaction } from './types'
+import type { Item, InventoryLot, Trade, SaleBundle, PlaidItem, PlaidAccount, Transaction } from './types'
 import type { CustomCategory } from './categories'
 import { customCategoryValue } from './categories'
 import type { ColorKey } from './categoryPalette'
@@ -150,6 +150,47 @@ export function useTrade(id: string | null) {
         incomeTransaction: txs.find(t => t.id === typedTrade.income_transaction_id) ?? null,
         cogsTransaction: txs.find(t => t.id === typedTrade.cogs_transaction_id) ?? null,
         cashTransaction: txs.find(t => t.id === typedTrade.cash_transaction_id) ?? null,
+      }
+    },
+  })
+}
+
+/** Fetches a bundle sale with its line items and the bundle-level transactions. Used by BundleDetailSlideOver. */
+export function useBundle(id: string | null) {
+  return useQuery({
+    queryKey: ['bundle', id],
+    enabled: !!id,
+    queryFn: async (): Promise<{
+      bundle: SaleBundle
+      lines: Array<{ id: string; quantity: number; sale_price: number; inventory_status: string; items: { id: string; name: string } | null }>
+      transactions: Array<{ id: string; amount: number; schedule_c_category: string | null }>
+    }> => {
+      const { data: bundle, error } = await supabase
+        .from('sale_bundles')
+        .select('*')
+        .eq('id', id!)
+        .is('deleted_at', null)
+        .single()
+      if (error || !bundle) throw error ?? new Error('Bundle not found')
+
+      const [linesRes, txRes] = await Promise.all([
+        supabase
+          .from('sales')
+          .select('id, quantity, sale_price, inventory_status, items(id, name)')
+          .eq('bundle_id', id!)
+          .is('deleted_at', null),
+        supabase
+          .from('transactions')
+          .select('id, amount, schedule_c_category')
+          .eq('related_bundle_id', id!),
+      ])
+      if (linesRes.error) throw linesRes.error
+      if (txRes.error) throw txRes.error
+
+      return {
+        bundle: bundle as SaleBundle,
+        lines: (linesRes.data ?? []) as unknown as Array<{ id: string; quantity: number; sale_price: number; inventory_status: string; items: { id: string; name: string } | null }>,
+        transactions: txRes.data ?? [],
       }
     },
   })
