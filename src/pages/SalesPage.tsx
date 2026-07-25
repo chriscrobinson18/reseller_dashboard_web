@@ -9,7 +9,6 @@ import PeriodPicker from '../components/PeriodPicker'
 import SlideOver from '../components/SlideOver'
 import ConfirmDialog from '../components/ConfirmDialog'
 import RecordSaleModal from '../components/modals/RecordSaleModal'
-import RecordBundleSaleModal from '../components/modals/RecordBundleSaleModal'
 import BundleDetailSlideOver from '../components/BundleDetailSlideOver'
 import EditSaleModal from '../components/modals/EditSaleModal'
 import LinkSaleToItemModal from '../components/modals/LinkSaleToItemModal'
@@ -324,7 +323,6 @@ export default function SalesPage() {
   const [deleteSaleTarget, setDeleteSaleTarget] = useState<Sale | null>(null)
   const [openTradeId, setOpenTradeId] = useState<string | null>(null)
   const [openBundleId, setOpenBundleId] = useState<string | null>(null)
-  const [showRecordBundle, setShowRecordBundle] = useState(false)
   const qc = useQueryClient()
   const range = getPeriodRange(period)
 
@@ -392,13 +390,6 @@ export default function SalesPage() {
               className="flex items-center gap-1.5 bg-gray-900 text-white px-3 py-1.5 rounded-lg text-sm font-medium hover:bg-gray-700 transition-colors"
             >
               <Plus size={14} /> Record Sale
-            </button>
-            <button
-              onClick={() => setShowRecordBundle(true)}
-              className="flex items-center gap-1.5 border border-gray-300 text-gray-700 px-3 py-1.5 rounded-lg text-sm font-medium hover:bg-gray-50 transition-colors"
-              title="One order, several different items, one payout"
-            >
-              <Plus size={14} /> Record Bundle Sale
             </button>
           </div>
         </div>
@@ -517,7 +508,6 @@ export default function SalesPage() {
       </SlideOver>
 
       <RecordSaleModal open={showRecordSale} onClose={() => setShowRecordSale(false)} />
-      <RecordBundleSaleModal open={showRecordBundle} onClose={() => setShowRecordBundle(false)} />
       <BundleDetailSlideOver bundleId={openBundleId} onClose={() => setOpenBundleId(null)} />
       {linkSale && (
         <LinkSaleToItemModal

@@ -44,9 +44,11 @@ Selectable in both `RecordSaleModal` and `EditSaleModal` (optional; the hint cha
 
 ## Bundle sales (multi-item orders)
 
-A **Record Bundle Sale** button beside Record Sale opens `RecordBundleSaleModal` for one order containing several *different* items sold for one combined payout — a multi-item eBay order, or an in-person mixed lot.
+There's one entry point, `RecordSaleModal` — no separate "bundle" button. It opens in ordinary single-item mode; clicking **Add another item** (labeled "makes this a bundle sale" the first time) appends a second item row and the form relabels itself in place: heading becomes "Items (N)" with a running total, "Platform Fees" becomes "Order Fees", hints switch to "applies once, to the whole order", and the submit button switches from **Record Sale** to **Record Bundle Sale**. Removing rows back down to one reverts every label. `isBundle = lines.length > 1` is the only branch — same component, same state, two submit paths (`recordSale` vs `recordBundleSale` in `mutations.ts`).
 
-Order-level fields (date, platform, payment method, order ID, **fees**, **shipping**, notes) sit at the top; repeating item lines below take item + quantity + **price per line**, with a running total and a live net-payout readout. Minimum two lines — the delete buttons disable at two with a tooltip saying so, since a one-item bundle is just a sale. Per-line oversell warnings appear inline, and oversold lines are non-fatal (matching `RecordSaleModal`).
+This shape was chosen over a separate modal deliberately: a bundle is discovered mid-entry ("oh, this order actually had two items"), not decided up front, so the natural action is adding a row to the sale you're already filling out rather than abandoning it for a different form.
+
+Order-level fields (date, platform, payment method, order ID, **fees**, **shipping**) sit above the item list and apply once regardless of line count. In bundle mode a **Notes** field also appears (bundle-only — a single sale has nowhere to show notes today). Per-line oversell warnings appear inline, and oversold lines are non-fatal in both modes (`recordSale`'s existing behavior; `recordBundleSale` mirrors it).
 
 **Model.** Each line becomes an ordinary `sales` row via the untouched `record_sale` edge function, sharing a `bundle_id`. FIFO depletion, `inventory_movements`, returns and `reverse_sale` all work unchanged, and per-item profit works unmodified because each line carries its own price — `saleProfit.ts` needed no changes. See [supabase-schema.md](../supabase-schema.md#sale_bundles) for why this follows the `trades` precedent instead of restructuring `sales` into line items.
 
