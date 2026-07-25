@@ -4,7 +4,8 @@ import { Link2Off, Search, Check, Plus, X } from 'lucide-react'
 import SlideOver from './SlideOver'
 import CategoryBadge from './CategoryBadge'
 import { inputCls } from './Modal'
-import { useTransactionsByIds, useLotLinkCandidates } from '../lib/queries'
+import { useTransactionsByIds, useLotLinkCandidates, useCustomCategories } from '../lib/queries'
+import { parseSearchTerms, matchesSearch } from '../lib/transactionSearch'
 import {
   linkLotToPurchase,
   unlinkLotFromTransaction,
@@ -37,6 +38,7 @@ export default function LotTransactionSlideOver({ lot, itemName, onClose }: Prop
   const isLinked = links.length > 0
   const picking = !isLinked || addingSource
 
+  const { data: customs = [] } = useCustomCategories()
   const { data: linkedTxs = [] } = useTransactionsByIds(links.map(l => l.transaction_id))
   const { data: candidates = [], isLoading: candLoading } = useLotLinkCandidates(!!lot && picking)
 
@@ -70,7 +72,10 @@ export default function LotTransactionSlideOver({ lot, itemName, onClose }: Prop
       ),
       purchaseDate: syncDate && links.length === 0 ? candidate.date : null,
     }),
-    onSuccess: () => { invalidate(); setAddingSource(false); setSearch(''); setError(null) },
+    // Close on link, same as before multi-source funding existed. Adding a
+    // second source is the rare case and stays one deliberate reopen away,
+    // rather than making every ordinary link wait on a panel you must dismiss.
+    onSuccess: () => { invalidate(); reset(); onClose() },
     onError: (e: Error) => setError(e.message),
   })
 
@@ -102,15 +107,14 @@ export default function LotTransactionSlideOver({ lot, itemName, onClose }: Prop
     [unfunded, lotTotal],
   )
 
-  const linkedIds = new Set(links.map(l => l.transaction_id))
   const filtered = useMemo(() => {
-    const q = search.toLowerCase()
+    const linkedIds = new Set(links.map(l => l.transaction_id))
+    const terms = parseSearchTerms(search)
     const rows = candidates
       .filter(t => !linkedIds.has(t.id))
-      .filter(t => !search || (t.merchant ?? '').toLowerCase().includes(q))
+      .filter(t => matchesSearch(t, terms, customs))
     return [...rows].sort((a, b) => Number(isAmountMatch(b.amount)) - Number(isAmountMatch(a.amount)))
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [candidates, search, isAmountMatch, links])
+  }, [candidates, search, isAmountMatch, links, customs])
 
   return (
     <SlideOver
@@ -312,7 +316,7 @@ export default function LotTransactionSlideOver({ lot, itemName, onClose }: Prop
                   autoFocus
                   value={search}
                   onChange={e => setSearch(e.target.value)}
-                  placeholder="Search by merchant…"
+                  placeholder="Search amount, merchant, date…"
                   className={inputCls + ' pl-8'}
                 />
               </div>
