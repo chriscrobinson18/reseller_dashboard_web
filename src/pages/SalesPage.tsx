@@ -148,6 +148,11 @@ function SaleDetail({ sale, netPayoutBySale, onLinkItem, onEdit, onDelete, onPro
   const hasCogsData = (sale.inventory_movements?.length ?? 0) > 0
   const canReturn = !sale.trade_id
   const netPayout = netPayoutFor(sale, netPayoutBySale)
+  // Bundle lines are stamped fees=0/shipping=null (the real charge sits once on
+  // the bundle) — same allocated-share fallback saleProfit() uses internally,
+  // so the displayed breakdown actually matches the Net Profit total below it.
+  const displayFees = sale.allocated_fees ?? sale.fees ?? 0
+  const displayShipping = sale.allocated_shipping ?? sale.shipping_cost ?? null
 
   return (
     <div className="space-y-4">
@@ -246,8 +251,8 @@ function SaleDetail({ sale, netPayoutBySale, onLinkItem, onEdit, onDelete, onPro
         {[
           { label: 'Date', value: formatDate(sale.sold_at) },
           { label: 'Quantity', value: String(sale.quantity) },
-          { label: 'Platform Fees', value: formatUSD(sale.fees ?? 0) },
-          { label: 'Shipping', value: sale.shipping_cost != null ? formatUSD(sale.shipping_cost) : '—' },
+          { label: 'Platform Fees', value: formatUSD(displayFees) },
+          { label: 'Shipping', value: displayShipping != null ? formatUSD(displayShipping) : '—' },
           { label: 'Net Payout', value: formatUSD(netPayout), negative: netPayout < 0 },
           { label: 'Order ID', value: sale.external_order_id || '—' },
         ].map(({ label, value, negative }) => (
@@ -315,8 +320,8 @@ function SaleDetail({ sale, netPayoutBySale, onLinkItem, onEdit, onDelete, onPro
           {[
             { label: 'Revenue', value: netRevenue },
             { label: 'COGS', value: -cogs },
-            { label: 'Fees', value: -(sale.fees ?? 0) },
-            { label: 'Shipping', value: -(sale.shipping_cost ?? 0) },
+            { label: 'Fees', value: -displayFees },
+            { label: 'Shipping', value: -(displayShipping ?? 0) },
           ].map(({ label, value }) => (
             <div key={label} className="flex justify-between py-0.5 text-xs">
               <span className="text-gray-600">{label}</span>
