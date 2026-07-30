@@ -14,7 +14,7 @@ import EditSaleModal from '../components/modals/EditSaleModal'
 import LinkSaleToItemModal from '../components/modals/LinkSaleToItemModal'
 import ProcessReturnModal from '../components/modals/ProcessReturnModal'
 import { saleProfit } from '../lib/saleProfit'
-import { paymentMethodLabel } from '../lib/paymentMethods'
+import { paymentMethodLabel, paymentSplitsSummary } from '../lib/paymentMethods'
 import type { Sale } from '../lib/types'
 import TradeDetailSlideOver from '../components/TradeDetailSlideOver'
 
@@ -27,7 +27,8 @@ async function fetchSales(start: string | null, end: string | null): Promise<{
     .select(`
       *,
       items(id, name, category),
-      inventory_movements(id, quantity, inventory_lots(unit_cost, item_id))
+      inventory_movements(id, quantity, inventory_lots(unit_cost, item_id)),
+      payment_methods:sale_payment_methods(id, payment_method, amount)
     `)
     .is('deleted_at', null)
     .order('sold_at', { ascending: false })
@@ -63,7 +64,7 @@ async function fetchSales(start: string | null, end: string | null): Promise<{
   if (bundleIds.length > 0) {
     const { data: bundles, error: bErr } = await supabase
       .from('sale_bundles')
-      .select('id, fees, shipping_cost')
+      .select('id, fees, shipping_cost, payment_methods:sale_payment_methods(id, payment_method, amount)')
       .in('id', bundleIds)
     if (bErr) throw bErr
 
@@ -80,6 +81,9 @@ async function fetchSales(start: string | null, end: string | null): Promise<{
       const share = gross > 0 ? s.sale_price / gross : 0
       s.allocated_fees = (Number(b.fees) || 0) * share
       s.allocated_shipping = (Number(b.shipping_cost) || 0) * share
+      // Order-level splits live on the bundle, not the line — mirror them onto
+      // each line for display, same as the legacy payment_method scalar.
+      if (b.payment_methods?.length) s.payment_methods = b.payment_methods
       // Same reason the Net column can't use netPayoutBySale here: a bundle's
       // transactions carry related_bundle_id, so the related_sale_id lookup
       // above finds nothing and would silently fall back to the gross price.
@@ -111,6 +115,17 @@ function PlatformBadge({ platform }: { platform?: string | null }) {
       {platform}
     </span>
   )
+}
+
+/** Split-tender receipts show one "Cash + PayPal" label with a per-rail amount tooltip; a single rail falls back to the plain label. */
+function PaymentMethodLabel({ sale }: { sale: Sale }) {
+  const splits = sale.payment_methods
+  if (splits && splits.length >= 2) {
+    const title = splits.map(s => `${paymentMethodLabel(s.payment_method) ?? s.payment_method}: ${formatUSD(s.amount)}`).join(', ')
+    return <span title={title}>{paymentSplitsSummary(splits)}</span>
+  }
+  const label = paymentMethodLabel(sale.payment_method)
+  return label ? <>{label}</> : null
 }
 
 function StatusBadge({ status, type }: { status: string; type: 'inventory' | 'return' }) {
@@ -223,9 +238,9 @@ function SaleDetail({ sale, netPayoutBySale, onLinkItem, onEdit, onDelete, onPro
         </div>
         <div className="flex items-center gap-2 mt-1.5 flex-wrap">
           <PlatformBadge platform={sale.platform} />
-          {paymentMethodLabel(sale.payment_method) && (
+          {(paymentMethodLabel(sale.payment_method) || (sale.payment_methods?.length ?? 0) >= 2) && (
             <span className="text-xs px-2 py-0.5 rounded-full border border-gray-200 text-gray-600">
-              {paymentMethodLabel(sale.payment_method)}
+              <PaymentMethodLabel sale={sale} />
             </span>
           )}
           {sale.bundle_id && (
@@ -386,7 +401,8 @@ export default function SalesPage() {
       (s.external_order_id ?? '').toLowerCase().includes(q) ||
       (s.platform ?? '').toLowerCase().includes(q) ||
       (s.payment_method ?? '').toLowerCase().includes(q) ||
-      (paymentMethodLabel(s.payment_method) ?? '').toLowerCase().includes(q)
+      (paymentMethodLabel(s.payment_method) ?? '').toLowerCase().includes(q) ||
+      (s.payment_methods ?? []).some(p => (paymentMethodLabel(p.payment_method) ?? p.payment_method).toLowerCase().includes(q))
     )
   }, [sales, search])
 
@@ -495,9 +511,9 @@ export default function SalesPage() {
                               Bundle
                             </span>
                           )}
-                          {paymentMethodLabel(sale.payment_method) && (
+                          {(paymentMethodLabel(sale.payment_method) || (sale.payment_methods?.length ?? 0) >= 2) && (
                             <span className="text-[10px] text-gray-500">
-                              {paymentMethodLabel(sale.payment_method)}
+                              <PaymentMethodLabel sale={sale} />
                             </span>
                           )}
                         </div>

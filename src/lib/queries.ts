@@ -174,7 +174,7 @@ export function useBundle(id: string | null) {
     }> => {
       const { data: bundle, error } = await supabase
         .from('sale_bundles')
-        .select('*')
+        .select('*, payment_methods:sale_payment_methods(id, payment_method, amount)')
         .eq('id', id!)
         .is('deleted_at', null)
         .single()

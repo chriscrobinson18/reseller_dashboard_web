@@ -4,7 +4,8 @@ import Modal, { Field, inputCls, ModalActions } from '../Modal'
 import { updateBundleSale } from '../../lib/mutations'
 import { useBundle } from '../../lib/queries'
 import { formatUSD } from '../../lib/utils'
-import { PAYMENT_METHODS } from '../../lib/paymentMethods'
+import { paymentSplitRowsFromSale, resolvePaymentSplits, type PaymentSplitRow } from '../../lib/paymentMethods'
+import PaymentSplitsField from '../PaymentSplitsField'
 
 const PLATFORMS = ['ebay', 'amazon', 'tcgplayer', 'mercari', 'stockx', 'goat', 'whatnot', 'manual']
 
@@ -48,7 +49,7 @@ function EditBundleForm({ bundleId, data, onClose, qc }: {
   const { bundle, lines } = data
   const [soldAt, setSoldAt] = useState(bundle.sold_at.slice(0, 10))
   const [platform, setPlatform] = useState(bundle.platform ?? 'ebay')
-  const [paymentMethod, setPaymentMethod] = useState(bundle.payment_method ?? '')
+  const [paymentRows, setPaymentRows] = useState<PaymentSplitRow[]>(() => paymentSplitRowsFromSale(bundle.payment_method, bundle.payment_methods))
   const [orderId, setOrderId] = useState(bundle.external_order_id ?? '')
   const [fees, setFees] = useState(bundle.fees ? String(bundle.fees) : '')
   const [shipping, setShipping] = useState(bundle.shipping_cost != null ? String(bundle.shipping_cost) : '')
@@ -63,6 +64,7 @@ function EditBundleForm({ bundleId, data, onClose, qc }: {
 
   const total = useMemo(() => lineStates.reduce((s, l) => s + safeNum(l.salePrice), 0), [lineStates])
   const netPayout = total - safeNum(fees) - safeNum(shipping)
+  const { paymentMethod, paymentMethods } = useMemo(() => resolvePaymentSplits(paymentRows), [paymentRows])
 
   const validationError = useMemo(() => {
     for (const l of lineStates) {
@@ -70,15 +72,22 @@ function EditBundleForm({ bundleId, data, onClose, qc }: {
       if (safeNum(l.salePrice) < 0) return 'Enter a valid sale price for every line'
     }
     if (total <= 0) return 'Enter at least one sale price'
+    if (paymentMethods) {
+      if (paymentMethods.some(p => p.amount <= 0)) return 'Enter an amount for every payment method'
+      if (Math.abs(paymentMethods.reduce((s, p) => s + p.amount, 0) - total) >= 0.005) {
+        return 'Payment method amounts must add up to the order total'
+      }
+    }
     return null
-  }, [lineStates, total])
+  }, [lineStates, total, paymentMethods])
 
   const mutation = useMutation({
     mutationFn: () => updateBundleSale({
       bundleId,
       soldAt,
       platform,
-      paymentMethod: paymentMethod || null,
+      paymentMethod,
+      paymentMethods,
       externalOrderId: orderId.trim() || null,
       fees: fees ? parseFloat(fees) : null,
       shippingCost: shipping ? parseFloat(shipping) : null,
@@ -138,12 +147,7 @@ function EditBundleForm({ bundleId, data, onClose, qc }: {
             {PLATFORMS.map(p => <option key={p} value={p} className="capitalize">{p}</option>)}
           </select>
         </Field>
-        <Field label="Payment Method" hint={platform === 'manual' ? 'How you were paid' : 'Optional'}>
-          <select value={paymentMethod} onChange={e => setPaymentMethod(e.target.value)} className={inputCls + ' bg-white'}>
-            <option value="">—</option>
-            {PAYMENT_METHODS.map(m => <option key={m.value} value={m.value}>{m.label}</option>)}
-          </select>
-        </Field>
+        <PaymentSplitsField platform={platform} total={total} rows={paymentRows} onChange={setPaymentRows} />
         <Field label="Sale Date">
           <input type="date" value={soldAt} onChange={e => setSoldAt(e.target.value)} className={inputCls} />
         </Field>

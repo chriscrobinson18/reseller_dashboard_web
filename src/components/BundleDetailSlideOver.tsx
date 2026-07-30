@@ -7,7 +7,7 @@ import EditBundleModal from './modals/EditBundleModal'
 import { useBundle } from '../lib/queries'
 import { deleteBundleSale } from '../lib/mutations'
 import { formatUSD, formatDate } from '../lib/utils'
-import { paymentMethodLabel } from '../lib/paymentMethods'
+import { paymentMethodLabel, paymentSplitsSummary } from '../lib/paymentMethods'
 
 interface Props {
   bundleId: string | null
@@ -60,7 +60,14 @@ export default function BundleDetailSlideOver({ bundleId, onClose }: Props) {
                       {bundle.platform}
                     </span>
                   )}
-                  {paymentMethodLabel(bundle.payment_method) && (
+                  {bundle.payment_methods && bundle.payment_methods.length >= 2 ? (
+                    <span
+                      className="px-1.5 py-0.5 rounded text-[10px] font-medium border border-gray-200 text-gray-600"
+                      title={bundle.payment_methods.map(s => `${paymentMethodLabel(s.payment_method) ?? s.payment_method}: ${formatUSD(s.amount)}`).join(', ')}
+                    >
+                      {paymentSplitsSummary(bundle.payment_methods)}
+                    </span>
+                  ) : paymentMethodLabel(bundle.payment_method) && (
                     <span className="px-1.5 py-0.5 rounded text-[10px] font-medium border border-gray-200 text-gray-600">
                       {paymentMethodLabel(bundle.payment_method)}
                     </span>

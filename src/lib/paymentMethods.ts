@@ -36,3 +36,60 @@ export function isUnreportedRail(value: string | null | undefined): boolean {
   const def = PAYMENT_METHODS.find(m => m.value === value)
   return def ? !def.reports1099k : false
 }
+
+/** One rail + amount entered in a split-payment form (RecordSale/EditSale/EditBundle). */
+export interface PaymentSplitInput {
+  method: string
+  amount: number
+}
+
+/**
+ * Human-readable summary of a split-tender receipt, e.g. "Cash + PayPal".
+ * Null for zero or one rail — those render with the ordinary single-pill badge.
+ */
+export function paymentSplitsSummary(splits: Array<{ payment_method: string }> | null | undefined): string | null {
+  if (!splits || splits.length < 2) return null
+  return splits.map(s => paymentMethodLabel(s.payment_method) ?? s.payment_method).join(' + ')
+}
+
+/** One editable row in a payment-split form. `amount` stays a string while being typed, like every other numeric form field in this app. */
+export interface PaymentSplitRow {
+  method: string
+  amount: string
+}
+
+export const emptyPaymentSplitRow = (): PaymentSplitRow => ({ method: '', amount: '' })
+
+/** Seeds a split-editor's rows from a sale/bundle's persisted payment method(s). */
+export function paymentSplitRowsFromSale(
+  paymentMethod: string | null | undefined,
+  splits: Array<{ payment_method: string; amount: number }> | null | undefined
+): PaymentSplitRow[] {
+  if (splits && splits.length >= 2) return splits.map(s => ({ method: s.payment_method, amount: String(s.amount) }))
+  return [{ method: paymentMethod ?? '', amount: '' }]
+}
+
+/**
+ * Converts a split editor's rows into mutation params. One filled row
+ * collapses to the legacy `paymentMethod` scalar (no amount tracking, same
+ * as before this feature existed); two or more becomes a `paymentMethods`
+ * split, each with its own amount.
+ */
+export function resolvePaymentSplits(rows: PaymentSplitRow[]): {
+  paymentMethod: string | null
+  paymentMethods: PaymentSplitInput[] | null
+} {
+  const filled = rows.filter(r => r.method)
+  if (filled.length <= 1) {
+    return { paymentMethod: filled[0]?.method || null, paymentMethods: null }
+  }
+  return {
+    paymentMethod: null,
+    paymentMethods: filled.map(r => ({ method: r.method, amount: parseFloat(r.amount) || 0 })),
+  }
+}
+
+/** Dollar amount not yet assigned to a rail — only meaningful once a sale has 2+ split rows. */
+export function paymentSplitsRemaining(rows: PaymentSplitRow[], total: number): number {
+  return total - rows.reduce((s, r) => s + (parseFloat(r.amount) || 0), 0)
+}

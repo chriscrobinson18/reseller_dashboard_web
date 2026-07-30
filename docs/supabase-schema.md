@@ -69,11 +69,11 @@ The relational centerpiece — one row per sale event, FIFO-depletes inventory v
 | `inventory_status` | `'ok' \| 'oversold' \| 'reconciled'` — set by `record_sale` edge function based on FIFO depletion result |
 | `return_status` | `'none' \| 'partial' \| 'full'` |
 | `refunded_quantity`, `refunded_amount` | populated by the `record_return` edge function (v21), driven from the web `ProcessReturnModal` (shipped 2026-07-10); decremented by `reverse_return` on return-edit |
-| `payment_method` | nullable text — how the buyer paid (`cash`, `venmo`, `cashapp`, `paypal`, `apple_pay`, `zelle`, `card`, `other`). **Orthogonal to `platform`**, which is *where* the sale happened: an eBay sale and a face-to-face sale can both settle over PayPal, and an in-person sale has no marketplace at all. Deliberately unconstrained — payment rails change faster than migrations, so the known list lives in `src/lib/paymentMethods.ts`. Null on sales predating the column. |
+| `payment_method` | nullable text — how the buyer paid (`cash`, `venmo`, `cashapp`, `paypal`, `apple_pay`, `zelle`, `card`, `other`). **Orthogonal to `platform`**, which is *where* the sale happened: an eBay sale and a face-to-face sale can both settle over PayPal, and an in-person sale has no marketplace at all. Deliberately unconstrained — payment rails change faster than migrations, so the known list lives in `src/lib/paymentMethods.ts`. Null on sales predating the column, and on sales split across 2+ rails — see `sale_payment_methods` below. |
 | `sold_at` | full ISO timestamp (not just a date) |
 | `trade_id` | nullable FK to `trades`; set on the sale(s) for items given up in a trade. `ON DELETE SET NULL`. |
 
-Joins used: `items(id, name, category)`, `inventory_movements(id, quantity, inventory_lots(unit_cost, item_id))`.
+Joins used: `items(id, name, category)`, `inventory_movements(id, quantity, inventory_lots(unit_cost, item_id))`, `payment_methods:sale_payment_methods(id, payment_method, amount)`.
 
 ### `sale_bundles`
 One sale event that disposes of several **different** items for one combined payout (multi-item marketplace order, or an in-person mixed lot). Added by the `sale_bundles` migration (2026-07-25).
@@ -82,7 +82,7 @@ One sale event that disposes of several **different** items for one combined pay
 |---|---|
 | `id`, `user_id`, `created_at`, `deleted_at` | soft-deleted |
 | `sold_at` | `date` (not a timestamp, unlike `sales.sold_at`) |
-| `platform`, `payment_method`, `external_order_id`, `notes` | order-level metadata, copied down onto each line for search |
+| `platform`, `payment_method`, `external_order_id`, `notes` | order-level metadata, copied down onto each line for search. `payment_method` is null when split across 2+ rails — see `sale_payment_methods` below. |
 | `fees`, `shipping_cost` | **order-level** — one number for the whole bundle, not per line |
 
 Link columns: `sales.bundle_id` and `transactions.related_bundle_id`, both nullable + `ON DELETE SET NULL` (same pattern as `trade_id`).
@@ -92,6 +92,24 @@ Link columns: `sales.bundle_id` and `transactions.related_bundle_id`, both nulla
 **The part that can't live on a line.** Fees/shipping/payout are one number per order, not N. `trades` solved the equivalent problem by hanging transaction links off the trade row; this does the same via `related_bundle_id`, so `recordBundleSale()` creates exactly **one** payout/fee/shipping transaction set regardless of line count. Composing this from `recordSale()` would have fired `createSaleTransactions()` per line and multiplied the real payout by the number of items — the failure mode this design exists to avoid.
 
 Bundle lines are stamped `fees=0`, `shipping_cost=null`, `net_payout=<line price>` explicitly (mirroring what `recordTrade` does for given-side sales), so the Sales list shows each line's own price and the true post-fee total lives only on the bundle.
+
+### `sale_payment_methods`
+Split-tender receipt rows: a sale (or bundle order) paid across more than one rail, e.g. $300 cash + $100 PayPal for one sale. Added by the `sale_payment_methods` migration (2026-07-30).
+
+| column | notes |
+|---|---|
+| `id`, `user_id`, `created_at` | |
+| `sale_id` | FK to `sales`, `ON DELETE CASCADE`, nullable |
+| `bundle_id` | FK to `sale_bundles`, `ON DELETE CASCADE`, nullable |
+| | exactly one of `sale_id` / `bundle_id` is set — `check ((sale_id is not null) <> (bundle_id is not null))` |
+| `payment_method` | not null, same known-list convention as `sales.payment_method` |
+| `amount` | unsigned, `check (amount > 0)`; per-sale (or per-bundle) sum should equal the sale/order total |
+
+Bundle splits are order-level only (mirroring `payment_method`/fees/shipping already being order-level for bundles) — never one row per bundle line.
+
+`sales.payment_method` / `sale_bundles.payment_method` mirrors the single rail here when there's exactly one row, and is `null` when there are two or more — same denormalization rationale as `inventory_lots.transaction_id` mirroring `inventory_lot_transactions` (kept for the sibling iOS app, which has no concept of a split). Unlike that table, the mirror here is maintained client-side in `mutations.ts` rather than by a DB trigger: every write to `sale_payment_methods` goes through a full delete-then-insert inside `recordSale`/`updateSale`/`recordBundleSale`/`updateBundleSale`, never an incremental add/remove from multiple UI entry points, so there's no read-then-write race to guard against.
+
+The "add another payment method" UI only appears for manual sales (`platform === 'manual'`) — see [features/sales.md](features/sales.md#split-tender-payments-multiple-payment-methods-per-sale) — but the table and mutations place no such restriction; a non-manual sale could get a split written by any future caller.
 
 ### `items`
 | `id`, `user_id`, `name`, `category`, `created_at`, `deleted_at` | soft-deleted; `category` here is a free-text/product category, unrelated to `schedule_c_category` |

@@ -4,6 +4,7 @@ import { ADJUSTMENT_LABELS } from './lotAdjustments'
 import type { Item, InventoryLot, LotAdjustmentType } from './types'
 import { CATEGORIES } from './categories'
 import { isColorKey, type ColorKey } from './categoryPalette'
+import type { PaymentSplitInput } from './paymentMethods'
 
 // ─────────────────────────────────────────────────────────────────────────────
 // All write/relational operations, mirroring iOS SupabaseClient.swift.
@@ -501,8 +502,14 @@ export async function recordSale(params: {
   externalOrderId?: string | null
   fees?: number | null
   shippingCost?: number | null
-  /** How the buyer paid — see lib/paymentMethods.ts. */
+  /** How the buyer paid — see lib/paymentMethods.ts. Ignored when `paymentMethods` is given. */
   paymentMethod?: string | null
+  /**
+   * Split-tender receipt: two or more rails covering one sale (e.g. $300 cash +
+   * $100 PayPal). Takes precedence over `paymentMethod` when non-empty. Each
+   * amount should sum to `salePrice` — enforced by the recording UI, not here.
+   */
+  paymentMethods?: PaymentSplitInput[] | null
 }): Promise<RecordSaleResult> {
   const soldAtIso = new Date(params.soldAt + 'T12:00:00').toISOString()
 
@@ -523,12 +530,17 @@ export async function recordSale(params: {
   const saleId: string = data.sale_id
   if (!saleId) throw new Error('record_sale returned no sale_id')
 
+  const splits = params.paymentMethods && params.paymentMethods.length > 0 ? params.paymentMethods : null
+  const primaryPaymentMethod = splits
+    ? (splits.length === 1 ? splits[0].method : null)
+    : (params.paymentMethod || null)
+
   // Fields the record_sale edge function doesn't accept, written back onto the
   // row it just created. payment_method is always persisted; fee/shipping totals
   // (which drive the Profitability card) only when actually supplied, so a blank
   // fee field can't overwrite something the function already set.
   const patch: Record<string, unknown> = {
-    payment_method: params.paymentMethod || null,
+    payment_method: primaryPaymentMethod,
   }
   if (params.fees != null || params.shippingCost != null) {
     patch.external_order_id = params.externalOrderId ?? null
@@ -537,6 +549,14 @@ export async function recordSale(params: {
     patch.net_payout = params.salePrice - (params.fees ?? 0) - (params.shippingCost ?? 0)
   }
   await supabase.from('sales').update(patch).eq('id', saleId)
+
+  if (splits) {
+    const user_id = await getUserId()
+    const { error: spmErr } = await supabase.from('sale_payment_methods').insert(
+      splits.map(s => ({ user_id, sale_id: saleId, payment_method: s.method, amount: s.amount }))
+    )
+    if (spmErr) throw spmErr
+  }
 
   // Create linked transaction rows (payout + fees + shipping).
   await createSaleTransactions({
@@ -616,9 +636,23 @@ export async function updateSale(params: {
   externalOrderId: string | null
   fees: number | null
   shippingCost: number | null
+  /** Ignored when `paymentMethods` is given (non-empty). */
   paymentMethod?: string | null
+  /**
+   * Split-tender receipt. When provided (even as an empty array, meaning "no
+   * splits"), fully replaces whatever rows already exist in
+   * sale_payment_methods for this sale. Omit to leave existing splits alone
+   * and edit only the legacy `paymentMethod` scalar.
+   */
+  paymentMethods?: PaymentSplitInput[] | null
 }) {
   const netPayout = params.salePrice - (params.fees ?? 0) - (params.shippingCost ?? 0)
+  const usingSplits = params.paymentMethods != null
+  const splits = usingSplits && params.paymentMethods!.length > 0 ? params.paymentMethods! : null
+  const primaryPaymentMethod = usingSplits
+    ? (splits && splits.length === 1 ? splits[0].method : null)
+    : (params.paymentMethod || null)
+
   const { error } = await supabase
     .from('sales')
     .update({
@@ -630,10 +664,22 @@ export async function updateSale(params: {
       fees: params.fees ?? 0,
       shipping_cost: params.shippingCost ?? null,
       net_payout: netPayout,
-      payment_method: params.paymentMethod || null,
+      payment_method: primaryPaymentMethod,
     })
     .eq('id', params.id)
   if (error) throw error
+
+  if (usingSplits) {
+    const { error: delErr } = await supabase.from('sale_payment_methods').delete().eq('sale_id', params.id)
+    if (delErr) throw delErr
+    if (splits) {
+      const user_id = await getUserId()
+      const { error: spmErr } = await supabase.from('sale_payment_methods').insert(
+        splits.map(s => ({ user_id, sale_id: params.id, payment_method: s.method, amount: s.amount }))
+      )
+      if (spmErr) throw spmErr
+    }
+  }
 
   // For manual sales, keep linked transaction rows in sync.
   if (params.source !== 'manual') return
@@ -1131,7 +1177,10 @@ export interface RecordBundleSaleResult {
 export async function recordBundleSale(params: {
   soldAt: string // 'yyyy-MM-dd'
   platform: string
+  /** Ignored when `paymentMethods` is given (non-empty). */
   paymentMethod?: string | null
+  /** Split-tender receipt for the whole order — see recordSale's paymentMethods. */
+  paymentMethods?: PaymentSplitInput[] | null
   externalOrderId?: string | null
   fees?: number | null
   shippingCost?: number | null
@@ -1151,13 +1200,18 @@ export async function recordBundleSale(params: {
   const user_id = await getUserId()
   const soldAtIso = new Date(params.soldAt + 'T12:00:00').toISOString()
 
+  const splits = params.paymentMethods && params.paymentMethods.length > 0 ? params.paymentMethods : null
+  const primaryPaymentMethod = splits
+    ? (splits.length === 1 ? splits[0].method : null)
+    : (params.paymentMethod ?? null)
+
   const { data: bundle, error: bundleErr } = await supabase
     .from('sale_bundles')
     .insert({
       user_id,
       sold_at: params.soldAt,
       platform: params.platform,
-      payment_method: params.paymentMethod ?? null,
+      payment_method: primaryPaymentMethod,
       external_order_id: params.externalOrderId ?? null,
       fees: params.fees ?? 0,
       shipping_cost: params.shippingCost ?? null,
@@ -1167,6 +1221,13 @@ export async function recordBundleSale(params: {
     .single()
   if (bundleErr || !bundle) throw bundleErr ?? new Error('Failed to create bundle')
   const bundleId: string = bundle.id
+
+  if (splits) {
+    const { error: spmErr } = await supabase.from('sale_payment_methods').insert(
+      splits.map(s => ({ user_id, bundle_id: bundleId, payment_method: s.method, amount: s.amount }))
+    )
+    if (spmErr) throw spmErr
+  }
 
   const saleIds: string[] = []
   const oversoldItemIds: string[] = []
@@ -1198,7 +1259,7 @@ export async function recordBundleSale(params: {
       .from('sales')
       .update({
         bundle_id: bundleId,
-        payment_method: params.paymentMethod ?? null,
+        payment_method: primaryPaymentMethod,
         external_order_id: params.externalOrderId ?? null,
         fees: 0,
         shipping_cost: null,
@@ -1294,7 +1355,15 @@ export async function updateBundleSale(params: {
   bundleId: string
   soldAt: string // 'yyyy-MM-dd'
   platform: string
+  /** Ignored when `paymentMethods` is given (non-empty). */
   paymentMethod: string | null
+  /**
+   * Split-tender receipt. When provided (even as an empty array, meaning "no
+   * splits"), fully replaces whatever rows already exist in
+   * sale_payment_methods for this bundle. Omit to leave existing splits alone
+   * and edit only the legacy `paymentMethod` scalar.
+   */
+  paymentMethods?: PaymentSplitInput[] | null
   externalOrderId: string | null
   fees: number | null
   shippingCost: number | null
@@ -1302,13 +1371,18 @@ export async function updateBundleSale(params: {
   lines: Array<{ id: string; quantity: number; salePrice: number }>
 }): Promise<void> {
   const soldAtIso = new Date(params.soldAt + 'T12:00:00').toISOString()
+  const usingSplits = params.paymentMethods != null
+  const splits = usingSplits && params.paymentMethods!.length > 0 ? params.paymentMethods! : null
+  const primaryPaymentMethod = usingSplits
+    ? (splits && splits.length === 1 ? splits[0].method : null)
+    : params.paymentMethod
 
   const { error: bundleErr } = await supabase
     .from('sale_bundles')
     .update({
       sold_at: params.soldAt,
       platform: params.platform,
-      payment_method: params.paymentMethod,
+      payment_method: primaryPaymentMethod,
       external_order_id: params.externalOrderId,
       fees: params.fees ?? 0,
       shipping_cost: params.shippingCost,
@@ -1316,6 +1390,18 @@ export async function updateBundleSale(params: {
     })
     .eq('id', params.bundleId)
   if (bundleErr) throw bundleErr
+
+  if (usingSplits) {
+    const { error: delErr } = await supabase.from('sale_payment_methods').delete().eq('bundle_id', params.bundleId)
+    if (delErr) throw delErr
+    if (splits) {
+      const user_id = await getUserId()
+      const { error: spmErr } = await supabase.from('sale_payment_methods').insert(
+        splits.map(s => ({ user_id, bundle_id: params.bundleId, payment_method: s.method, amount: s.amount }))
+      )
+      if (spmErr) throw spmErr
+    }
+  }
 
   // Re-stamp every line's own copy of the order-level fields (recordBundleSale
   // stamps these at creation; they drive that line's badges in the Sales
@@ -1329,7 +1415,7 @@ export async function updateBundleSale(params: {
         sale_price: line.salePrice,
         sold_at: soldAtIso,
         platform: params.platform,
-        payment_method: params.paymentMethod,
+        payment_method: primaryPaymentMethod,
         external_order_id: params.externalOrderId,
         net_payout: line.salePrice,
       })

@@ -6,7 +6,8 @@ import ItemPicker from '../ItemPicker'
 import { recordSale, recordBundleSale, todayStr } from '../../lib/mutations'
 import { itemUnitsInStock, type ItemWithLots } from '../../lib/queries'
 import { formatUSD } from '../../lib/utils'
-import { PAYMENT_METHODS } from '../../lib/paymentMethods'
+import { emptyPaymentSplitRow, resolvePaymentSplits, type PaymentSplitRow } from '../../lib/paymentMethods'
+import PaymentSplitsField from '../PaymentSplitsField'
 
 const PLATFORMS = ['ebay', 'amazon', 'tcgplayer', 'mercari', 'stockx', 'goat', 'whatnot', 'manual']
 
@@ -34,7 +35,7 @@ export default function RecordSaleModal({ open, onClose }: { open: boolean; onCl
   const qc = useQueryClient()
   const [lines, setLines] = useState<Line[]>([emptyLine()])
   const [platform, setPlatform] = useState('ebay')
-  const [paymentMethod, setPaymentMethod] = useState('')
+  const [paymentRows, setPaymentRows] = useState<PaymentSplitRow[]>([emptyPaymentSplitRow()])
   const [soldAt, setSoldAt] = useState(todayStr())
   const [fees, setFees] = useState('')
   const [shipping, setShipping] = useState('')
@@ -47,6 +48,8 @@ export default function RecordSaleModal({ open, onClose }: { open: boolean; onCl
   const total = useMemo(() => lines.reduce((s, l) => s + l.salePrice, 0), [lines])
   const netPayout = total - (parseFloat(fees) || 0) - (parseFloat(shipping) || 0)
 
+  const { paymentMethod, paymentMethods } = useMemo(() => resolvePaymentSplits(paymentRows), [paymentRows])
+
   const validationError = useMemo(() => {
     for (const l of lines) {
       if (!l.item) return 'Select an inventory item'
@@ -54,8 +57,14 @@ export default function RecordSaleModal({ open, onClose }: { open: boolean; onCl
       if (l.salePrice < 0) return 'Enter a valid sale price'
     }
     if (total <= 0) return 'Enter a sale price'
+    if (paymentMethods) {
+      if (paymentMethods.some(p => p.amount <= 0)) return 'Enter an amount for every payment method'
+      if (Math.abs(paymentMethods.reduce((s, p) => s + p.amount, 0) - total) >= 0.005) {
+        return 'Payment method amounts must add up to the total'
+      }
+    }
     return null
-  }, [lines, total])
+  }, [lines, total, paymentMethods])
 
   const mutation = useMutation({
     mutationFn: async () => {
@@ -63,7 +72,8 @@ export default function RecordSaleModal({ open, onClose }: { open: boolean; onCl
         const r = await recordBundleSale({
           soldAt,
           platform,
-          paymentMethod: paymentMethod || null,
+          paymentMethod,
+          paymentMethods,
           externalOrderId: orderId.trim() || null,
           fees: fees ? parseFloat(fees) : null,
           shippingCost: shipping ? parseFloat(shipping) : null,
@@ -88,7 +98,8 @@ export default function RecordSaleModal({ open, onClose }: { open: boolean; onCl
         externalOrderId: orderId.trim() || null,
         fees: fees ? parseFloat(fees) : null,
         shippingCost: shipping ? parseFloat(shipping) : null,
-        paymentMethod: paymentMethod || null,
+        paymentMethod,
+        paymentMethods,
       })
       return { oversoldCount: r.inventoryStatus === 'oversold' ? 1 : 0 }
     },
@@ -109,7 +120,7 @@ export default function RecordSaleModal({ open, onClose }: { open: boolean; onCl
   })
 
   function reset() {
-    setLines([emptyLine()]); setPlatform('ebay'); setPaymentMethod('')
+    setLines([emptyLine()]); setPlatform('ebay'); setPaymentRows([emptyPaymentSplitRow()])
     setSoldAt(todayStr()); setFees(''); setShipping(''); setOrderId(''); setNotes('')
     setPickerOpenIdx(0); setError(null)
     mutation.reset()
@@ -211,12 +222,7 @@ export default function RecordSaleModal({ open, onClose }: { open: boolean; onCl
               {PLATFORMS.map(p => <option key={p} value={p} className="capitalize">{p}</option>)}
             </select>
           </Field>
-          <Field label="Payment Method" hint={platform === 'manual' ? 'How you were paid' : 'Optional'}>
-            <select value={paymentMethod} onChange={e => setPaymentMethod(e.target.value)} className={inputCls + ' bg-white'}>
-              <option value="">—</option>
-              {PAYMENT_METHODS.map(m => <option key={m.value} value={m.value}>{m.label}</option>)}
-            </select>
-          </Field>
+          <PaymentSplitsField platform={platform} total={total} rows={paymentRows} onChange={setPaymentRows} />
           <Field label="Sale Date">
             <input type="date" value={soldAt} onChange={e => setSoldAt(e.target.value)} className={inputCls} />
           </Field>

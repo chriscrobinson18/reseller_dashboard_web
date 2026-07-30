@@ -38,9 +38,19 @@ The known list lives in [`src/lib/paymentMethods.ts`](../../src/lib/paymentMetho
 
 Each entry carries a `reports1099k` flag. Venmo, Cash App, PayPal and Card issue a 1099-K for goods-and-services volume; **cash, Zelle and Apple Pay don't** (Zelle is exempt as a bank-to-bank network). The flag exists so a future reconciliation view can explain why recorded sales exceed 1099-K totals instead of treating the gap as an error. `isUnreportedRail()` is the helper — nothing consumes it yet.
 
-Selectable in both `RecordSaleModal` and `EditSaleModal` (optional; the hint changes to "How you were paid" when platform is `manual`), shown as a pill on the list and detail panel, and searchable by both stored value and display label.
+Selectable in `RecordSaleModal`, `EditSaleModal`, and `EditBundleModal` (optional; the hint changes to "How you were paid" when platform is `manual`), shown as a pill on the list and detail panel, and searchable by both stored value and display label.
 
 `record_sale` doesn't accept the field, so `recordSale()` writes it back onto the row right after creation — the same pattern already used for fees/shipping.
+
+### Split-tender payments (multiple payment methods per sale)
+
+A single sale can be paid across more than one rail — e.g. $300 cash + $100 PayPal for one $400 sale — via the `sale_payment_methods` table (see [supabase-schema.md](../supabase-schema.md#sale_payment_methods)), one row per rail with its own `amount`. Attaches to a `sale_id` or a `bundle_id` (bundle splits are order-level, same as bundle fees/shipping — never per line).
+
+`payment_method` stays populated as a mirror of the single rail when there's exactly one, and goes `null` when the payment is split across two or more — same reasoning as `inventory_lots.transaction_id` mirroring `inventory_lot_transactions`, kept for the sibling iOS app's benefit, which has no concept of a split.
+
+**UI is manual-sale-only, capability is not.** `PaymentSplitsField` (`src/components/PaymentSplitsField.tsx`) shows a plain single select for every platform except `manual`; picking `manual` reveals a "Split payment" link that turns the one row into two-or-more method+amount rows, with a running "Remaining: $X" hint and a submit-blocking check that the amounts add up to the sale (or order) total. The `paymentMethods` param on `recordSale`/`updateSale`/`recordBundleSale`/`updateBundleSale` (`mutations.ts`) works for any platform — nothing marketplace-specific blocks it — the UI restriction is a product choice (a marketplace payout is always one payment from the platform), not a data-model one.
+
+Display: two-or-more rails render as `paymentSplitsSummary()` ("Cash + PayPal") with a title tooltip listing per-rail amounts, everywhere the single pill used to render (Sales list row, sale detail panel, `BundleDetailSlideOver`).
 
 ## Bundle sales (multi-item orders)
 

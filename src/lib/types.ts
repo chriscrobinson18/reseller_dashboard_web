@@ -41,6 +41,17 @@ export interface Transaction {
   trade_id?: string
 }
 
+/**
+ * One rail contributing to a split-tender receipt (e.g. $300 cash + $100
+ * PayPal for one sale) — see lib/paymentMethods.ts and the
+ * sale_payment_methods migration. Attaches to a sale OR a bundle, never both.
+ */
+export interface SalePaymentMethod {
+  id: string
+  payment_method: string
+  amount: number
+}
+
 export interface Sale {
   id: string
   user_id: string
@@ -53,8 +64,14 @@ export interface Sale {
   shipping_cost?: number
   net_payout?: number
   external_order_id?: string
-  /** How the buyer paid — see lib/paymentMethods.ts. Orthogonal to `platform`. */
+  /**
+   * How the buyer paid — see lib/paymentMethods.ts. Orthogonal to `platform`.
+   * Mirrors the single rail in `payment_methods` when there's exactly one;
+   * null when the payment is split across two or more (see `payment_methods`).
+   */
   payment_method?: string | null
+  /** Split-tender breakdown, when this sale was paid with more than one rail. */
+  payment_methods?: SalePaymentMethod[]
   /**
    * Client-side only, never persisted. A bundle line's share of its bundle's
    * order-level fees/shipping, allocated proportionally by line price.
@@ -101,6 +118,8 @@ export interface SaleBundle {
   sold_at: string // 'yyyy-MM-dd'
   platform?: string | null
   payment_method?: string | null
+  /** Split-tender breakdown, when this bundle order was paid with more than one rail. */
+  payment_methods?: SalePaymentMethod[]
   external_order_id?: string | null
   fees: number
   shipping_cost?: number | null
