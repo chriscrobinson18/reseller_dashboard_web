@@ -1337,30 +1337,58 @@ export async function updateBundleSale(params: {
     if (error) throw error
   }
 
-  // Sync the bundle's own linked transactions — existing rows only, same as
-  // updateSale's transaction sync.
+  // Sync the bundle's own linked transactions. Unlike updateSale (which only
+  // ever updates rows that already exist), a bundle's fee/shipping row is
+  // often ADDED for the first time on an edit — the bundle may have been
+  // recorded with no fee at all, so there's nothing yet to update. Without
+  // creating one, BundleDetailSlideOver's Schedule C card (which reads actual
+  // transactions, not sale_bundles.fees/shipping_cost) would silently show
+  // nothing even though the bundle row and every line's allocated share
+  // already reflect the new amount.
   const { data: linked, error: fetchErr } = await supabase
     .from('transactions')
-    .select('id, schedule_c_category')
+    .select('id, schedule_c_category, amount')
     .eq('related_bundle_id', params.bundleId)
     .eq('source', 'manual')
   if (fetchErr) throw fetchErr
 
+  const user_id = await getUserId()
   const totalPrice = params.lines.reduce((s, l) => s + l.salePrice, 0)
-  for (const tx of linked ?? []) {
-    let newAmount: number | null
-    switch (tx.schedule_c_category) {
-      case 'payout': newAmount = totalPrice; break
-      case 'commissions_fees': newAmount = params.fees != null ? -params.fees : null; break
-      case 'shipping_postage': newAmount = params.shippingCost != null ? -params.shippingCost : null; break
-      default: continue
-    }
-    if (newAmount == null) continue
-    await supabase
-      .from('transactions')
-      .update({ amount: newAmount, date: params.soldAt })
-      .eq('id', tx.id)
+  const platformLabel = params.platform.charAt(0).toUpperCase() + params.platform.slice(1)
+  const byCategory = new Map((linked ?? []).map(tx => [tx.schedule_c_category, tx]))
+
+  const payoutTx = byCategory.get('payout')
+  if (payoutTx) {
+    await supabase.from('transactions').update({ amount: totalPrice, date: params.soldAt }).eq('id', payoutTx.id)
   }
+
+  async function syncCostRow(
+    category: 'commissions_fees' | 'shipping_postage',
+    value: number | null,
+    merchant: string,
+    type: string,
+  ) {
+    const existing = byCategory.get(category)
+    if (value && value > 0) {
+      if (existing) {
+        await supabase.from('transactions').update({ amount: -value, date: params.soldAt }).eq('id', existing.id)
+      } else {
+        const { error } = await supabase.from('transactions').insert({
+          user_id, date: params.soldAt, amount: -value,
+          merchant, type, source: 'manual',
+          schedule_c_category: category, related_bundle_id: params.bundleId,
+        })
+        if (error) throw error
+      }
+    } else if (existing) {
+      // Edited down to zero/cleared — a $0 deduction isn't a real transaction.
+      const { error } = await supabase.from('transactions').delete().eq('id', existing.id)
+      if (error) throw error
+    }
+  }
+
+  await syncCostRow('commissions_fees', params.fees, `${platformLabel} Fee`, 'fee')
+  await syncCostRow('shipping_postage', params.shippingCost, 'Shipping', 'shipping')
 }
 
 export { todayStr }
