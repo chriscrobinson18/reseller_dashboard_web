@@ -16,6 +16,7 @@ interface Props {
 
 export default function EditSaleModal({ open, onClose, sale }: Props) {
   const qc = useQueryClient()
+  const isBundleLine = !!sale.bundle_id
   const [platform, setPlatform] = useState(sale.platform ?? 'ebay')
   const [quantity, setQuantity] = useState(String(sale.quantity))
   const [salePrice, setSalePrice] = useState(String(sale.sale_price))
@@ -62,47 +63,63 @@ export default function EditSaleModal({ open, onClose, sale }: Props) {
   return (
     <Modal open={open} onClose={onClose} title="Edit Sale" width="max-w-lg">
       <form onSubmit={submit}>
-        {sale.source === 'manual' && (
+        {isBundleLine ? (
+          <p className="text-xs text-gray-400 mb-3">
+            Part of a bundle — date, platform, fees and shipping are edited from the bundle (Open bundle, above).
+          </p>
+        ) : sale.source === 'manual' && (
           <p className="text-xs text-gray-400 mb-3">
             Linked payout / fee / shipping transactions will be updated to match.
           </p>
         )}
         <div className="grid grid-cols-2 gap-3">
-          <Field label="Platform">
-            <select value={platform} onChange={e => setPlatform(e.target.value)} className={inputCls + ' capitalize bg-white'}>
-              {PLATFORMS.map(p => <option key={p} value={p} className="capitalize">{p}</option>)}
-            </select>
-          </Field>
-          <Field label="Payment Method" hint={platform === 'manual' ? 'How you were paid' : 'Optional'}>
-            <select value={paymentMethod} onChange={e => setPaymentMethod(e.target.value)} className={inputCls + ' bg-white'}>
-              <option value="">—</option>
-              {PAYMENT_METHODS.map(m => <option key={m.value} value={m.value}>{m.label}</option>)}
-            </select>
-          </Field>
-          <Field label="Sale Date">
-            <input type="date" value={soldAt} onChange={e => setSoldAt(e.target.value)} className={inputCls} />
-          </Field>
+          {!isBundleLine && (
+            <>
+              <Field label="Platform">
+                <select value={platform} onChange={e => setPlatform(e.target.value)} className={inputCls + ' capitalize bg-white'}>
+                  {PLATFORMS.map(p => <option key={p} value={p} className="capitalize">{p}</option>)}
+                </select>
+              </Field>
+              <Field label="Payment Method" hint={platform === 'manual' ? 'How you were paid' : 'Optional'}>
+                <select value={paymentMethod} onChange={e => setPaymentMethod(e.target.value)} className={inputCls + ' bg-white'}>
+                  <option value="">—</option>
+                  {PAYMENT_METHODS.map(m => <option key={m.value} value={m.value}>{m.label}</option>)}
+                </select>
+              </Field>
+              <Field label="Sale Date">
+                <input type="date" value={soldAt} onChange={e => setSoldAt(e.target.value)} className={inputCls} />
+              </Field>
+            </>
+          )}
           <Field label="Quantity">
             <input type="number" min="1" value={quantity} onChange={e => setQuantity(e.target.value)} className={inputCls} />
           </Field>
           <Field label="Sale Price">
             <input type="number" step="0.01" min="0" value={salePrice} onChange={e => setSalePrice(e.target.value)} className={inputCls} />
           </Field>
-          <Field label="Platform Fees">
-            <input type="number" step="0.01" min="0" value={fees} onChange={e => setFees(e.target.value)} className={inputCls} placeholder="0.00" />
-          </Field>
-          <Field label="Shipping Cost">
-            <input type="number" step="0.01" min="0" value={shipping} onChange={e => setShipping(e.target.value)} className={inputCls} placeholder="0.00" />
-          </Field>
+          {!isBundleLine && (
+            <>
+              <Field label="Platform Fees">
+                <input type="number" step="0.01" min="0" value={fees} onChange={e => setFees(e.target.value)} className={inputCls} placeholder="0.00" />
+              </Field>
+              <Field label="Shipping Cost">
+                <input type="number" step="0.01" min="0" value={shipping} onChange={e => setShipping(e.target.value)} className={inputCls} placeholder="0.00" />
+              </Field>
+            </>
+          )}
         </div>
-        <Field label="Order ID" hint="Optional">
-          <input value={orderId} onChange={e => setOrderId(e.target.value)} className={inputCls} />
-        </Field>
+        {!isBundleLine && (
+          <Field label="Order ID" hint="Optional">
+            <input value={orderId} onChange={e => setOrderId(e.target.value)} className={inputCls} />
+          </Field>
+        )}
 
-        <div className="bg-gray-50 rounded-lg px-3 py-2 text-xs text-gray-600 flex justify-between">
-          <span>Net payout after fees &amp; shipping</span>
-          <span className="font-semibold text-gray-900">{formatUSD(netPayout)}</span>
-        </div>
+        {!isBundleLine && (
+          <div className="bg-gray-50 rounded-lg px-3 py-2 text-xs text-gray-600 flex justify-between">
+            <span>Net payout after fees &amp; shipping</span>
+            <span className="font-semibold text-gray-900">{formatUSD(netPayout)}</span>
+          </div>
+        )}
 
         {error && <div className="text-xs text-red-600 bg-red-50 border border-red-200 rounded-lg px-3 py-2 mt-2">{error}</div>}
         <ModalActions onCancel={onClose} submitLabel="Save Changes" loading={mutation.isPending} />

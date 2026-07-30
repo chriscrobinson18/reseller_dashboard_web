@@ -1,8 +1,9 @@
 import { useState } from 'react'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
-import { Package, TrendingUp, TrendingDown } from 'lucide-react'
+import { Package, Pencil, TrendingUp, TrendingDown } from 'lucide-react'
 import SlideOver from './SlideOver'
 import ConfirmDialog from './ConfirmDialog'
+import EditBundleModal from './modals/EditBundleModal'
 import { useBundle } from '../lib/queries'
 import { deleteBundleSale } from '../lib/mutations'
 import { formatUSD, formatDate } from '../lib/utils'
@@ -17,6 +18,7 @@ export default function BundleDetailSlideOver({ bundleId, onClose }: Props) {
   const qc = useQueryClient()
   const { data, isLoading } = useBundle(bundleId)
   const [confirmDelete, setConfirmDelete] = useState(false)
+  const [editing, setEditing] = useState(false)
 
   const del = useMutation({
     mutationFn: () => deleteBundleSale(bundleId!),
@@ -151,13 +153,22 @@ export default function BundleDetailSlideOver({ bundleId, onClose }: Props) {
               {/* Footer */}
               <div className="mt-6 pt-4 border-t border-gray-200 flex justify-end flex-col items-end gap-2">
                 {del.isError && <div className="text-xs text-red-600">{(del.error as Error).message}</div>}
-                <button
-                  type="button"
-                  onClick={() => setConfirmDelete(true)}
-                  className="px-3 py-1.5 text-xs font-medium text-red-600 hover:bg-red-50 rounded-lg transition-colors"
-                >
-                  Delete bundle
-                </button>
+                <div className="flex gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setEditing(true)}
+                    className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-gray-700 hover:bg-gray-100 rounded-lg transition-colors"
+                  >
+                    <Pencil size={12} /> Edit
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setConfirmDelete(true)}
+                    className="px-3 py-1.5 text-xs font-medium text-red-600 hover:bg-red-50 rounded-lg transition-colors"
+                  >
+                    Delete bundle
+                  </button>
+                </div>
               </div>
             </div>
           )
@@ -173,6 +184,8 @@ export default function BundleDetailSlideOver({ bundleId, onClose }: Props) {
         onCancel={() => { setConfirmDelete(false); del.reset() }}
         onConfirm={() => del.mutate()}
       />
+
+      {editing && bundleId && <EditBundleModal bundleId={bundleId} onClose={() => setEditing(false)} />}
     </>
   )
 }

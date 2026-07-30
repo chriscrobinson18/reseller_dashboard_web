@@ -1277,6 +1277,92 @@ export async function deleteBundleSale(bundleId: string): Promise<void> {
   if (bundleDelErr) throw bundleDelErr
 }
 
+/**
+ * Edits a bundle's order-level fields and every line's own price/quantity.
+ *
+ * Line *item* is deliberately not editable here — swapping a line's item would
+ * mean reversing that line's FIFO depletion and re-depleting a different
+ * item's lots, which is a different shape of change (closer to delete-line-
+ * then-add-line) than a plain field edit.
+ *
+ * Mirrors updateSale's shape: update the row(s), then sync only the
+ * transactions that already exist by category (same limitation updateSale
+ * has — adding a fee where none existed before doesn't create a new
+ * transaction row).
+ */
+export async function updateBundleSale(params: {
+  bundleId: string
+  soldAt: string // 'yyyy-MM-dd'
+  platform: string
+  paymentMethod: string | null
+  externalOrderId: string | null
+  fees: number | null
+  shippingCost: number | null
+  notes: string | null
+  lines: Array<{ id: string; quantity: number; salePrice: number }>
+}): Promise<void> {
+  const soldAtIso = new Date(params.soldAt + 'T12:00:00').toISOString()
+
+  const { error: bundleErr } = await supabase
+    .from('sale_bundles')
+    .update({
+      sold_at: params.soldAt,
+      platform: params.platform,
+      payment_method: params.paymentMethod,
+      external_order_id: params.externalOrderId,
+      fees: params.fees ?? 0,
+      shipping_cost: params.shippingCost,
+      notes: params.notes,
+    })
+    .eq('id', params.bundleId)
+  if (bundleErr) throw bundleErr
+
+  // Re-stamp every line's own copy of the order-level fields (recordBundleSale
+  // stamps these at creation; they drive that line's badges in the Sales
+  // list). fees/shipping_cost are NOT touched here — they stay 0/null on
+  // every line, same as at creation.
+  for (const line of params.lines) {
+    const { error } = await supabase
+      .from('sales')
+      .update({
+        quantity: line.quantity,
+        sale_price: line.salePrice,
+        sold_at: soldAtIso,
+        platform: params.platform,
+        payment_method: params.paymentMethod,
+        external_order_id: params.externalOrderId,
+        net_payout: line.salePrice,
+      })
+      .eq('id', line.id)
+    if (error) throw error
+  }
+
+  // Sync the bundle's own linked transactions — existing rows only, same as
+  // updateSale's transaction sync.
+  const { data: linked, error: fetchErr } = await supabase
+    .from('transactions')
+    .select('id, schedule_c_category')
+    .eq('related_bundle_id', params.bundleId)
+    .eq('source', 'manual')
+  if (fetchErr) throw fetchErr
+
+  const totalPrice = params.lines.reduce((s, l) => s + l.salePrice, 0)
+  for (const tx of linked ?? []) {
+    let newAmount: number | null
+    switch (tx.schedule_c_category) {
+      case 'payout': newAmount = totalPrice; break
+      case 'commissions_fees': newAmount = params.fees != null ? -params.fees : null; break
+      case 'shipping_postage': newAmount = params.shippingCost != null ? -params.shippingCost : null; break
+      default: continue
+    }
+    if (newAmount == null) continue
+    await supabase
+      .from('transactions')
+      .update({ amount: newAmount, date: params.soldAt })
+      .eq('id', tx.id)
+  }
+}
+
 export { todayStr }
 
 // ─── Custom categories ────────────────────────────────────────────────────────
