@@ -106,11 +106,14 @@ serve(async (req) => {
     let remaining = ret.quantity;
 
     if (sale.item_id) {
+      // Excludes soft-deleted lots — see the matching comment in
+      // record_sale/index.ts for why this filter has to be here.
       const { data: lots, error: lotError } = await supabase
         .from("inventory_lots")
         .select("id, quantity_remaining")
         .eq("user_id", user.id)
         .eq("item_id", sale.item_id)
+        .is("deleted_at", null)
         .gt("quantity_remaining", 0)
         .order("created_at", { ascending: true });
       if (lotError) throw lotError;

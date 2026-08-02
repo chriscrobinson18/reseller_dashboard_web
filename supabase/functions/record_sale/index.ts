@@ -92,12 +92,16 @@ serve(async (req) => {
 
     if (saleError) throw saleError;
 
-    /* Fetch inventory FIFO */
+    /* Fetch inventory FIFO — excludes soft-deleted lots. A deleted lot can
+       still carry quantity_remaining > 0 (deleteLot never zeroes it), so
+       without this filter a sale could silently FIFO-deplete a lot the user
+       had already deleted, posting its (possibly wrong) unit_cost as COGS. */
     const { data: lots, error: lotError } = await supabase
       .from("inventory_lots")
       .select("*")
       .eq("user_id", user.id)
       .eq("item_id", item_id)
+      .is("deleted_at", null)
       .gt("quantity_remaining", 0)
       .order("created_at", { ascending: true });
 
