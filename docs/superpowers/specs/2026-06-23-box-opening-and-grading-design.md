@@ -13,8 +13,17 @@
 > **Deviations from this spec:**
 > - No two-step modal — `OpenBoxModal` is a single scrollable form (header fields + repeating card rows), matching `RecordTradeModal`'s existing pattern rather than introducing a new stepper convention.
 > - `openBox` takes pre-computed per-card `basis` values rather than raw weights; the modal computes the live allocation client-side via `allocateBoxCost()` and submits the final numbers, so the same rounding the user previewed is exactly what gets written.
-> - `deleteBoxOpening` was not in the original mutation list. Added by analogy to `deleteTrade`: blocks if any resulting card has been sold, otherwise soft-deletes the card lots (cascading their cost adjustments, same as `deleteLot`) and hard-deletes the Cost of Goods transaction the opening created — this event created that transaction, so a wrong opening means the transaction was wrong too.
+> - `deleteBoxOpening` was not in the original mutation list. Added by analogy to `deleteTrade`: blocks if any resulting card has been sold, otherwise soft-deletes the card lots (cascading their cost adjustments, same as `deleteLot`).
 > - `allocateBoxCost` uses the largest-remainder method for `relative_fmv` (round each card down, then hand the leftover cents to the cards with the biggest fractional remainder) rather than pushing all remainder cents onto the trailing card as `splitLotCost` does for even splits — appropriate here since cards have very different weights and a trailing-only rule would visibly overcharge whichever card happened to be entered last.
+>
+> **Revised same-day (2026-08-03), before wider use:** the "box isn't recorded yet, name it and post a fresh transaction" flow below was replaced with "pick the box from inventory" — the box is bought and entered the same way as any other purchase (Add Item + Add Lot, linked + categorized `cost_of_goods` at purchase time), so by the time it's opened its cost is **already** on Schedule C. The original flow's step 3 (post a new `cost_of_goods` transaction at open time) would have double-deducted it. See the `box_openings_source_lot` migration (`supabase/migrations/20260803130000_box_openings_source_lot.sql`) and the rewritten steps in [`features/inventory.md`](../../features/inventory.md#opening-a-box):
+> - `openBox` now takes `sourceLotId` + `quantity` instead of `boxName`/`boxCost`/`merchant`. Box cost = `sourceLot.unit_cost × quantity`, read from the lot, not typed in.
+> - No transaction is created. The resulting card lots' `transaction_id` mirrors the source lot's (may be `null`) for display continuity only.
+> - Opening **depletes** `sourceLot.quantity_remaining` by `quantity`, exactly like a sale would, instead of leaving the (never-recorded) box alone.
+> - `box_openings` gained `source_lot_id` (FK to `inventory_lots`, `ON DELETE SET NULL`) and `quantity`.
+> - `deleteBoxOpening` restores the depleted quantity onto the source lot instead of hard-deleting a transaction — there's no created transaction to delete anymore.
+>
+> **Renamed same-day (2026-08-03), UI/docs only:** user-facing copy calls this **"Breakdown Inventory"** — button label, modal title, slide-over title, pill text ("Breakdown"), and prose in the docs below. Component/file names (`OpenBoxModal`, `BoxOpeningDetailSlideOver`), function names (`openBox`, `deleteBoxOpening`), and the DB table/columns (`box_openings`, `box_opening_id`) were **not** renamed — the table is already live in Supabase and a rename would need another migration for no functional gain. Read "box" in code/schema and "breakdown" in the UI/prose as the same feature.
 
 ## Background
 

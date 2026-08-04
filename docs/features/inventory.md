@@ -146,11 +146,11 @@ Basis: $35.00
 
 Each adjustment row can be removed individually; deleting the lot cascades a soft-delete to its adjustments but **keeps** their transactions — the fee was really paid, so the deduction stands (same reasoning as `deleteSale`).
 
-## Opening a box
+## Opening a box (UI: "Breakdown Inventory")
 
-A **"Open Box"** button next to "Record Trade" in the page header opens `OpenBoxModal` (`src/components/modals/OpenBoxModal.tsx`). One sealed-box purchase splits into a lot per resulting card — parting out a box or a bundle of singles works the same way.
+A **"Breakdown Inventory"** button next to "Record Trade" in the page header opens `OpenBoxModal` (`src/components/modals/OpenBoxModal.tsx` — component/file/mutation names kept as-is; only the user-facing label changed). One item **already sitting in inventory** splits into a lot per resulting card — parting out a sealed box or a bundle of singles works the same way.
 
-**Why one transaction, many lots.** Under NIMS (IRC §471(c)(1)(B)(ii)), inventory cost is deducted when paid or used, whichever is later — for a sealed box, "used" = opened. So the box's full cost posts as **one** `cost_of_goods` transaction dated the open date, regardless of how it's split across cards. Splitting only matters for per-card profitability, never for Schedule C. See [`docs/superpowers/specs/2026-06-23-box-opening-and-grading-design.md`](../superpowers/specs/2026-06-23-box-opening-and-grading-design.md) for the full tax rationale.
+**The box isn't named or costed by hand — it's picked.** A sealed box is bought and entered into inventory the same way as any other item (Add Item + Add Lot, purchase transaction linked and categorized `cost_of_goods`), so its cost is **already deducted** on Schedule C by the time it's opened. `OpenBoxModal` starts with an `ItemPicker` (restricted to items with stock) and, once an item is chosen, a list of that item's lots to pick from — purchase date, unit cost, quantity in stock. Selecting a lot fixes the box's cost (`unit_cost × quantity to open`, read-only) and how many units are being opened. **Opening a box therefore posts no new transaction** — doing so would double-deduct a cost that's already on the books. See [`docs/superpowers/specs/2026-06-23-box-opening-and-grading-design.md`](../superpowers/specs/2026-06-23-box-opening-and-grading-design.md) for the full history (the original design assumed the box hadn't been recorded yet and posted a fresh transaction at open time — revised same-day, before wider use, once it was clear most boxes are bought and entered normally first).
 
 ### Allocation methods
 
@@ -166,21 +166,23 @@ Like `splitLotCost`, the math works in integer cents so the split always sums to
 
 Single scrollable form (matches `RecordTradeModal`'s pattern, not a stepper):
 
-- **Header:** box name, box cost, opened-on date (defaults today), merchant (optional, defaults to box name), notes, allocation method segmented control.
+- **Item to break down:** `ItemPicker` (items with stock only, no "create new" — the item has to already exist to be broken down) → a list of that item's lots (date, unit cost, remaining) → once picked, a compact summary card with a "Change" link back. If the item has exactly one open lot, it's auto-selected.
+- **Quantity to break down** (capped at the lot's remaining, default 1), **broken-down-on date** (defaults today), and the resulting **cost** (read-only, derived from the lot).
+- **Notes**, allocation method segmented control.
 - **Cards:** repeating rows — `ItemPicker` with inline "create new item" (same pattern as `RecordTradeModal`'s received side: click create, type a name inline, no separate modal) plus a mode-dependent input (est. value / cost $ / nothing for equal) and a read-only computed-basis column that updates live. "+ Add card" button; each row has a remove button (disabled below 1 row).
-- **Footer:** running allocated total, submit disabled until every card has an item and (for `specific_id`) the entries sum to the box cost.
+- **Footer:** running allocated total, submit disabled until a box lot is picked, every card has an item, and (for `specific_id`) the entries sum to the box cost.
 
 ### `openBox` mutation (`src/lib/mutations.ts`)
 
-Not wrapped in a server-side transaction (v1, matching the spec) — creates the `cost_of_goods` transaction, the `box_openings` audit row, then loops the cards: find-or-create the item, insert a `quantity_purchased = 1` lot (`unit_cost` = that card's computed basis, `box_opening_id` set, `transaction_id` shared with every other card from the same box), and mirror the funding link into `inventory_lot_transactions` (same as `createLotsForPurchase`). A partial failure mid-loop leaves a partial opening; delete it and retry.
+Not wrapped in a server-side transaction (v1, matching the spec) — reads the source lot's `unit_cost` and depletes `quantity_remaining` by the requested quantity (same shape as a sale, just a direct update rather than going through `record_sale`), inserts the `box_openings` audit row (`source_lot_id`, `quantity`, `transaction_id` mirroring the source lot's — may be `null`), then loops the cards: find-or-create the item, insert a `quantity_purchased = 1` lot (`unit_cost` = that card's computed basis, `box_opening_id` set, `transaction_id` shared with every other card from the same box), and mirror the funding link into `inventory_lot_transactions` **only if the source lot had one** (nothing to link to otherwise). A partial failure mid-loop leaves a partial opening; delete it and retry.
 
 Because the resulting lots are structurally ordinary lots — just with `box_opening_id` populated — FIFO depletion, `record_sale`, and returns need no changes to handle them.
 
-### Box pill and detail view
+### Breakdown pill and detail view
 
-Lots with `box_opening_id != null` show a small teal **"Box"** pill in the lot sub-row (same treatment as the purple Trade pill), in both the item-grouped and date-ledger views. Clicking it opens `BoxOpeningDetailSlideOver` (`src/components/BoxOpeningDetailSlideOver.tsx`): box name/date/method, box cost, every resulting card with its allocated basis (and a "sold" marker once depleted), the Schedule C impact (the one Cost of Goods transaction), and notes.
+Lots with `box_opening_id != null` show a small teal **"Breakdown"** pill in the lot sub-row (same treatment as the purple Trade pill), in both the item-grouped and date-ledger views. Clicking it opens `BoxOpeningDetailSlideOver` (`src/components/BoxOpeningDetailSlideOver.tsx`, titled "Breakdown"): name/date/method, cost with the source lot it came from (and how many units remain there), every resulting card with its allocated basis (and a "sold" marker once depleted), the source lot's original purchase transaction shown as **already deducted — no new Schedule C entry**, and notes.
 
-**Delete box opening** — blocked if any resulting card has already been sold (`quantity_remaining < quantity_purchased`), same guard as deleting a trade; delete those sales first. Otherwise soft-deletes the card lots (cascading a soft-delete to their own `lot_cost_adjustments`, same as `deleteLot`), soft-deletes the `box_openings` row, and **hard-deletes** the Cost of Goods transaction — this event created that transaction, so a wrong opening means the transaction was wrong too (same reasoning as removing a *created* lot cost adjustment).
+**Delete breakdown** — blocked if any resulting card has already been sold (`quantity_remaining < quantity_purchased`), same guard as deleting a trade; delete those sales first. Otherwise soft-deletes the card lots (cascading a soft-delete to their own `lot_cost_adjustments`, same as `deleteLot`), **restores the broken-down quantity back onto the source lot**, and soft-deletes the `box_openings` row. No transaction to reverse — breaking down never created one.
 
 ## Purchase date
 

@@ -163,8 +163,9 @@ export function useTrade(id: string | null) {
 }
 
 /**
- * Fetches a box-opening event with the resulting card lots and its Cost of
- * Goods transaction. Used by BoxOpeningDetailSlideOver.
+ * Fetches a box-opening event with the resulting card lots, the source lot it
+ * was opened from, and its (already-deducted) purchase transaction, if any.
+ * Used by BoxOpeningDetailSlideOver.
  */
 export function useBoxOpening(id: string | null) {
   return useQuery({
@@ -173,6 +174,7 @@ export function useBoxOpening(id: string | null) {
     queryFn: async (): Promise<{
       opening: BoxOpening
       cards: Array<{ id: string; quantity_remaining: number; quantity_purchased: number; unit_cost: number; items: { id: string; name: string } | null }>
+      sourceLot: { id: string; quantity_remaining: number; unit_cost: number; items: { id: string; name: string } | null } | null
       transaction: Transaction | null
     }> => {
       const { data: opening, error } = await supabase
@@ -183,23 +185,32 @@ export function useBoxOpening(id: string | null) {
         .single()
       if (error || !opening) throw error ?? new Error('Box opening not found')
 
-      const [lotsRes, txRes] = await Promise.all([
+      const [lotsRes, sourceLotRes, txRes] = await Promise.all([
         supabase
           .from('inventory_lots')
           .select('id, quantity_remaining, quantity_purchased, unit_cost, items(id, name)')
           .eq('box_opening_id', id!)
           .is('deleted_at', null)
           .order('unit_cost', { ascending: false }),
+        opening.source_lot_id
+          ? supabase
+              .from('inventory_lots')
+              .select('id, quantity_remaining, unit_cost, items(id, name)')
+              .eq('id', opening.source_lot_id)
+              .single()
+          : Promise.resolve({ data: null, error: null }),
         opening.transaction_id
           ? supabase.from('transactions').select('*').eq('id', opening.transaction_id).single()
           : Promise.resolve({ data: null, error: null }),
       ])
       if (lotsRes.error) throw lotsRes.error
+      if (sourceLotRes.error) throw sourceLotRes.error
       if (txRes.error) throw txRes.error
 
       return {
         opening: opening as BoxOpening,
         cards: (lotsRes.data ?? []) as unknown as Array<{ id: string; quantity_remaining: number; quantity_purchased: number; unit_cost: number; items: { id: string; name: string } | null }>,
+        sourceLot: (sourceLotRes.data ?? null) as unknown as { id: string; quantity_remaining: number; unit_cost: number; items: { id: string; name: string } | null } | null,
         transaction: (txRes.data ?? null) as Transaction | null,
       }
     },

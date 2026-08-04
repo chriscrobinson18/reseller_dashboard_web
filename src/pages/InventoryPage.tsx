@@ -162,9 +162,9 @@ function LotRows({ lots, onAddLot, onEditLot, onDeleteLot, onTradePillClick, onB
                   <span
                     className="inline-block px-1.5 py-0.5 text-[10px] font-medium bg-teal-100 text-teal-700 rounded cursor-pointer hover:bg-teal-200"
                     onClick={(e) => { e.stopPropagation(); onBoxPillClick(lot.box_opening_id!) }}
-                    title="From an opened box"
+                    title="From a broken-down item"
                   >
-                    Box
+                    Breakdown
                   </span>
                 )}
                 <div className="flex gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
@@ -364,8 +364,9 @@ function LotLedger({ rows, onEditLot, onDeleteLot, onTradePillClick, onBoxPillCl
                   <button
                     onClick={() => onBoxPillClick(lot.box_opening_id!)}
                     className="px-1.5 py-0.5 rounded text-[10px] font-medium bg-teal-100 text-teal-700 hover:bg-teal-200"
+                    title="From a broken-down item"
                   >
-                    Box
+                    Breakdown
                   </button>
                 )}
               </div>
@@ -566,7 +567,7 @@ export default function InventoryPage() {
               onClick={() => setShowOpenBox(true)}
               className="flex items-center gap-1.5 bg-gray-900 text-white px-3 py-1.5 rounded-lg text-sm font-medium hover:bg-gray-700 transition-colors"
             >
-              <PackageOpen size={14} /> Open Box
+              <PackageOpen size={14} /> Breakdown Inventory
             </button>
             <button
               onClick={() => setShowAddItem(true)}

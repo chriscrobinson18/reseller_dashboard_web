@@ -129,72 +129,82 @@ export async function deleteLot(id: string) {
 // ─── Box openings ─────────────────────────────────────────────────────────────
 
 /**
- * Opens a sealed box: one purchase becomes N single-card lots, cost allocated
- * by `allocationMethod` (relative FMV, equal split, or the user's own $
- * entries). See docs/superpowers/specs/2026-06-23-box-opening-and-grading-design.md.
+ * Opens a box the user already holds as inventory: depletes `quantity` units
+ * of `sourceLotId` and turns that cost into N single-card lots, allocated by
+ * `allocationMethod` (relative FMV, equal split, or the user's own $ entries).
+ * See docs/superpowers/specs/2026-06-23-box-opening-and-grading-design.md.
  *
- * Under NIMS, Schedule C sees the full box cost as **one** cost_of_goods
- * transaction dated `openedAt` — allocation only affects per-card basis for
- * the Profitability dashboard and per-sale profit, never Schedule C totals.
+ * No new transaction is created. The box was bought and entered into
+ * inventory like any other lot — its cost is already deducted on Schedule C
+ * (linked + categorized cost_of_goods at purchase time, same as every other
+ * lot). Opening it just reclassifies that already-deducted cost across the
+ * resulting cards; posting a second cost_of_goods row here would double-
+ * deduct it. The resulting card lots mirror the source lot's
+ * `transaction_id` (may be null) purely for display continuity.
  *
  * Not wrapped in a server-side transaction (v1, per spec) — if a card insert
  * fails partway, the user is left with a partial opening and must delete it
  * (`deleteBoxOpening`) and retry.
  */
 export async function openBox(params: {
-  openedAt: string                                          // 'yyyy-MM-dd'
-  boxName: string
-  boxCost: number
+  openedAt: string                                          // 'yyyy-MM-dd' — drives the new lots' purchase_date
+  sourceLotId: string
+  /** Units of the source lot being opened (usually 1). */
+  quantity: number
   allocationMethod: 'relative_fmv' | 'specific_id' | 'equal'
   notes?: string | null
-  merchant?: string | null
   cards: Array<{
     itemId?: string | null                                  // null => create new item
     newItemName?: string | null
     newItemCategory?: string | null
     basis: number                                            // computed per-card $ (already allocated)
   }>
-}): Promise<{ boxOpeningId: string; transactionId: string; lotIds: string[] }> {
-  if (!(params.boxCost > 0)) throw new Error('Box cost must be greater than 0')
+}): Promise<{ boxOpeningId: string; lotIds: string[] }> {
+  if (!(params.quantity > 0)) throw new Error('Quantity to open must be greater than 0')
   if (params.cards.length === 0) throw new Error('Add at least one card')
   for (const c of params.cards) {
     if (!c.itemId && !c.newItemName?.trim()) throw new Error('Each card needs an item or a new item name')
   }
-  const allocatedTotal = params.cards.reduce((s, c) => s + c.basis, 0)
-  if (Math.abs(allocatedTotal - params.boxCost) > 0.01) {
-    throw new Error(`Allocated basis (${allocatedTotal.toFixed(2)}) doesn't match box cost (${params.boxCost.toFixed(2)})`)
-  }
 
   const user_id = await getUserId()
-  const merchant = params.merchant?.trim() || params.boxName
 
-  // ── 1. Cost of Goods transaction for the whole box ────────────────────────
-  const { data: txn, error: txErr } = await supabase
-    .from('transactions')
-    .insert({
-      user_id,
-      date: params.openedAt,
-      amount: -params.boxCost,
-      merchant,
-      type: 'other',
-      source: 'manual',
-      schedule_c_category: 'cost_of_goods',
-      notes: params.notes ?? null,
-    })
-    .select('id')
+  // ── 1. Lock in the source lot's cost and deplete it ────────────────────────
+  const { data: sourceLot, error: sourceErr } = await supabase
+    .from('inventory_lots')
+    .select('id, item_id, transaction_id, unit_cost, quantity_remaining, items(name)')
+    .eq('id', params.sourceLotId)
+    .is('deleted_at', null)
     .single()
-  if (txErr || !txn) throw txErr ?? new Error('Failed to create box-opening transaction')
+  if (sourceErr || !sourceLot) throw sourceErr ?? new Error('Source lot not found')
+  if (params.quantity > sourceLot.quantity_remaining) {
+    throw new Error(`Only ${sourceLot.quantity_remaining} unit(s) of this box remain — can't open ${params.quantity}`)
+  }
+
+  const boxCost = Number((sourceLot.unit_cost * params.quantity).toFixed(2))
+  const allocatedTotal = params.cards.reduce((s, c) => s + c.basis, 0)
+  if (Math.abs(allocatedTotal - boxCost) > 0.01) {
+    throw new Error(`Allocated basis (${allocatedTotal.toFixed(2)}) doesn't match box cost (${boxCost.toFixed(2)})`)
+  }
+
+  const { error: depleteErr } = await supabase
+    .from('inventory_lots')
+    .update({ quantity_remaining: sourceLot.quantity_remaining - params.quantity })
+    .eq('id', params.sourceLotId)
+  if (depleteErr) throw depleteErr
 
   // ── 2. box_openings audit row ──────────────────────────────────────────────
+  const boxName = (sourceLot.items as unknown as { name: string } | null)?.name ?? 'Box'
   const { data: opening, error: openingErr } = await supabase
     .from('box_openings')
     .insert({
       user_id,
       opened_at: params.openedAt,
-      box_name: params.boxName,
-      box_cost: params.boxCost,
-      transaction_id: txn.id,
+      box_name: params.quantity > 1 ? `${boxName} ×${params.quantity}` : boxName,
+      box_cost: boxCost,
+      transaction_id: sourceLot.transaction_id ?? null,
       allocation_method: params.allocationMethod,
+      source_lot_id: params.sourceLotId,
+      quantity: params.quantity,
       notes: params.notes ?? null,
     })
     .select('id')
@@ -220,7 +230,7 @@ export async function openBox(params: {
       .insert({
         user_id,
         item_id: itemId,
-        transaction_id: txn.id,
+        transaction_id: sourceLot.transaction_id ?? null,
         box_opening_id: opening.id,
         quantity_purchased: 1,
         quantity_remaining: 1,
@@ -232,26 +242,33 @@ export async function openBox(params: {
       .single()
     if (lotErr || !lotRow) throw lotErr ?? new Error('Failed to create card lot')
 
-    const { error: linkErr } = await supabase.from('inventory_lot_transactions').insert({
-      user_id,
-      lot_id: lotRow.id,
-      transaction_id: txn.id,
-      allocated_amount: c.basis,
-    })
-    if (linkErr) throw linkErr
+    // Only mirror a funding link if the source lot actually had one — nothing
+    // to link to otherwise, and inventory_lot_transactions.transaction_id is
+    // not nullable.
+    if (sourceLot.transaction_id) {
+      const { error: linkErr } = await supabase.from('inventory_lot_transactions').insert({
+        user_id,
+        lot_id: lotRow.id,
+        transaction_id: sourceLot.transaction_id,
+        allocated_amount: c.basis,
+      })
+      if (linkErr) throw linkErr
+    }
 
     lotIds.push(lotRow.id)
   }
 
-  return { boxOpeningId: opening.id, transactionId: txn.id, lotIds }
+  return { boxOpeningId: opening.id, lotIds }
 }
 
 /**
  * Deletes a box-opening event: soft-deletes its resulting card lots (cascading
- * to their cost adjustments, same as `deleteLot`), soft-deletes the box_openings
- * row, and hard-deletes the Cost of Goods transaction it created — this event
- * created that transaction, so if the event was wrong the transaction was too
- * (same reasoning as `deleteLotCostAdjustment` on a created transaction).
+ * to their cost adjustments, same as `deleteLot`), restores the depleted
+ * quantity back onto the source lot, and soft-deletes the box_openings row.
+ *
+ * No transaction to reverse — opening never created one, so there's nothing
+ * to delete here (unlike `deleteLotCostAdjustment`, which does own its
+ * transaction when it created one).
  *
  * Blocked if any resulting card has already been sold (quantity_remaining <
  * quantity_purchased) — same guard as `deleteTrade`, because reversing FIFO
@@ -260,7 +277,7 @@ export async function openBox(params: {
 export async function deleteBoxOpening(boxOpeningId: string): Promise<void> {
   const { data: opening, error: openingErr } = await supabase
     .from('box_openings')
-    .select('id, transaction_id')
+    .select('id, source_lot_id, quantity')
     .eq('id', boxOpeningId)
     .single()
   if (openingErr || !opening) throw openingErr ?? new Error('Box opening not found')
@@ -299,19 +316,27 @@ export async function deleteBoxOpening(boxOpeningId: string): Promise<void> {
     if (lotDelErr) throw lotDelErr
   }
 
+  if (opening.source_lot_id) {
+    const { data: sourceLot, error: sourceErr } = await supabase
+      .from('inventory_lots')
+      .select('quantity_remaining')
+      .eq('id', opening.source_lot_id)
+      .single()
+    if (sourceErr) throw sourceErr
+    if (sourceLot) {
+      const { error: restoreErr } = await supabase
+        .from('inventory_lots')
+        .update({ quantity_remaining: sourceLot.quantity_remaining + opening.quantity })
+        .eq('id', opening.source_lot_id)
+      if (restoreErr) throw restoreErr
+    }
+  }
+
   const { error: openingDelErr } = await supabase
     .from('box_openings')
     .update({ deleted_at })
     .eq('id', boxOpeningId)
   if (openingDelErr) throw openingDelErr
-
-  if (opening.transaction_id) {
-    const { error: txDelErr } = await supabase
-      .from('transactions')
-      .delete()
-      .eq('id', opening.transaction_id)
-    if (txDelErr) throw txDelErr
-  }
 }
 
 // ─── Lot cost adjustments (capitalized basis) ─────────────────────────────────

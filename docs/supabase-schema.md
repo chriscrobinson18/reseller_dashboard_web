@@ -108,21 +108,23 @@ A purchase batch of an item at a specific unit cost — FIFO unit of accounting.
 | `initial_unit_cost` | nullable numeric, added 2026-07-26. Per-unit basis at creation, before adjustments; backfilled to `unit_cost` for existing lots. Lets `unit_cost` be recomputed from the basis invariant instead of mutated incrementally — see [`features/inventory.md`](features/inventory.md#the-basis-invariant). |
 | `purchase_date` | nullable `date`; set from the Add/Edit Lot modal date picker (defaults to today). Lots predating the column show `created_at` as a fallback in the UI. |
 | `trade_id` | nullable FK to `trades`; set on lots created from received-in-trade items. `ON DELETE SET NULL`. |
-| `box_opening_id` | nullable FK to `box_openings`; set on the single-unit lots created by opening a box. `ON DELETE SET NULL`, added by the `box_openings` migration (2026-08-03). |
+| `box_opening_id` | nullable FK to `box_openings`; set on the single-unit lots created by breaking down inventory. `ON DELETE SET NULL`, added by the `box_openings` migration (2026-08-03). |
 
 ### `box_openings`
-Audit-trail row for one sealed-box-opening event — one purchase splitting into many single-card lots. Added by the `box_openings` migration (2026-08-03). Written by `openBox`, soft-deleted (with cascading lot soft-delete) by `deleteBoxOpening`.
+Audit-trail row for one "Breakdown Inventory" event — an existing inventory lot (a sealed box, a bundle) splitting into many single-card lots. UI/docs call this **Breakdown Inventory**; the table, columns, and `openBox`/`deleteBoxOpening` function names are unchanged from the original box-opening design (renaming those would touch a table already live in Supabase — deferred). Added by the `box_openings` migration (2026-08-03); `source_lot_id`/`quantity` added by `box_openings_source_lot` (same day). Written by `openBox`, soft-deleted (with cascading lot soft-delete, and quantity restored to the source lot) by `deleteBoxOpening`.
 
 | column | notes |
 |---|---|
 | `id`, `user_id`, `created_at`, `deleted_at` | soft-deleted |
-| `opened_at` | `date` — when the box was physically opened; drives the Cost of Goods transaction's Schedule C date |
-| `box_name`, `notes` | free text |
-| `box_cost` | positive numeric, `CHECK (box_cost > 0)` — the full box price, always the exact Schedule C deduction regardless of per-card allocation (NIMS: deduct when paid/used, whichever is later — "used" = opened) |
-| `transaction_id` | nullable FK to the `cost_of_goods` transaction, `ON DELETE SET NULL` — the audit row survives if the transaction is deleted separately |
+| `opened_at` | `date` — when the box was physically broken down; sets the resulting cards' `purchase_date` |
+| `box_name`, `notes` | free text; `box_name` is captured from the source item's name at breakdown time, not user-typed |
+| `box_cost` | positive numeric, `CHECK (box_cost > 0)` — `source_lot.unit_cost × quantity`. **Not a Schedule C deduction** — the source lot's cost was already deducted when it was purchased and linked, same as any other lot. Breaking it down creates no transaction. |
+| `transaction_id` | nullable FK to the `cost_of_goods` transaction, `ON DELETE SET NULL` — mirrors the source lot's purchase transaction for display only; not created or owned by this row |
 | `allocation_method` | `'relative_fmv' \| 'specific_id' \| 'equal'`, CHECK-constrained. Math lives in `src/lib/boxAllocation.ts` (`allocateBoxCost`) |
+| `source_lot_id` | nullable FK to `inventory_lots`, `ON DELETE SET NULL` — the lot this was broken down from. `openBox` depletes its `quantity_remaining` by `quantity`; `deleteBoxOpening` restores it. |
+| `quantity` | integer, `CHECK (quantity > 0)`, default 1 — units of the source lot broken down in this event |
 
-Resulting cards are ordinary `inventory_lots` rows (`quantity_purchased = 1` each, `box_opening_id` set) sharing the one Cost of Goods `transaction_id` — FIFO depletion, sales, and returns need no changes to handle them. Schedule C reads the transaction only, so per-card basis (the allocation) never affects the tax total, only the Profitability dashboard and per-sale profit. Why capitalized cost splitting works this way: [`features/inventory.md`](features/inventory.md#opening-a-box) and [`docs/superpowers/specs/2026-06-23-box-opening-and-grading-design.md`](superpowers/specs/2026-06-23-box-opening-and-grading-design.md).
+Resulting cards are ordinary `inventory_lots` rows (`quantity_purchased = 1` each, `box_opening_id` set) mirroring the source lot's `transaction_id` — FIFO depletion, sales, and returns need no changes to handle them. No transaction is read or written by this flow at all, so the allocation choice never affects Schedule C, only the Profitability dashboard and per-sale profit. Why: [`features/inventory.md`](features/inventory.md#opening-a-box) and [`docs/superpowers/specs/2026-06-23-box-opening-and-grading-design.md`](superpowers/specs/2026-06-23-box-opening-and-grading-design.md).
 
 ### `inventory_lot_transactions`
 Funding links between a lot and the transaction(s) that paid for it — added by the `lot_transaction_links` migration (2026-07-24) to support **split-tender purchases** (one eBay order paid part on a card that Plaid syncs, part from marketplace balance that never touches a bank).
@@ -239,7 +241,7 @@ Three are now committed in [`supabase/functions/`](../supabase/functions/) (the 
 
 `record_return`'s `return_shipping_cost` param and the new `reverse_return` function exist only as source in this repo as of this change — they have not been deployed (`supabase functions deploy record_return reverse_return`) or exercised against a live/local Supabase stack in this session (no CLI/credentials available here). Deploy and run the Deno e2e tests (`supabase/functions/record_return/index.test.ts`, `supabase/functions/reverse_return/index.test.ts`) against a local stack before relying on this in production.
 
-The `box_openings` migration (`supabase/migrations/20260803120000_box_openings.sql`) is committed but, same caveat, not applied to any Supabase project in this session (no CLI/credentials available here). Run `supabase db push` (or apply it by hand) before using "Open Box" — until then, `openBox`/`deleteBoxOpening` will 404 against the `box_openings` table and `inventory_lots.box_opening_id` column.
+The `box_openings` migration (`supabase/migrations/20260803120000_box_openings.sql`) has been applied to the live Supabase project (confirmed 2026-08-03 — table, RLS policies, and indexes all present). The follow-up `box_openings_source_lot` migration (`supabase/migrations/20260803130000_box_openings_source_lot.sql`, adding `source_lot_id`/`quantity`) is committed but **not yet confirmed applied** — run `supabase db push` (or apply it by hand) before using "Breakdown Inventory". Until then, `openBox` will fail on the missing columns.
 
 **2026-08-02: `record_sale` also needs redeploying.** Its FIFO lot-selection query never filtered `deleted_at is null`, so a soft-deleted lot (deleting a lot never zeroes `quantity_remaining`) could still be chosen as a sale's COGS source — found live when a deleted lot's wrong `unit_cost` showed up as a brand-new sale's COGS. Fixed in source (both `record_sale` and `reverse_return`) but **not deployable from this session** (no Supabase CLI/credentials here) — run `supabase functions deploy record_sale reverse_return` before this fix takes effect. Until deployed, avoid deleting a lot that still has `quantity_remaining > 0` if any other lot of that item could still be sold from — it remains FIFO-eligible on the live function.
 - **`import_marketplace_csv`** — referenced in TASKS.md as already shared/working server-side (v16); no web UI calls it yet. Not committed in-repo.

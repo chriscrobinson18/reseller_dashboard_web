@@ -1,12 +1,14 @@
 import { useMemo, useState, type FormEvent } from 'react'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
-import { Plus, Trash2 } from 'lucide-react'
+import { Plus, Trash2, Package, ChevronLeft } from 'lucide-react'
 import Modal, { Field, inputCls, ModalActions } from '../Modal'
 import InfoPopover from '../InfoPopover'
 import ItemPicker from '../ItemPicker'
 import { openBox, todayStr } from '../../lib/mutations'
 import { allocateBoxCost, type BoxAllocationMethod } from '../../lib/boxAllocation'
-import { formatUSD } from '../../lib/utils'
+import { useItems, itemUnitsInStock, type ItemWithLots } from '../../lib/queries'
+import { formatUSD, formatDate } from '../../lib/utils'
+import type { InventoryLot } from '../../lib/types'
 
 interface CardLine {
   itemId: string | null
@@ -35,19 +37,31 @@ interface Props {
 }
 
 /**
- * Opens a sealed box: one cost splits into a lot per card. See
+ * Opens a box the user already holds as inventory: one existing lot splits
+ * into a lot per card. See
  * docs/superpowers/specs/2026-06-23-box-opening-and-grading-design.md.
+ *
+ * The box isn't named/costed by hand — it's already in inventory like any
+ * other purchase, so its cost is picked up from the lot the user selects.
  */
 export default function OpenBoxModal({ open, onClose }: Props) {
   const qc = useQueryClient()
-  const [boxName, setBoxName] = useState('')
-  const [boxCost, setBoxCost] = useState(0)
+  const { data: items = [] } = useItems()
+  const [sourceItemId, setSourceItemId] = useState<string | null>(null)
+  const [sourceLotId, setSourceLotId] = useState<string | null>(null)
+  const [quantity, setQuantity] = useState(1)
   const [openedAt, setOpenedAt] = useState(todayStr)
-  const [merchant, setMerchant] = useState('')
   const [notes, setNotes] = useState('')
   const [method, setMethod] = useState<BoxAllocationMethod>('relative_fmv')
   const [cards, setCards] = useState<CardLine[]>([emptyCard(), emptyCard()])
   const [pickerOpenIdx, setPickerOpenIdx] = useState<number | null>(null)
+
+  const sourceItem = useMemo(() => items.find(i => i.id === sourceItemId) ?? null, [items, sourceItemId])
+  const sourceLot = useMemo(
+    () => sourceItem?.inventory_lots.find(l => l.id === sourceLotId) ?? null,
+    [sourceItem, sourceLotId],
+  )
+  const boxCost = sourceLot ? Number((sourceLot.unit_cost * quantity).toFixed(2)) : 0
 
   const allocation = useMemo(
     () => allocateBoxCost(boxCost, method, cards.map(c => ({ value: c.value }))),
@@ -60,8 +74,9 @@ export default function OpenBoxModal({ open, onClose }: Props) {
   )
 
   const validationError = useMemo(() => {
-    if (!boxName.trim()) return 'Name the box'
-    if (!(boxCost > 0)) return 'Box cost must be greater than 0'
+    if (!sourceLot) return 'Pick the box to open from your inventory'
+    if (!(quantity > 0)) return 'Quantity must be greater than 0'
+    if (quantity > sourceLot.quantity_remaining) return `Only ${sourceLot.quantity_remaining} in stock`
     if (!openedAt) return 'Pick the date the box was opened'
     if (cards.length === 0) return 'Add at least one card'
     for (const c of cards) {
@@ -71,16 +86,15 @@ export default function OpenBoxModal({ open, onClose }: Props) {
       return `Card costs (${formatUSD(specificSum)}) must sum to the box cost (${formatUSD(boxCost)})`
     }
     return null
-  }, [boxName, boxCost, openedAt, cards, method, specificSum])
+  }, [sourceLot, quantity, openedAt, cards, method, specificSum, boxCost])
 
   const m = useMutation({
     mutationFn: () => openBox({
       openedAt,
-      boxName: boxName.trim(),
-      boxCost,
+      sourceLotId: sourceLotId!,
+      quantity,
       allocationMethod: method,
       notes: notes.trim() || null,
-      merchant: merchant.trim() || null,
       cards: cards.map((c, i) => ({
         itemId: c.isNew ? null : c.itemId,
         newItemName: c.isNew ? c.itemName : null,
@@ -90,7 +104,6 @@ export default function OpenBoxModal({ open, onClose }: Props) {
     }),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['items'] })
-      qc.invalidateQueries({ queryKey: ['transactions'] })
       qc.invalidateQueries({ queryKey: ['box-opening'] })
       reset()
       onClose()
@@ -98,7 +111,7 @@ export default function OpenBoxModal({ open, onClose }: Props) {
   })
 
   function reset() {
-    setBoxName(''); setBoxCost(0); setOpenedAt(todayStr()); setMerchant(''); setNotes('')
+    setSourceItemId(null); setSourceLotId(null); setQuantity(1); setOpenedAt(todayStr()); setNotes('')
     setMethod('relative_fmv'); setCards([emptyCard(), emptyCard()]); setPickerOpenIdx(null)
     m.reset()
   }
@@ -111,45 +124,104 @@ export default function OpenBoxModal({ open, onClose }: Props) {
     m.mutate()
   }
 
+  function selectSourceItem(item: ItemWithLots) {
+    setSourceItemId(item.id)
+    const openLots = item.inventory_lots.filter(l => l.quantity_remaining > 0)
+    setSourceLotId(openLots.length === 1 ? openLots[0].id : null)
+    setQuantity(1)
+  }
+
+  function selectSourceLot(lot: InventoryLot) {
+    setSourceLotId(lot.id)
+    setQuantity(Math.min(1, lot.quantity_remaining))
+  }
+
   const updateCard = (i: number, patch: Partial<CardLine>) =>
     setCards(prev => prev.map((c, idx) => idx === i ? { ...c, ...patch } : c))
 
   return (
-    <Modal open={open} onClose={handleClose} title="Open Box" width="max-w-2xl">
+    <Modal open={open} onClose={handleClose} title="Breakdown Inventory" width="max-w-2xl">
       <form onSubmit={submit}>
         <div className="flex justify-end -mt-2 mb-2">
-          <InfoPopover label="How box opening works" width="w-[360px]">
+          <InfoPopover label="How breaking down inventory works" width="w-[360px]">
             <HelpContent />
           </InfoPopover>
         </div>
 
-        <div className="grid grid-cols-2 gap-3">
-          <Field label="Box name">
-            <input
-              value={boxName} onChange={e => setBoxName(e.target.value)}
-              placeholder="2024 Topps Series 1 Hobby Box" className={inputCls}
+        <Field label="Item to break down" hint="Pick the item (and lot) already in your inventory">
+          {!sourceItem ? (
+            <ItemPicker
+              selectedId={sourceItemId}
+              filter={item => itemUnitsInStock(item) > 0}
+              onSelect={selectSourceItem}
             />
-          </Field>
-          <Field label="Box cost">
-            <input
-              type="number" min="0" step="0.01" value={boxCost || ''}
-              onChange={e => setBoxCost(safeNum(e.target.value))} placeholder="0.00" className={inputCls}
-            />
-          </Field>
-        </div>
-        <div className="grid grid-cols-2 gap-3">
-          <Field label="Opened on">
-            <input type="date" value={openedAt} onChange={e => setOpenedAt(e.target.value)} className={inputCls} />
-          </Field>
-          <Field label="Merchant" hint="Optional — defaults to box name">
-            <input value={merchant} onChange={e => setMerchant(e.target.value)} className={inputCls} />
-          </Field>
-        </div>
+          ) : !sourceLot ? (
+            <div className="border border-gray-200 rounded-lg overflow-hidden">
+              <div className="flex items-center justify-between px-3 py-2 border-b border-gray-100 bg-gray-50">
+                <span className="text-sm font-medium text-gray-900">{sourceItem.name}</span>
+                <button type="button" onClick={() => setSourceItemId(null)} className="text-xs text-blue-600 hover:underline flex items-center gap-0.5">
+                  <ChevronLeft size={12} /> Change
+                </button>
+              </div>
+              <div className="max-h-40 overflow-y-auto">
+                {sourceItem.inventory_lots.filter(l => l.quantity_remaining > 0).map(lot => (
+                  <button
+                    key={lot.id}
+                    type="button"
+                    onClick={() => selectSourceLot(lot)}
+                    className="w-full flex items-center justify-between gap-2 px-3 py-2 text-left hover:bg-gray-50 border-b border-gray-100 last:border-0"
+                  >
+                    <span className="text-xs text-gray-600">
+                      {formatDate(lot.purchase_date ?? lot.created_at)} · {lot.quantity_remaining} in stock
+                    </span>
+                    <span className="text-xs tabular-nums text-gray-900 font-medium">{formatUSD(lot.unit_cost)}/ea</span>
+                  </button>
+                ))}
+              </div>
+            </div>
+          ) : (
+            <div className="border border-gray-200 rounded-lg p-3 flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <div className="w-7 h-7 rounded-full bg-teal-50 flex items-center justify-center shrink-0">
+                  <Package size={13} className="text-teal-600" />
+                </div>
+                <div>
+                  <div className="text-sm font-medium text-gray-900">{sourceItem.name}</div>
+                  <div className="text-xs text-gray-400">
+                    {formatDate(sourceLot.purchase_date ?? sourceLot.created_at)} · {formatUSD(sourceLot.unit_cost)}/ea · {sourceLot.quantity_remaining} in stock
+                  </div>
+                </div>
+              </div>
+              <button type="button" onClick={() => setSourceLotId(null)} className="text-xs text-blue-600 hover:underline flex items-center gap-0.5">
+                <ChevronLeft size={12} /> Change
+              </button>
+            </div>
+          )}
+        </Field>
+
+        {sourceLot && (
+          <div className="grid grid-cols-3 gap-3">
+            <Field label="Quantity to break down">
+              <input
+                type="number" min="1" max={sourceLot.quantity_remaining} step="1" value={quantity}
+                onChange={e => setQuantity(Math.max(1, Math.round(safeNum(e.target.value))))}
+                className={inputCls}
+              />
+            </Field>
+            <Field label="Broken down on">
+              <input type="date" value={openedAt} onChange={e => setOpenedAt(e.target.value)} className={inputCls} />
+            </Field>
+            <Field label="Cost" hint="From the lot above">
+              <div className={`${inputCls} bg-gray-50 text-gray-700 tabular-nums`}>{formatUSD(boxCost)}</div>
+            </Field>
+          </div>
+        )}
+
         <Field label="Notes" hint="Optional">
           <input value={notes} onChange={e => setNotes(e.target.value)} className={inputCls} />
         </Field>
 
-        <Field label="Allocation method" hint="How the box cost splits across the cards below">
+        <Field label="Allocation method" hint="How the cost splits across the cards below">
           <div className="flex gap-1.5">
             {METHODS.map(mo => (
               <button
@@ -258,7 +330,7 @@ export default function OpenBoxModal({ open, onClose }: Props) {
         {m.isError && <div className="mt-3 text-xs text-red-600">{(m.error as Error).message}</div>}
         {validationError && !m.isError && <div className="mt-3 text-xs text-gray-500">{validationError}</div>}
 
-        <ModalActions onCancel={handleClose} submitLabel="Open box" loading={m.isPending} disabled={!!validationError} />
+        <ModalActions onCancel={handleClose} submitLabel="Break down" loading={m.isPending} disabled={!!validationError} />
       </form>
     </Modal>
   )
@@ -268,11 +340,12 @@ function HelpContent() {
   return (
     <div className="space-y-3 leading-relaxed">
       <div>
-        <h3 className="text-sm font-semibold text-gray-900 mb-1">Opening a box</h3>
+        <h3 className="text-sm font-semibold text-gray-900 mb-1">Breaking down inventory</h3>
         <p>
-          One sealed-box purchase becomes many single-card lots. Under NIMS, the full box cost
-          hits Schedule C as one Cost of Goods deduction on the open date — how it's split across
-          cards only affects per-card profit, never your tax total.
+          Pick something already sitting in your inventory — a sealed box, a lot of singles, a
+          bundle bought as one unit — and it splits into many single-unit lots. No new Schedule C
+          deduction is created — the cost was already deducted when you bought and linked it, same
+          as any other lot. Breaking it down just reclassifies that cost across what came out.
         </p>
       </div>
       <div>
@@ -284,7 +357,7 @@ function HelpContent() {
       </div>
       <div>
         <p><strong>Specific $</strong> — type each card's dollar basis directly; they must sum to
-        the box cost.</p>
+        the total cost.</p>
       </div>
       <div>
         <p>

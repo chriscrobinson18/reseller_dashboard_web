@@ -101,21 +101,25 @@ Step 3 always rebuilds from `initial_unit_cost` and the *full* adjustment set ra
 
 **Why this and not sale-level COGS.** An earlier iteration let a *sale* consume lots of several items. It worked, but a grading fee isn't a property of the sale — it's a property of the card, incurred long before any sale exists and true regardless of how (or whether) the card is eventually sold. Modeling it at the lot means the basis is right the moment the fee is paid. That approach was reverted; see `20260726130000_drop_sale_cost_components.sql`.
 
-## Opening a box (`openBox` in `mutations.ts`)
+## Opening a box (UI: "Breakdown Inventory"; `openBox` in `mutations.ts`)
 
-See [`docs/superpowers/specs/2026-06-23-box-opening-and-grading-design.md`](superpowers/specs/2026-06-23-box-opening-and-grading-design.md) for the full accounting rationale (NIMS deduct-when-used, relative-sales-value allocation). Summary:
+See [`docs/superpowers/specs/2026-06-23-box-opening-and-grading-design.md`](superpowers/specs/2026-06-23-box-opening-and-grading-design.md) for the full accounting rationale and the 2026-08-03 revision note below. Summary:
 
-Opening a box creates:
-- 1 `cost_of_goods` transaction for the **full** box cost (`amount: -box_cost`, `date: opened_at`) — this is Schedule C's only view of the event
-- 1 `box_openings` audit row, linking that transaction
-- N `inventory_lots` rows, one per card (`quantity_purchased = 1`, `box_opening_id` set, `unit_cost` = that card's allocated share, `transaction_id` shared with every other card from the box)
-- N `inventory_lot_transactions` rows mirroring the funding link (same pattern as `createLotsForPurchase`)
+The box being opened is **already an inventory lot** — bought and entered the normal way (Add Item + Add Lot), linked and categorized `cost_of_goods` at purchase time like everything else. So its cost is already on Schedule C by the time it's opened, and opening it must not post a second deduction. `openBox` takes a `sourceLotId` + `quantity` (not a typed name/cost), and creates:
+- **No transaction.** Nothing to deduct — it's already deducted.
+- 1 `box_openings` audit row (`source_lot_id`, `quantity`, `box_cost = sourceLot.unit_cost × quantity`, `transaction_id` mirroring the source lot's for display only — may be `null`)
+- N `inventory_lots` rows, one per card (`quantity_purchased = 1`, `box_opening_id` set, `unit_cost` = that card's allocated share, `transaction_id` mirroring the source lot's)
+- N `inventory_lot_transactions` rows mirroring the funding link, only when the source lot had one to mirror
 
-**Allocation is Profitability-only.** `allocateBoxCost()` (`src/lib/boxAllocation.ts`) splits `box_cost` across cards by relative FMV, equal share, or specific $ (user's choice, `box_openings.allocation_method`), always summing back to `box_cost` exactly (integer-cents, largest-remainder rounding). Because Schedule C reads `transactions` — one row, the full box cost — and never `inventory_lots.unit_cost`, the allocation choice cannot change the tax total; it only changes the per-card basis that the Profitability dashboard and per-sale profit use once a card sells.
+It also **depletes the source lot**: `quantity_remaining -= quantity`, the same effect a sale would have, since the box units really are leaving inventory (as cards, not as a sale).
+
+**Allocation is Profitability-only.** `allocateBoxCost()` (`src/lib/boxAllocation.ts`) splits `box_cost` across cards by relative FMV, equal share, or specific $ (user's choice, `box_openings.allocation_method`), always summing back to `box_cost` exactly (integer-cents, largest-remainder rounding). Since no new transaction is posted, the allocation choice never touches Schedule C at all — it only sets the per-card basis that the Profitability dashboard and per-sale profit use once a card sells.
 
 FIFO depletion, `record_sale`, and returns need no changes: a box-opening card lot is structurally identical to a cash-purchased lot, just with `box_opening_id` populated.
 
-**Deleting a box opening** (`deleteBoxOpening`) blocks if any resulting card has been sold (`quantity_remaining < quantity_purchased` — same guard shape as `deleteTrade`), otherwise soft-deletes the card lots (cascading to their own `lot_cost_adjustments`, same as `deleteLot`), soft-deletes the `box_openings` row, and hard-deletes the Cost of Goods transaction — this event created it, so a wrong opening means the transaction was wrong too (same reasoning as removing a *created* lot cost adjustment, never a *linked* one).
+**Deleting a box opening** (`deleteBoxOpening`) blocks if any resulting card has been sold (`quantity_remaining < quantity_purchased` — same guard shape as `deleteTrade`), otherwise soft-deletes the card lots (cascading to their own `lot_cost_adjustments`, same as `deleteLot`), **restores `quantity` back onto the source lot**, and soft-deletes the `box_openings` row. There's no transaction to reverse, unlike `deleteLotCostAdjustment` on a created transaction — opening never created one.
+
+**2026-08-03 revision.** The first version of this flow assumed the box hadn't been recorded yet: it took a typed box name/cost and posted a fresh `cost_of_goods` transaction at open time (the NIMS "deduct when used" reading). Revised the same day, before the feature saw real use, once it was clear the common case is a box that's already been bought and entered into inventory like any other lot — in which case its cost was deducted at *purchase*, and posting a second transaction at *open* time would double-count it. The "pick a lot from inventory, deplete it" model above is what shipped.
 
 ## Revenue net of returns
 

@@ -216,8 +216,13 @@ export interface BoxOpening {
   opened_at: string                          // 'yyyy-MM-dd'
   box_name: string
   box_cost: number
+  /** Mirrors the source lot's purchase transaction, if any — display only; no transaction is created by opening. */
   transaction_id: string | null
   allocation_method: BoxAllocationMethod
+  /** The inventory_lots row this box was opened from — an existing item already in inventory. */
+  source_lot_id: string | null
+  /** How many units of the source lot were opened (usually 1). */
+  quantity: number
   notes?: string | null
 }
 

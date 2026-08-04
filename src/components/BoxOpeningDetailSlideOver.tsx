@@ -39,7 +39,7 @@ export default function BoxOpeningDetailSlideOver({ boxOpeningId, onClose }: Pro
 
   return (
     <>
-      <SlideOver open={!!boxOpeningId} onClose={onClose} title="Box Opening" width="w-[480px]">
+      <SlideOver open={!!boxOpeningId} onClose={onClose} title="Breakdown" width="w-[480px]">
         {isLoading || !data ? (
           <div className="text-xs text-gray-400">Loading…</div>
         ) : (
@@ -56,10 +56,17 @@ export default function BoxOpeningDetailSlideOver({ boxOpeningId, onClose }: Pro
             </div>
 
             <div className="border border-gray-200 rounded-lg p-3 bg-gray-50">
-              <div className="text-[10px] font-semibold text-gray-500 uppercase tracking-wide mb-1">Box cost</div>
+              <div className="text-[10px] font-semibold text-gray-500 uppercase tracking-wide mb-1">Cost</div>
               <div className="text-base font-semibold text-gray-900 tabular-nums">
                 {formatUSD(data.opening.box_cost)}
               </div>
+              {data.sourceLot && (
+                <div className="text-xs text-gray-500 mt-1">
+                  {data.opening.quantity} × {formatUSD(data.sourceLot.unit_cost)} from{' '}
+                  <span className="text-gray-700">{data.sourceLot.items?.name ?? '—'}</span>
+                  {' '}({data.sourceLot.quantity_remaining} still in stock)
+                </div>
+              )}
             </div>
 
             <div>
@@ -85,14 +92,14 @@ export default function BoxOpeningDetailSlideOver({ boxOpeningId, onClose }: Pro
             {data.transaction && (
               <div className="p-3 rounded-lg bg-gray-50 border border-gray-200">
                 <div className="text-[10px] font-semibold text-gray-500 uppercase tracking-wide mb-2">
-                  Schedule C impact
+                  Already deducted at purchase — no new Schedule C entry
                 </div>
                 <div className="flex justify-between items-center text-xs">
                   <div className="flex items-center gap-1.5 text-gray-700">
-                    <TrendingDown size={12} className="text-red-600 shrink-0" />
+                    <TrendingDown size={12} className="text-gray-400 shrink-0" />
                     <span>Cost of Goods · {formatDate(data.transaction.date)}</span>
                   </div>
-                  <span className="tabular-nums text-red-700">
+                  <span className="tabular-nums text-gray-500">
                     −{formatUSD(Math.abs(data.transaction.amount))}
                   </span>
                 </div>
@@ -113,7 +120,7 @@ export default function BoxOpeningDetailSlideOver({ boxOpeningId, onClose }: Pro
                 onClick={() => setConfirmDelete(true)}
                 className="px-3 py-1.5 text-xs font-medium text-red-600 hover:bg-red-50 rounded-lg transition-colors"
               >
-                Delete box opening
+                Delete breakdown
               </button>
             </div>
           </div>
@@ -122,9 +129,9 @@ export default function BoxOpeningDetailSlideOver({ boxOpeningId, onClose }: Pro
 
       <ConfirmDialog
         open={confirmDelete}
-        title="Delete box opening?"
-        message="Removes the resulting card lots and the Cost of Goods transaction. Blocked if any card has already been sold — delete those sales first."
-        confirmLabel="Delete box opening"
+        title="Delete breakdown?"
+        message="Removes the resulting card lots and restores the broken-down quantity back onto the source lot. Blocked if any card has already been sold — delete those sales first."
+        confirmLabel="Delete breakdown"
         loading={del.isPending}
         onCancel={() => { setConfirmDelete(false); del.reset() }}
         onConfirm={() => del.mutate()}
