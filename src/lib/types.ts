@@ -169,6 +169,8 @@ export interface InventoryLot {
   /** All funding links. Source of truth for the web client. */
   inventory_lot_transactions?: InventoryLotTransaction[]
   trade_id?: string
+  /** Set when this lot is a single card that came from opening a sealed box. */
+  box_opening_id?: string | null
   quantity_purchased: number
   quantity_remaining: number
   /** All-in current basis per unit, adjustments included. */
@@ -197,6 +199,26 @@ export interface Trade {
   cogs_transaction_id: string | null
   fmv_source_notes?: string
   notes?: string
+}
+
+export type BoxAllocationMethod = 'relative_fmv' | 'specific_id' | 'equal'
+
+/**
+ * Audit-trail row for one sealed-box-opening event. The resulting cards are
+ * ordinary `inventory_lots` rows (`quantity_purchased = 1` each) tagged with
+ * `box_opening_id` — see `docs/superpowers/specs/2026-06-23-box-opening-and-grading-design.md`.
+ */
+export interface BoxOpening {
+  id: string
+  user_id: string
+  created_at: string
+  deleted_at?: string | null
+  opened_at: string                          // 'yyyy-MM-dd'
+  box_name: string
+  box_cost: number
+  transaction_id: string | null
+  allocation_method: BoxAllocationMethod
+  notes?: string | null
 }
 
 export interface PlaidItem {

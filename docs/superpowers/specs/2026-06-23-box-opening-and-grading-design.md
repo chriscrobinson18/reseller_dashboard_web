@@ -1,6 +1,6 @@
 # Box Opening & Grading — Inventory Cost Capitalization
 
-**Status:** Partially implemented — **grading/cost-adjustments shipped 2026-07-26**; box opening still draft
+**Status:** Both halves shipped — **grading/cost-adjustments 2026-07-26**, **box opening 2026-08-03**
 **Date:** 2026-06-23
 **Author:** Brainstormed with Claude
 
@@ -8,7 +8,13 @@
 >
 > **Deviation from this spec:** `addLotCostAdjustment` does **not** always create a `cost_of_goods` transaction. It offers *create* or *link an existing one*, tracked on a `created_transaction` column that isn't in the table below. The spec predates live Plaid sync; always creating a row would double-deduct any grader fee paid on a synced card. Deletion honors the same distinction — a created transaction goes with the adjustment, a linked one stays.
 >
-> **Not built:** `box_openings`, the relative-sales-value allocation, `inventory_lots.box_opening_id`, `openBox`, and `OpenBoxModal`. Everything about them below is still a proposal.
+> **What shipped (2026-08-03).** The `box_openings` half: `box_openings` table, `inventory_lots.box_opening_id`, `openBox`/`deleteBoxOpening` mutations, `OpenBoxModal`, `BoxOpeningDetailSlideOver`, and the "Open Box" entry point on the Inventory page. Relative-FMV / equal / specific-$ allocation as specified below, implemented in `src/lib/boxAllocation.ts`. See [`features/inventory.md`](../../features/inventory.md#opening-a-box).
+>
+> **Deviations from this spec:**
+> - No two-step modal — `OpenBoxModal` is a single scrollable form (header fields + repeating card rows), matching `RecordTradeModal`'s existing pattern rather than introducing a new stepper convention.
+> - `openBox` takes pre-computed per-card `basis` values rather than raw weights; the modal computes the live allocation client-side via `allocateBoxCost()` and submits the final numbers, so the same rounding the user previewed is exactly what gets written.
+> - `deleteBoxOpening` was not in the original mutation list. Added by analogy to `deleteTrade`: blocks if any resulting card has been sold, otherwise soft-deletes the card lots (cascading their cost adjustments, same as `deleteLot`) and hard-deletes the Cost of Goods transaction the opening created — this event created that transaction, so a wrong opening means the transaction was wrong too.
+> - `allocateBoxCost` uses the largest-remainder method for `relative_fmv` (round each card down, then hand the leftover cents to the cards with the biggest fractional remainder) rather than pushing all remainder cents onto the trailing card as `splitLotCost` does for even splits — appropriate here since cards have very different weights and a trailing-only rule would visibly overcharge whichever card happened to be entered last.
 
 ## Background
 

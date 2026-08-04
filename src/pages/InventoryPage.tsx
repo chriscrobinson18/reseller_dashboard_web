@@ -1,6 +1,6 @@
 import { useState, useMemo, Fragment } from 'react'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
-import { ArrowLeftRight, ChevronDown, ChevronRight, Plus, Pencil, Trash2, Receipt } from 'lucide-react'
+import { ArrowLeftRight, ChevronDown, ChevronRight, Plus, Pencil, Trash2, Receipt, PackageOpen } from 'lucide-react'
 import { formatUSD, formatDate } from '../lib/utils'
 import { deleteItem, deleteLot, deleteLotCostAdjustment } from '../lib/mutations'
 import { basisFromAdjustments } from '../lib/lotCost'
@@ -9,12 +9,14 @@ import type { InventoryLot, LotCostAdjustment } from '../lib/types'
 import { useItems, type ItemWithLots } from '../lib/queries'
 import AddItemModal from '../components/modals/AddItemModal'
 import RecordTradeModal from '../components/modals/RecordTradeModal'
+import OpenBoxModal from '../components/modals/OpenBoxModal'
 import AddLotModal from '../components/modals/AddLotModal'
 import EditItemModal from '../components/modals/EditItemModal'
 import EditLotModal from '../components/modals/EditLotModal'
 import AddLotCostAdjustmentModal from '../components/modals/AddLotCostAdjustmentModal'
 import ConfirmDialog from '../components/ConfirmDialog'
 import TradeDetailSlideOver from '../components/TradeDetailSlideOver'
+import BoxOpeningDetailSlideOver from '../components/BoxOpeningDetailSlideOver'
 import LotTransactionSlideOver from '../components/LotTransactionSlideOver'
 
 interface ItemSummary {
@@ -58,12 +60,13 @@ function AddLotRow({ onAddLot }: { onAddLot: () => void }) {
   )
 }
 
-function LotRows({ lots, onAddLot, onEditLot, onDeleteLot, onTradePillClick, onTxClick, onAddCost, onDeleteAdjustment, expandedBasis, onToggleBasis }: {
+function LotRows({ lots, onAddLot, onEditLot, onDeleteLot, onTradePillClick, onBoxPillClick, onTxClick, onAddCost, onDeleteAdjustment, expandedBasis, onToggleBasis }: {
   lots: InventoryLot[]
   onAddLot: () => void
   onEditLot: (lot: InventoryLot) => void
   onDeleteLot: (lot: InventoryLot) => void
   onTradePillClick: (tradeId: string) => void
+  onBoxPillClick: (boxOpeningId: string) => void
   onTxClick: (lot: InventoryLot) => void
   onAddCost: (lot: InventoryLot) => void
   onDeleteAdjustment: (adjustment: LotCostAdjustment) => void
@@ -153,6 +156,15 @@ function LotRows({ lots, onAddLot, onEditLot, onDeleteLot, onTradePillClick, onT
                     title="Acquired via trade"
                   >
                     Trade
+                  </span>
+                )}
+                {lot.box_opening_id && (
+                  <span
+                    className="inline-block px-1.5 py-0.5 text-[10px] font-medium bg-teal-100 text-teal-700 rounded cursor-pointer hover:bg-teal-200"
+                    onClick={(e) => { e.stopPropagation(); onBoxPillClick(lot.box_opening_id!) }}
+                    title="From an opened box"
+                  >
+                    Box
                   </span>
                 )}
                 <div className="flex gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
@@ -306,11 +318,12 @@ function lotDate(lot: InventoryLot): string {
  * view: this is the shape you want when reconciling purchases against bank
  * transactions chronologically.
  */
-function LotLedger({ rows, onEditLot, onDeleteLot, onTradePillClick, onTxClick, onAddCost, onDeleteAdjustment, expandedBasis, onToggleBasis }: {
+function LotLedger({ rows, onEditLot, onDeleteLot, onTradePillClick, onBoxPillClick, onTxClick, onAddCost, onDeleteAdjustment, expandedBasis, onToggleBasis }: {
   rows: LedgerRow[]
   onEditLot: (lot: InventoryLot) => void
   onDeleteLot: (lot: InventoryLot) => void
   onTradePillClick: (tradeId: string) => void
+  onBoxPillClick: (boxOpeningId: string) => void
   onTxClick: (lot: InventoryLot, itemName: string) => void
   onAddCost: (lot: InventoryLot) => void
   onDeleteAdjustment: (adjustment: LotCostAdjustment) => void
@@ -345,6 +358,14 @@ function LotLedger({ rows, onEditLot, onDeleteLot, onTradePillClick, onTxClick, 
                     className="px-1.5 py-0.5 rounded text-[10px] font-medium bg-purple-100 text-purple-700 hover:bg-purple-200"
                   >
                     Trade
+                  </button>
+                )}
+                {lot.box_opening_id && (
+                  <button
+                    onClick={() => onBoxPillClick(lot.box_opening_id!)}
+                    className="px-1.5 py-0.5 rounded text-[10px] font-medium bg-teal-100 text-teal-700 hover:bg-teal-200"
+                  >
+                    Box
                   </button>
                 )}
               </div>
@@ -426,6 +447,8 @@ export default function InventoryPage() {
   const [deleteLotTarget, setDeleteLotTarget] = useState<InventoryLot | null>(null)
   const [showRecordTrade, setShowRecordTrade] = useState(false)
   const [openTradeId, setOpenTradeId] = useState<string | null>(null)
+  const [showOpenBox, setShowOpenBox] = useState(false)
+  const [openBoxOpeningId, setOpenBoxOpeningId] = useState<string | null>(null)
   const [txLot, setTxLot] = useState<{ lot: InventoryLot; itemName: string } | null>(null)
   const [addCostFor, setAddCostFor] = useState<{ lot: InventoryLot; itemName: string } | null>(null)
   const [deleteAdjTarget, setDeleteAdjTarget] = useState<LotCostAdjustment | null>(null)
@@ -540,6 +563,12 @@ export default function InventoryPage() {
               <ArrowLeftRight size={14} /> Record Trade
             </button>
             <button
+              onClick={() => setShowOpenBox(true)}
+              className="flex items-center gap-1.5 bg-gray-900 text-white px-3 py-1.5 rounded-lg text-sm font-medium hover:bg-gray-700 transition-colors"
+            >
+              <PackageOpen size={14} /> Open Box
+            </button>
+            <button
               onClick={() => setShowAddItem(true)}
               className="flex items-center gap-1.5 bg-gray-900 text-white px-3 py-1.5 rounded-lg text-sm font-medium hover:bg-gray-700 transition-colors"
             >
@@ -568,6 +597,7 @@ export default function InventoryPage() {
               onEditLot={setEditLot}
               onDeleteLot={setDeleteLotTarget}
               onTradePillClick={setOpenTradeId}
+              onBoxPillClick={setOpenBoxOpeningId}
               onTxClick={(lot, itemName) => setTxLot({ lot, itemName })}
               onAddCost={lot => setAddCostFor({
                 lot,
@@ -652,6 +682,7 @@ export default function InventoryPage() {
                         onEditLot={setEditLot}
                         onDeleteLot={setDeleteLotTarget}
                         onTradePillClick={setOpenTradeId}
+                        onBoxPillClick={setOpenBoxOpeningId}
                         onTxClick={lot => setTxLot({ lot, itemName: item.name })}
                         onAddCost={lot => setAddCostFor({ lot, itemName: item.name })}
                         onDeleteAdjustment={setDeleteAdjTarget}
@@ -675,6 +706,8 @@ export default function InventoryPage() {
 
       <RecordTradeModal open={showRecordTrade} onClose={() => setShowRecordTrade(false)} />
       <TradeDetailSlideOver tradeId={openTradeId} onClose={() => setOpenTradeId(null)} />
+      <OpenBoxModal open={showOpenBox} onClose={() => setShowOpenBox(false)} />
+      <BoxOpeningDetailSlideOver boxOpeningId={openBoxOpeningId} onClose={() => setOpenBoxOpeningId(null)} />
       <LotTransactionSlideOver
         lot={txLot?.lot ?? null}
         itemName={txLot?.itemName}

@@ -101,6 +101,22 @@ Step 3 always rebuilds from `initial_unit_cost` and the *full* adjustment set ra
 
 **Why this and not sale-level COGS.** An earlier iteration let a *sale* consume lots of several items. It worked, but a grading fee isn't a property of the sale — it's a property of the card, incurred long before any sale exists and true regardless of how (or whether) the card is eventually sold. Modeling it at the lot means the basis is right the moment the fee is paid. That approach was reverted; see `20260726130000_drop_sale_cost_components.sql`.
 
+## Opening a box (`openBox` in `mutations.ts`)
+
+See [`docs/superpowers/specs/2026-06-23-box-opening-and-grading-design.md`](superpowers/specs/2026-06-23-box-opening-and-grading-design.md) for the full accounting rationale (NIMS deduct-when-used, relative-sales-value allocation). Summary:
+
+Opening a box creates:
+- 1 `cost_of_goods` transaction for the **full** box cost (`amount: -box_cost`, `date: opened_at`) — this is Schedule C's only view of the event
+- 1 `box_openings` audit row, linking that transaction
+- N `inventory_lots` rows, one per card (`quantity_purchased = 1`, `box_opening_id` set, `unit_cost` = that card's allocated share, `transaction_id` shared with every other card from the box)
+- N `inventory_lot_transactions` rows mirroring the funding link (same pattern as `createLotsForPurchase`)
+
+**Allocation is Profitability-only.** `allocateBoxCost()` (`src/lib/boxAllocation.ts`) splits `box_cost` across cards by relative FMV, equal share, or specific $ (user's choice, `box_openings.allocation_method`), always summing back to `box_cost` exactly (integer-cents, largest-remainder rounding). Because Schedule C reads `transactions` — one row, the full box cost — and never `inventory_lots.unit_cost`, the allocation choice cannot change the tax total; it only changes the per-card basis that the Profitability dashboard and per-sale profit use once a card sells.
+
+FIFO depletion, `record_sale`, and returns need no changes: a box-opening card lot is structurally identical to a cash-purchased lot, just with `box_opening_id` populated.
+
+**Deleting a box opening** (`deleteBoxOpening`) blocks if any resulting card has been sold (`quantity_remaining < quantity_purchased` — same guard shape as `deleteTrade`), otherwise soft-deletes the card lots (cascading to their own `lot_cost_adjustments`, same as `deleteLot`), soft-deletes the `box_openings` row, and hard-deletes the Cost of Goods transaction — this event created it, so a wrong opening means the transaction was wrong too (same reasoning as removing a *created* lot cost adjustment, never a *linked* one).
+
 ## Revenue net of returns
 
 `netRevenue = sale_price - (return_status === 'partial' ? refunded_amount : 0)`. Sales with `return_status === 'full'` are excluded entirely from revenue/profitability sums (`active = sales.filter(s => s.return_status !== 'full')`). Centralized in `saleProfit()` for per-sale callers; `DashboardPage.computeProfitability` and the `totalRevenue` calc in `SalesPage` still inline the same formula since they aggregate across many sales.

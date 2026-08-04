@@ -1,6 +1,6 @@
 import { useQuery } from '@tanstack/react-query'
 import { supabase } from './supabase'
-import type { Item, InventoryLot, Trade, SaleBundle, PlaidItem, PlaidAccount, Transaction } from './types'
+import type { Item, InventoryLot, Trade, SaleBundle, PlaidItem, PlaidAccount, Transaction, BoxOpening } from './types'
 import type { CustomCategory } from './categories'
 import { customCategoryValue } from './categories'
 import type { ColorKey } from './categoryPalette'
@@ -12,7 +12,7 @@ export interface ItemWithLots extends Item {
 export async function fetchItemsWithLots(): Promise<ItemWithLots[]> {
   const { data, error } = await supabase
     .from('items')
-    .select('*, inventory_lots(id, item_id, user_id, quantity_purchased, quantity_remaining, unit_cost, initial_unit_cost, transaction_id, trade_id, purchase_date, created_at, deleted_at, inventory_lot_transactions(id, user_id, lot_id, transaction_id, allocated_amount, created_at), lot_cost_adjustments(id, user_id, lot_id, transaction_id, created_transaction, adjustment_type, amount, incurred_on, grader, grade_received, notes, created_at, deleted_at))')
+    .select('*, inventory_lots(id, item_id, user_id, quantity_purchased, quantity_remaining, unit_cost, initial_unit_cost, transaction_id, trade_id, box_opening_id, purchase_date, created_at, deleted_at, inventory_lot_transactions(id, user_id, lot_id, transaction_id, allocated_amount, created_at), lot_cost_adjustments(id, user_id, lot_id, transaction_id, created_transaction, adjustment_type, amount, incurred_on, grader, grade_received, notes, created_at, deleted_at))')
     .is('deleted_at', null)
     .order('name')
   if (error) throw error
@@ -157,6 +157,50 @@ export function useTrade(id: string | null) {
         incomeTransaction: txs.find(t => t.id === typedTrade.income_transaction_id) ?? null,
         cogsTransaction: txs.find(t => t.id === typedTrade.cogs_transaction_id) ?? null,
         cashTransaction: txs.find(t => t.id === typedTrade.cash_transaction_id) ?? null,
+      }
+    },
+  })
+}
+
+/**
+ * Fetches a box-opening event with the resulting card lots and its Cost of
+ * Goods transaction. Used by BoxOpeningDetailSlideOver.
+ */
+export function useBoxOpening(id: string | null) {
+  return useQuery({
+    queryKey: ['box-opening', id],
+    enabled: !!id,
+    queryFn: async (): Promise<{
+      opening: BoxOpening
+      cards: Array<{ id: string; quantity_remaining: number; quantity_purchased: number; unit_cost: number; items: { id: string; name: string } | null }>
+      transaction: Transaction | null
+    }> => {
+      const { data: opening, error } = await supabase
+        .from('box_openings')
+        .select('*')
+        .eq('id', id!)
+        .is('deleted_at', null)
+        .single()
+      if (error || !opening) throw error ?? new Error('Box opening not found')
+
+      const [lotsRes, txRes] = await Promise.all([
+        supabase
+          .from('inventory_lots')
+          .select('id, quantity_remaining, quantity_purchased, unit_cost, items(id, name)')
+          .eq('box_opening_id', id!)
+          .is('deleted_at', null)
+          .order('unit_cost', { ascending: false }),
+        opening.transaction_id
+          ? supabase.from('transactions').select('*').eq('id', opening.transaction_id).single()
+          : Promise.resolve({ data: null, error: null }),
+      ])
+      if (lotsRes.error) throw lotsRes.error
+      if (txRes.error) throw txRes.error
+
+      return {
+        opening: opening as BoxOpening,
+        cards: (lotsRes.data ?? []) as unknown as Array<{ id: string; quantity_remaining: number; quantity_purchased: number; unit_cost: number; items: { id: string; name: string } | null }>,
+        transaction: (txRes.data ?? null) as Transaction | null,
       }
     },
   })
