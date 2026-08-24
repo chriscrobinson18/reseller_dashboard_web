@@ -55,11 +55,13 @@ def ask_num(prompt, default=None):
     return {"WFWorkflowActionIdentifier": "is.workflow.actions.ask",
             "WFWorkflowActionParameters": p}
 
-def choose_list(items, prompt=None):
+def choose_list(items, prompt=None, output_uuid=None):
     p = {"WFChooseFromListActionList": [
         {"WFItemType": 0, "WFValue": plain(i)} for i in items]}
     if prompt:
         p["WFChooseFromListActionPrompt"] = prompt
+    if output_uuid:
+        p["UUID"] = output_uuid
     return {"WFWorkflowActionIdentifier": "is.workflow.actions.choosefromlist",
             "WFWorkflowActionParameters": p}
 
@@ -75,14 +77,19 @@ def get_dict_val(key_var):
     return {"WFWorkflowActionIdentifier": "is.workflow.actions.getvalueforkey",
             "WFWorkflowActionParameters": {"WFDictionaryKey": vref(key_var)}}
 
-def cond_if(gid, var_name, cond_str):
+def cond_if(gid, output_uuid, output_name, cond_str):
+    """output_uuid/output_name: UUID + display name of the action whose output is the input."""
     return {"WFWorkflowActionIdentifier": "is.workflow.actions.conditional",
             "WFWorkflowActionParameters": {
                 "GroupingIdentifier": gid, "WFControlFlowMode": 0,
                 "WFCondition": 4,                          # "is"
                 "WFConditionalActionString": cond_str,
                 "WFInput": {
-                    "Value": {"Type": "Variable", "VariableName": var_name},
+                    "Value": {
+                        "Type": "ActionOutput",
+                        "OutputUUID": output_uuid,
+                        "OutputName": output_name,
+                    },
                     "WFSerializationType": "WFTextTokenAttachment"}}}
 
 def cond_else(gid):
@@ -133,7 +140,8 @@ PAYMENT_METHODS = [
     ("Card", "card"), ("Other", "other"),
 ]
 
-gid = str(uuid.uuid4()).upper()   # shared group ID for the Sale/Breakdown if block
+gid      = str(uuid.uuid4()).upper()   # shared group ID for the Sale/Breakdown if block
+mode_uuid = str(uuid.uuid4()).upper()  # UUID for the choose_list "Mode" action output
 
 actions = [
     # ── Token (action index 0 — Import Question pre-fills this) ──────────────
@@ -146,11 +154,11 @@ actions = [
 
     # ── Mode choice ───────────────────────────────────────────────────────────
     choose_list(["Record a Sale", "Break Down Inventory"],
-                "What would you like to do?"),
-    set_var("Mode"),
+                "What would you like to do?",
+                output_uuid=mode_uuid),
 
     # ── If Sale ───────────────────────────────────────────────────────────────
-    cond_if(gid, "Mode", "Record a Sale"),
+    cond_if(gid, mode_uuid, "Chosen Item", "Record a Sale"),
 
       ask_text("What did you sell?"),
       set_var("ItemName"),
