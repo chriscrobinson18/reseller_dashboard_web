@@ -1,37 +1,55 @@
 #!/usr/bin/env python3
-"""Generate public/reseller-sale.shortcut as a binary plist."""
+"""Generate public/reseller-sale.shortcut as a binary plist.
+
+Structures validated against:
+  https://github.com/drewocarr/generate-shortcuts-skill
+  (CONTROL_FLOW.md, ACTIONS.md, PARAMETER_TYPES.md, EXAMPLES.md)
+"""
 import plistlib, uuid as _uuid, subprocess, tempfile
 from pathlib import Path
 
 def uid():
     return str(_uuid.uuid4()).upper()
 
-# ── reference helpers ─────────────────────────────────────────────────────────
+# ── serialization helpers ─────────────────────────────────────────────────────
 
 def plain(s):
-    """Static text WFTextTokenString."""
+    """Static text — WFTextTokenString with no attachments."""
     return {"Value": {"attachmentsByRange": {}, "string": s},
             "WFSerializationType": "WFTextTokenString"}
 
-def oref_text(output_uuid, output_name):
-    """WFTextTokenString containing a single action-output reference."""
+def token_attach(output_uuid, output_name):
+    """Single action-output ref — WFTextTokenAttachment.
+    Use for WFInput, WFVariable, and similar single-value slots."""
+    return {"Value": {"OutputUUID": output_uuid,
+                      "OutputName": output_name,
+                      "Type": "ActionOutput"},
+            "WFSerializationType": "WFTextTokenAttachment"}
+
+def token_string(output_uuid, output_name):
+    """Action-output ref embedded in WFTextTokenString.
+    Use for text fields (HTTP body values, notification body, etc.)."""
     return {"Value": {"attachmentsByRange": {"{0, 1}": {
-                "Aggrandizements": [], "Type": "ActionOutput",
-                "OutputUUID": output_uuid, "OutputName": output_name}},
-            "string": "\ufffc"},
+                          "Aggrandizements": [],
+                          "OutputUUID": output_uuid,
+                          "OutputName": output_name,
+                          "Type": "ActionOutput"}},
+                      "string": "\ufffc"},
             "WFSerializationType": "WFTextTokenString"}
 
-def oref_prefix(prefix, output_uuid, output_name):
-    """WFTextTokenString: literal prefix + action-output reference."""
+def token_string_prefix(prefix, output_uuid, output_name):
+    """Literal text prefix followed by an action-output reference."""
     pos = len(prefix)
     return {"Value": {"attachmentsByRange": {f"{{{pos}, 1}}": {
-                "Aggrandizements": [], "Type": "ActionOutput",
-                "OutputUUID": output_uuid, "OutputName": output_name}},
-            "string": prefix + "\ufffc"},
+                          "Aggrandizements": [],
+                          "OutputUUID": output_uuid,
+                          "OutputName": output_name,
+                          "Type": "ActionOutput"}},
+                      "string": prefix + "\ufffc"},
             "WFSerializationType": "WFTextTokenString"}
 
 def vref_attach(name):
-    """WFTextTokenAttachment for a named variable."""
+    """Named-variable ref — WFTextTokenAttachment (for get_var)."""
     return {"Value": {"Type": "Variable", "VariableName": name},
             "WFSerializationType": "WFTextTokenAttachment"}
 
@@ -81,37 +99,42 @@ def dict_act(pairs, u=None):
     return {"WFWorkflowActionIdentifier": "is.workflow.actions.dictionary",
             "WFWorkflowActionParameters": p}
 
-def get_dict_val(key_ref, u=None):
-    """key_ref: WFTextTokenString for the key. Dict comes from previous action output."""
-    p = {"WFDictionaryKey": key_ref}
+def get_dict_val(key_token_string, u=None):
+    """Look up key in dictionary from previous action's implicit output.
+    key_token_string: a WFTextTokenString referencing the chosen label."""
+    p = {"WFDictionaryKey": key_token_string}
     if u: p["UUID"] = u
     return {"WFWorkflowActionIdentifier": "is.workflow.actions.getvalueforkey",
             "WFWorkflowActionParameters": p}
 
 def cond_if(gid, input_uuid, input_name, cond_str):
-    """WFInput: flat Variable/ActionOutput dict — no WFSerializationType wrapper."""
+    """Conditional start.
+    WFCondition must be the string "Equals" (not integer 4).
+    WFInput uses WFTextTokenAttachment (per CONTROL_FLOW.md)."""
     return {"WFWorkflowActionIdentifier": "is.workflow.actions.conditional",
             "WFWorkflowActionParameters": {
-                "GroupingIdentifier": gid, "WFControlFlowMode": 0,
-                "WFCondition": 4,  # "is" (equals)
+                "GroupingIdentifier": gid,
+                "WFControlFlowMode": 0,
+                "WFCondition": "Equals",
                 "WFConditionalActionString": cond_str,
-                "WFInput": {
-                    "Type": "Variable",
-                    "Variable": {"OutputUUID": input_uuid,
-                                 "Type": "ActionOutput",
-                                 "OutputName": input_name}}}}
+                "WFInput": token_attach(input_uuid, input_name)}}
 
 def cond_else(gid):
     return {"WFWorkflowActionIdentifier": "is.workflow.actions.conditional",
-            "WFWorkflowActionParameters": {"GroupingIdentifier": gid, "WFControlFlowMode": 1}}
+            "WFWorkflowActionParameters": {
+                "GroupingIdentifier": gid, "WFControlFlowMode": 1}}
 
 def cond_end(gid):
     return {"WFWorkflowActionIdentifier": "is.workflow.actions.conditional",
-            "WFWorkflowActionParameters": {"GroupingIdentifier": gid, "WFControlFlowMode": 2}}
+            "WFWorkflowActionParameters": {
+                "GroupingIdentifier": gid, "WFControlFlowMode": 2}}
 
 def http_post(url, body_kv, u=None):
-    """body_kv: list of (key_str, WFTextTokenString value)."""
-    body_items = [{"WFItemType": 0, "WFKey": plain(k), "WFValue": v} for k, v in body_kv]
+    """POST with JSON body.
+    WFHTTPBodyType = "JSON" → body key is WFJSONValues (not WFFormValues).
+    body_kv: list of (key_str, WFTextTokenString value)."""
+    body_items = [{"WFItemType": 0, "WFKey": plain(k), "WFValue": v}
+                  for k, v in body_kv]
     p = {
         "WFHTTPMethod": "POST",
         "WFURL": plain(url),
@@ -123,7 +146,7 @@ def http_post(url, body_kv, u=None):
                  "WFKey": plain("Content-Type"),
                  "WFValue": plain("application/json")}]},
             "WFSerializationType": "WFDictionaryFieldValue"},
-        "WFFormValues": {
+        "WFJSONValues": {
             "Value": {"WFDictionaryFieldValueItems": body_items},
             "WFSerializationType": "WFDictionaryFieldValue"},
     }
@@ -132,7 +155,7 @@ def http_post(url, body_kv, u=None):
             "WFWorkflowActionParameters": p}
 
 def notify(prefix, output_uuid, output_name, title=None):
-    p = {"WFNotificationActionBody": oref_prefix(prefix, output_uuid, output_name),
+    p = {"WFNotificationActionBody": token_string_prefix(prefix, output_uuid, output_name),
          "WFNotificationActionSound": True}
     if title: p["WFNotificationActionTitle"] = plain(title)
     return {"WFWorkflowActionIdentifier": "is.workflow.actions.notification",
@@ -151,7 +174,7 @@ PAYMENT_METHODS = [
 
 gid = uid()
 
-# Pre-define UUIDs for every action whose output is referenced downstream
+# UUIDs for every action whose output is referenced downstream
 #   action                               output name
 TOKEN_UUID     = uid()   # text_act token          → "Text"
 PAY_MAP_UUID   = uid()   # dict_act payment map    → "Dictionary"
@@ -167,18 +190,19 @@ ITEM_B_UUID    = uid()   # ask_text item name      → "Provided Input"
 QTY_B_UUID     = uid()   # ask_num quantity        → "Provided Input"
 
 actions = [
-    # ── 0: Token (Import Question pre-fills this on first install) ────────────
+    # ── 0: Token (Import Question pre-fills on first install) ─────────────────
     text_act("PASTE_YOUR_TOKEN_HERE", u=TOKEN_UUID),
 
-    # ── 1-2: Payment label → value dictionary ─────────────────────────────────
+    # ── 1-2: Payment label→value map ──────────────────────────────────────────
     dict_act(PAYMENT_METHODS, u=PAY_MAP_UUID),
-    set_var("PaymentMap"),          # persist as named var; retrieved inside If branch
+    set_var("PaymentMap"),      # persist as named var; retrieved inside If branch
 
     # ── 3: Mode choice ────────────────────────────────────────────────────────
     choose_list(["Record a Sale", "Break Down Inventory"],
                 "What would you like to do?", u=MODE_UUID),
 
     # ── 4: If mode == "Record a Sale" ─────────────────────────────────────────
+    #   WFCondition = "Equals" (string), WFInput = WFTextTokenAttachment
     cond_if(gid, MODE_UUID, "Chosen Item", "Record a Sale"),
 
         ask_text("What did you sell?", u=ITEM_S_UUID),
@@ -186,16 +210,17 @@ actions = [
         ask_num("Sale price?", u=PRICE_UUID),
         choose_list([p[0] for p in PAYMENT_METHODS], "Payment method?", u=PAY_LABEL_UUID),
 
-        # Resolve label → code: get stored dict, look up chosen label
+        # Map label → code: get the PaymentMap dict, look up chosen label
         get_var("PaymentMap"),
-        get_dict_val(oref_text(PAY_LABEL_UUID, "Chosen Item"), u=PAY_VALUE_UUID),
+        get_dict_val(token_string(PAY_LABEL_UUID, "Chosen Item"), u=PAY_VALUE_UUID),
 
+        # POST — JSON body uses WFJSONValues (not WFFormValues)
         http_post(SALE_URL, [
-            ("shortcut_token", oref_text(TOKEN_UUID,     "Text")),
-            ("item_name",      oref_text(ITEM_S_UUID,    "Provided Input")),
-            ("quantity",       oref_text(QTY_S_UUID,     "Provided Input")),
-            ("sale_price",     oref_text(PRICE_UUID,     "Provided Input")),
-            ("payment_method", oref_text(PAY_VALUE_UUID, "Dictionary Value")),
+            ("shortcut_token", token_string(TOKEN_UUID,     "Text")),
+            ("item_name",      token_string(ITEM_S_UUID,    "Provided Input")),
+            ("quantity",       token_string(QTY_S_UUID,     "Provided Input")),
+            ("sale_price",     token_string(PRICE_UUID,     "Provided Input")),
+            ("payment_method", token_string(PAY_VALUE_UUID, "Dictionary Value")),
         ]),
         notify("Sale recorded: ", ITEM_S_UUID, "Provided Input", "Log Sale"),
 
@@ -206,9 +231,9 @@ actions = [
         ask_num("Quantity?", default=1, u=QTY_B_UUID),
 
         http_post(BREAK_URL, [
-            ("shortcut_token", oref_text(TOKEN_UUID,  "Text")),
-            ("item_name",      oref_text(ITEM_B_UUID, "Provided Input")),
-            ("quantity",       oref_text(QTY_B_UUID,  "Provided Input")),
+            ("shortcut_token", token_string(TOKEN_UUID,  "Text")),
+            ("item_name",      token_string(ITEM_B_UUID, "Provided Input")),
+            ("quantity",       token_string(QTY_B_UUID,  "Provided Input")),
         ]),
         notify("Breakdown recorded: ", ITEM_B_UUID, "Provided Input", "Log Sale"),
 
