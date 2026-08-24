@@ -1,12 +1,12 @@
-# Apple Shortcut Quick Sale Implementation Plan
+# Apple Shortcut Quick Sale & Breakdown Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Allow users to record an unlinked manual sale from an Apple Shortcut on their iPhone, with auth via a one-time token generated in the web app's Settings page.
+**Goal:** Apple Shortcut that records a quick sale or breakdown from iPhone, with incomplete records surfaced via ⚠️ banners in the web app for later completion.
 
-**Architecture:** Two DB migrations (new `sales.item_name` column + `profiles` table with `shortcut_token`), a new edge function that validates the token and inserts the sale, a `ShortcutsSettingsCard` React component for token management, and a static `.shortcut` file served from `public/`. No FIFO inventory depletion — the sale appears as an unlinked manual entry linkable later.
+**Architecture:** Three DB migrations → TypeScript type updates → two edge functions → ⚠️ banners on Sales and Inventory pages → ShortcutsSettingsCard → static shortcut file. Auth via per-user token in `profiles`. No FIFO — all records are unlinked at creation.
 
-**Tech Stack:** Supabase (Postgres migrations, Deno edge function, service role client), React 19 + TanStack React Query, Tailwind v4, Apple Shortcuts app (manual build).
+**Tech Stack:** Supabase (Postgres, Deno edge functions, service role), React 19 + TanStack React Query, Tailwind v4, Apple Shortcuts app (manual build step).
 
 ---
 
@@ -16,12 +16,16 @@
 |---|---|
 | Create | `supabase/migrations/20260823100000_add_item_name_to_sales.sql` |
 | Create | `supabase/migrations/20260823100001_add_shortcut_token_to_profiles.sql` |
-| Modify | `src/lib/types.ts` — add `item_name` to `Sale` |
-| Modify | `src/pages/SalesPage.tsx` — show `item_name` when sale is unlinked |
+| Create | `supabase/migrations/20260823100002_relax_box_openings_for_shortcut.sql` |
+| Modify | `src/lib/types.ts` — `Sale.item_name`, `BoxOpening.box_cost` / `allocation_method` nullable |
+| Modify | `src/lib/queries.ts` — add `useIncompleteBreakdowns` |
+| Modify | `src/pages/SalesPage.tsx` — ⚠️ banner + item_name display |
+| Modify | `src/pages/InventoryPage.tsx` — ⚠️ banner for pending breakdowns |
 | Create | `supabase/functions/shortcut_record_sale/index.ts` |
+| Create | `supabase/functions/shortcut_record_breakdown/index.ts` |
 | Create | `src/components/ShortcutsSettingsCard.tsx` |
-| Modify | `src/pages/SettingsPage.tsx` — add shortcuts section |
-| Create | `public/reseller-sale.shortcut` — built manually in Shortcuts app |
+| Modify | `src/pages/SettingsPage.tsx` |
+| Create | `public/reseller-sale.shortcut` (manual build) |
 | Modify | `docs/supabase-schema.md` |
 | Modify | `docs/features/sales.md` |
 
@@ -35,35 +39,24 @@
 - [ ] **Step 1: Create migration file**
 
 ```sql
--- Stores the free-text item description captured by the Apple Shortcuts
--- quick-sale integration. Preserved after the sale is linked to an
--- inventory_items row via item_id.
+-- Free-text item description captured by the Apple Shortcuts quick-sale flow.
+-- Preserved after item_id is linked so the original entry is never lost.
 alter table public.sales
   add column if not exists item_name text;
 
 comment on column public.sales.item_name is
-  'Free-text item name captured by the Apple Shortcuts quick-sale flow. '
-  'Preserved after item_id is set so the original entry is never lost.';
+  'Free-text item name from the Apple Shortcuts quick-sale flow. '
+  'Preserved after item_id is set.';
 ```
 
 - [ ] **Step 2: Apply migration**
 
-Option A (Supabase CLI):
-```bash
-supabase db push
-```
-Expected: `Applied 1 migration`
+Option A — CLI: `supabase db push`
+Option B — MCP: call `apply_migration` with the SQL above.
 
-Option B (MCP tool): Call `apply_migration` with the SQL above.
+Expected: migration applied with no errors.
 
-- [ ] **Step 3: Verify column exists**
-
-```bash
-supabase db diff
-```
-Expected: empty diff (migration applied cleanly).
-
-- [ ] **Step 4: Commit**
+- [ ] **Step 3: Commit**
 
 ```bash
 git add supabase/migrations/20260823100000_add_item_name_to_sales.sql
@@ -81,14 +74,12 @@ git commit -m "feat(schema): add item_name text column to sales"
 
 ```sql
 -- Create profiles table only if it does not already exist.
--- Supabase projects sometimes auto-create this; this migration is safe either way.
 create table if not exists public.profiles (
   id uuid primary key references auth.users(id) on delete cascade
 );
 
 alter table public.profiles enable row level security;
 
--- Only create the policy if it doesn't already exist
 do $$
 begin
   if not exists (
@@ -113,105 +104,197 @@ alter table public.profiles
   add column if not exists shortcut_token uuid unique;
 
 comment on column public.profiles.shortcut_token is
-  'Personal API token for the Apple Shortcuts quick-sale integration. '
-  'Regenerating it invalidates the previous one. Null = no shortcut configured.';
+  'Personal API token for Apple Shortcuts integration. '
+  'Regenerating invalidates the previous one. Null = not configured.';
 ```
 
 - [ ] **Step 2: Apply migration**
 
-Option A (Supabase CLI):
-```bash
-supabase db push
-```
-Expected: `Applied 1 migration`
-
-Option B (MCP tool): Call `apply_migration` with the SQL above.
+Option A — CLI: `supabase db push`
+Option B — MCP: call `apply_migration` with the SQL above.
 
 - [ ] **Step 3: Commit**
 
 ```bash
 git add supabase/migrations/20260823100001_add_shortcut_token_to_profiles.sql
-git commit -m "feat(schema): add profiles table with shortcut_token for Apple Shortcuts auth"
+git commit -m "feat(schema): add profiles table with shortcut_token"
 ```
 
 ---
 
-## Task 3: Update `Sale` TypeScript Type
+## Task 3: Migration — Relax `box_openings` Constraints
+
+**Files:**
+- Create: `supabase/migrations/20260823100002_relax_box_openings_for_shortcut.sql`
+
+- [ ] **Step 1: Create migration file**
+
+```sql
+-- Allow shortcut-initiated breakdown records where source_lot_id is not yet
+-- known. These are detected by source_lot_id IS NULL in the web UI.
+
+-- Drop existing constraints and re-add with null-permissive versions
+alter table public.box_openings
+  drop constraint if exists box_openings_box_cost_check,
+  drop constraint if exists box_openings_allocation_method_check;
+
+alter table public.box_openings
+  add constraint box_openings_box_cost_check
+    check (box_cost is null or box_cost > 0),
+  add constraint box_openings_allocation_method_check
+    check (allocation_method is null or allocation_method in ('relative_fmv', 'specific_id', 'equal'));
+
+-- Allow both columns to be null
+alter table public.box_openings
+  alter column box_cost       drop not null,
+  alter column allocation_method drop not null;
+
+comment on column public.box_openings.source_lot_id is
+  'The inventory_lots row this box was opened from. '
+  'NULL for shortcut-initiated breakdowns awaiting completion in the web app.';
+```
+
+- [ ] **Step 2: Apply migration**
+
+Option A — CLI: `supabase db push`
+Option B — MCP: call `apply_migration` with the SQL above.
+
+- [ ] **Step 3: Commit**
+
+```bash
+git add supabase/migrations/20260823100002_relax_box_openings_for_shortcut.sql
+git commit -m "feat(schema): allow null box_cost and allocation_method for shortcut breakdowns"
+```
+
+---
+
+## Task 4: Update TypeScript Types
 
 **Files:**
 - Modify: `src/lib/types.ts`
 
-- [ ] **Step 1: Read the file**
+- [ ] **Step 1: Read `src/lib/types.ts`**
 
-Open `src/lib/types.ts`. Find the `Sale` interface. It starts with:
-```typescript
-export interface Sale {
-  id: string
-  user_id: string
-  item_id?: string
-  platform?: string
-  source: 'manual' | 'csv_import' | 'plaid' | 'trade'
-  ...
-```
+Open the file and locate the `Sale` interface and the `BoxOpening` interface.
 
-- [ ] **Step 2: Add `item_name` field after `item_id`**
+- [ ] **Step 2: Add `item_name` to `Sale`**
 
-Add this line after `item_id?: string`:
+After `item_id?: string`, add:
 ```typescript
   item_name?: string | null
 ```
 
-The block should now read:
+- [ ] **Step 3: Make `BoxOpening.box_cost` and `allocation_method` nullable**
+
+Find:
 ```typescript
-export interface Sale {
-  id: string
-  user_id: string
-  item_id?: string
-  item_name?: string | null
-  platform?: string
-  source: 'manual' | 'csv_import' | 'plaid' | 'trade'
+export interface BoxOpening {
   ...
+  box_cost: number
+  ...
+  allocation_method: BoxAllocationMethod
+  ...
+}
 ```
 
-- [ ] **Step 3: Verify TypeScript compiles**
+Change to:
+```typescript
+  box_cost: number | null
+  ...
+  allocation_method: BoxAllocationMethod | null
+```
+
+- [ ] **Step 4: Verify build**
 
 ```bash
-npm run build 2>&1 | head -30
+npm run build 2>&1 | head -40
 ```
-Expected: no type errors.
+Expected: no type errors. If there are errors about `allocation_method` being used where non-null is expected (e.g. in `boxAllocation.ts`), add null guards: `if (!opening.allocation_method) return` at the top of any function that uses it.
 
-- [ ] **Step 4: Commit**
+- [ ] **Step 5: Commit**
 
 ```bash
 git add src/lib/types.ts
-git commit -m "feat(types): add item_name to Sale interface"
+git commit -m "feat(types): item_name on Sale; nullable box_cost + allocation_method on BoxOpening"
 ```
 
 ---
 
-## Task 4: Show `item_name` in Sales List for Unlinked Shortcut Sales
+## Task 5: Sales Page — ⚠️ Banner + `item_name` Display
 
 **Files:**
 - Modify: `src/pages/SalesPage.tsx`
 
-Currently, when `sale.items` is null the table cell shows "Link to inventory item" and the detail panel shows "Unlinked sale". We add `item_name` as an intermediate display state.
+This task adds two things:
+1. A collapsible ⚠️ banner above the sales table when unlinked shortcut sales exist
+2. `item_name` shown in the table cell for those sales
 
-- [ ] **Step 1: Update the table cell (item name column)**
+- [ ] **Step 1: Read `src/pages/SalesPage.tsx`**
 
-Find this block (around line 462):
+Find: (a) where the main `<table>` or list container starts, (b) the item name cell block around line 462.
+
+- [ ] **Step 2: Add banner state and derived data**
+
+Near the top of the component function (after data fetching), add:
+
+```tsx
+const [shortcutBannerOpen, setShortcutBannerOpen] = useState(true)
+const shortcutSales = useMemo(
+  () => (sales ?? []).filter(s => !s.item_id && s.item_name),
+  [sales]
+)
+```
+
+Make sure `useState` and `useMemo` are imported (they likely already are).
+
+- [ ] **Step 3: Add the ⚠️ banner JSX above the table**
+
+Insert this block immediately before the `<table>` (or the outermost table wrapper div):
+
+```tsx
+{shortcutSales.length > 0 && (
+  <div className="mb-4 rounded-lg border border-amber-200 bg-amber-50">
+    <button
+      onClick={() => setShortcutBannerOpen(o => !o)}
+      className="flex w-full items-center justify-between px-4 py-3 text-sm font-medium text-amber-800"
+    >
+      <span>⚠️ {shortcutSales.length} sale{shortcutSales.length > 1 ? 's' : ''} need attention — item not linked to inventory</span>
+      <span className="text-amber-600">{shortcutBannerOpen ? '▲' : '▼'}</span>
+    </button>
+    {shortcutBannerOpen && (
+      <ul className="border-t border-amber-200 divide-y divide-amber-100">
+        {shortcutSales.map(sale => (
+          <li key={sale.id} className="flex items-center justify-between px-4 py-2 text-sm text-amber-900">
+            <button
+              className="flex-1 text-left hover:underline"
+              onClick={() => setEditSale(sale)}
+            >
+              {sale.item_name} — {formatUSD(sale.sale_price)} — {sale.sold_at}
+            </button>
+            <button
+              onClick={() => setDeleteSale(sale)}
+              className="ml-4 text-xs text-amber-600 hover:text-amber-800"
+            >
+              dismiss
+            </button>
+          </li>
+        ))}
+      </ul>
+    )}
+  </div>
+)}
+```
+
+Note: replace `setEditSale` and `setDeleteSale` with whatever the page uses to open the edit modal and delete confirmation respectively — read the existing code to confirm those state setters.
+
+- [ ] **Step 4: Update item name cell to show `item_name`**
+
+Find the item name cell (around line 462):
 ```tsx
 {sale.items?.name ? (
-  <>
-    <div className="font-medium text-gray-900 truncate max-w-xs">{sale.items.name}</div>
-    {sale.items.category && (
-      <div className="text-xs text-gray-400">{sale.items.category}</div>
-    )}
-  </>
+  ...
 ) : (
-  <button
-    onClick={e => { e.stopPropagation(); setLinkSale(sale) }}
-    className="flex items-center gap-1 text-amber-600 hover:text-amber-800 text-xs font-medium"
-  >
+  <button onClick={...}>
     <Link2 size={12} /> Link to inventory item
   </button>
 )}
@@ -228,7 +311,7 @@ Replace with:
   </>
 ) : sale.item_name ? (
   <div>
-    <div className="font-medium text-gray-900 truncate max-w-xs">{sale.item_name}</div>
+    <div className="font-medium text-gray-900 truncate max-w-xs">⚠️ {sale.item_name}</div>
     <button
       onClick={e => { e.stopPropagation(); setLinkSale(sale) }}
       className="flex items-center gap-1 text-amber-600 hover:text-amber-800 text-xs font-medium mt-0.5"
@@ -246,39 +329,171 @@ Replace with:
 )}
 ```
 
-- [ ] **Step 2: Update the detail panel header**
+- [ ] **Step 5: Update detail panel header to show `item_name`**
 
-Find this block (around line 221):
+Find (around line 221):
 ```tsx
-<div className="text-sm font-medium text-gray-700 mt-1">
-  {sale.items?.name ?? <span className="text-gray-400 italic">Unlinked sale</span>}
-</div>
+{sale.items?.name ?? <span className="text-gray-400 italic">Unlinked sale</span>}
 ```
 
 Replace with:
 ```tsx
-<div className="text-sm font-medium text-gray-700 mt-1">
-  {sale.items?.name ?? sale.item_name ?? <span className="text-gray-400 italic">Unlinked sale</span>}
-</div>
+{sale.items?.name ?? sale.item_name ?? <span className="text-gray-400 italic">Unlinked sale</span>}
 ```
 
-- [ ] **Step 3: Verify build**
+- [ ] **Step 6: Verify build**
 
 ```bash
-npm run build 2>&1 | head -30
+npm run build 2>&1 | head -40
 ```
 Expected: no errors.
 
-- [ ] **Step 4: Commit**
+- [ ] **Step 7: Commit**
 
 ```bash
 git add src/pages/SalesPage.tsx
-git commit -m "feat(sales): show item_name for unlinked shortcut sales in list + detail panel"
+git commit -m "feat(sales): warning banner and item_name display for shortcut-initiated sales"
 ```
 
 ---
 
-## Task 5: Edge Function `shortcut_record_sale`
+## Task 6: Inventory Page — ⚠️ Banner for Pending Breakdowns
+
+**Files:**
+- Modify: `src/lib/queries.ts` — add `useIncompleteBreakdowns`
+- Modify: `src/pages/InventoryPage.tsx` — add banner
+
+### Part A: Query
+
+- [ ] **Step 1: Read `src/lib/queries.ts`**
+
+Find an existing `useQuery` hook to use as a pattern (e.g., `useItems`).
+
+- [ ] **Step 2: Add `useIncompleteBreakdowns` hook**
+
+Add after the last existing hook in `queries.ts`:
+
+```typescript
+export function useIncompleteBreakdowns() {
+  return useQuery({
+    queryKey: ['incomplete_breakdowns'],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from('box_openings')
+        .select('id, box_name, quantity, opened_at')
+        .is('source_lot_id', null)
+        .is('deleted_at', null)
+        .order('opened_at', { ascending: false })
+      if (error) throw error
+      return data as Array<{
+        id: string
+        box_name: string
+        quantity: number
+        opened_at: string
+      }>
+    },
+  })
+}
+```
+
+### Part B: Banner in InventoryPage
+
+- [ ] **Step 3: Read `src/pages/InventoryPage.tsx`**
+
+Find: (a) the imports block, (b) the action buttons row (`Record Trade | Breakdown Inventory | Add Item`), (c) where the main table/content starts.
+
+- [ ] **Step 4: Add import and hook call**
+
+Add import at top:
+```typescript
+import { useItems, useIncompleteBreakdowns } from '../lib/queries'
+```
+(Replace the existing `useItems` import line — just add `useIncompleteBreakdowns` to the same import.)
+
+Inside the component, after existing hook calls, add:
+```tsx
+const { data: incompleteBreakdowns = [] } = useIncompleteBreakdowns()
+const [breakdownBannerOpen, setBreakdownBannerOpen] = useState(true)
+```
+
+- [ ] **Step 5: Add delete mutation for incomplete breakdowns**
+
+After existing mutations, add:
+```tsx
+const deleteIncompleteBreakdown = useMutation({
+  mutationFn: async (id: string) => {
+    const { error } = await supabase
+      .from('box_openings')
+      .update({ deleted_at: new Date().toISOString() })
+      .eq('id', id)
+    if (error) throw error
+  },
+  onSuccess: () => qc.invalidateQueries({ queryKey: ['incomplete_breakdowns'] }),
+})
+```
+
+Make sure `supabase` is imported in InventoryPage — check existing imports. If not, add:
+```typescript
+import { supabase } from '../lib/supabase'
+```
+
+- [ ] **Step 6: Add the ⚠️ banner JSX**
+
+Insert immediately after the action buttons row and before the main table/content div:
+
+```tsx
+{incompleteBreakdowns.length > 0 && (
+  <div className="mb-4 rounded-lg border border-amber-200 bg-amber-50">
+    <button
+      onClick={() => setBreakdownBannerOpen(o => !o)}
+      className="flex w-full items-center justify-between px-4 py-3 text-sm font-medium text-amber-800"
+    >
+      <span>
+        ⚠️ {incompleteBreakdowns.length} breakdown{incompleteBreakdowns.length > 1 ? 's' : ''} need completion — source item not linked
+      </span>
+      <span className="text-amber-600">{breakdownBannerOpen ? '▲' : '▼'}</span>
+    </button>
+    {breakdownBannerOpen && (
+      <ul className="border-t border-amber-200 divide-y divide-amber-100">
+        {incompleteBreakdowns.map(b => (
+          <li key={b.id} className="flex items-center justify-between px-4 py-2 text-sm text-amber-900">
+            <span className="flex-1">
+              {b.box_name} — {b.quantity} unit{b.quantity > 1 ? 's' : ''} — {b.opened_at}
+            </span>
+            <span className="ml-4 text-xs text-amber-600 italic mr-3">
+              Use "Breakdown Inventory" to complete
+            </span>
+            <button
+              onClick={() => deleteIncompleteBreakdown.mutate(b.id)}
+              className="text-xs text-red-500 hover:text-red-700"
+            >
+              delete
+            </button>
+          </li>
+        ))}
+      </ul>
+    )}
+  </div>
+)}
+```
+
+- [ ] **Step 7: Verify build**
+
+```bash
+npm run build 2>&1 | head -40
+```
+Expected: no errors.
+
+- [ ] **Step 8: Commit**
+
+```bash
+git add src/lib/queries.ts src/pages/InventoryPage.tsx
+git commit -m "feat(inventory): warning banner for shortcut-initiated incomplete breakdowns"
+```
+
+---
+
+## Task 7: Edge Function — `shortcut_record_sale`
 
 **Files:**
 - Create: `supabase/functions/shortcut_record_sale/index.ts`
@@ -286,17 +501,9 @@ git commit -m "feat(sales): show item_name for unlinked shortcut sales in list +
 - [ ] **Step 1: Create the edge function**
 
 ```typescript
-// shortcut_record_sale — inserts an unlinked manual sale for the user
-// identified by shortcut_token in profiles. No FIFO inventory depletion.
+// shortcut_record_sale — quick sale entry from Apple Shortcuts.
 // Auth: token lookup via service role (no JWT required from caller).
-//
-// Request body:
-//   shortcut_token  uuid    – personal token from Settings > Apple Shortcuts
-//   item_name       string  – free-text item description
-//   quantity        number  – units sold (must be > 0)
-//   sale_price      number  – gross sale amount
-//   payment_method  string? – e.g. "cash", "venmo", "paypal" (optional)
-
+// No FIFO depletion — sale is created unlinked (item_id = null).
 import { serve } from "https://deno.land/std@0.224.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
@@ -315,43 +522,31 @@ function json(status: number, body: unknown) {
 }
 
 serve(async (req) => {
-  if (req.method === "OPTIONS") {
-    return new Response("ok", { headers: corsHeaders });
-  }
+  if (req.method === "OPTIONS") return new Response("ok", { headers: corsHeaders });
 
   try {
-    // Service role — bypasses RLS so we can look up any profile by token
     const supabase = createClient(
       Deno.env.get("SUPABASE_URL")!,
       Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!
     );
 
     const body = await req.json();
-    const { shortcut_token, item_name, quantity, sale_price, payment_method } =
-      body;
+    const { shortcut_token, item_name, quantity, sale_price, payment_method } = body;
 
-    // Validate required fields
-    if (!shortcut_token)
-      return json(401, { error: "Missing shortcut_token" });
-    if (!item_name || typeof item_name !== "string" || !item_name.trim())
-      return json(400, { error: "Missing field: item_name" });
-    if (!quantity || Number(quantity) <= 0)
-      return json(400, { error: "Missing field: quantity (must be > 0)" });
-    if (sale_price == null || isNaN(Number(sale_price)))
-      return json(400, { error: "Missing field: sale_price" });
+    if (!shortcut_token) return json(401, { error: "Missing shortcut_token" });
+    if (!item_name?.trim()) return json(400, { error: "Missing field: item_name" });
+    if (!quantity || Number(quantity) <= 0) return json(400, { error: "Missing field: quantity (must be > 0)" });
+    if (sale_price == null || isNaN(Number(sale_price))) return json(400, { error: "Missing field: sale_price" });
 
-    // Resolve user from token
     const { data: profile } = await supabase
       .from("profiles")
       .select("id")
       .eq("shortcut_token", shortcut_token)
       .maybeSingle();
 
-    if (!profile) {
-      return json(401, { error: "Invalid shortcut token" });
-    }
+    if (!profile) return json(401, { error: "Invalid shortcut token" });
 
-    const soldAt = new Date().toISOString().split("T")[0]; // YYYY-MM-DD UTC
+    const soldAt = new Date().toISOString().split("T")[0];
     const netPayout = Number(sale_price);
 
     const { data: sale, error: saleError } = await supabase
@@ -377,7 +572,6 @@ serve(async (req) => {
       .single();
 
     if (saleError) throw saleError;
-
     return json(200, { success: true, sale_id: sale.id });
   } catch (err) {
     return json(500, { error: String(err) });
@@ -385,51 +579,141 @@ serve(async (req) => {
 });
 ```
 
-- [ ] **Step 2: Deploy the edge function**
+- [ ] **Step 2: Deploy**
 
 ```bash
 supabase functions deploy shortcut_record_sale
 ```
 Expected: `Deployed Functions shortcut_record_sale`
 
-- [ ] **Step 3: Smoke test with curl**
-
-First generate a token via the Settings UI (Task 6) or directly via Supabase Studio. Then:
+- [ ] **Step 3: Smoke test**
 
 ```bash
 curl -X POST https://qmizmnbzergqbpgyqseg.supabase.co/functions/v1/shortcut_record_sale \
   -H "Content-Type: application/json" \
-  -d '{
-    "shortcut_token": "<your-generated-uuid>",
-    "item_name": "Test Sneaker",
-    "quantity": 1,
-    "sale_price": 150.00,
-    "payment_method": "cash"
-  }'
+  -d '{"shortcut_token":"<your-token>","item_name":"Test Item","quantity":1,"sale_price":50,"payment_method":"cash"}'
 ```
 Expected: `{"success":true,"sale_id":"<uuid>"}`
 
-Verify the sale appears in the web app's Sales page with item name "Test Sneaker", source "manual", unlinked (no inventory item).
+Test invalid token → expect HTTP 401.
 
-- [ ] **Step 4: Test invalid token**
-
-```bash
-curl -X POST https://qmizmnbzergqbpgyqseg.supabase.co/functions/v1/shortcut_record_sale \
-  -H "Content-Type: application/json" \
-  -d '{"shortcut_token":"00000000-0000-0000-0000-000000000000","item_name":"x","quantity":1,"sale_price":1}'
-```
-Expected: `{"error":"Invalid shortcut token"}` with HTTP 401.
-
-- [ ] **Step 5: Commit**
+- [ ] **Step 4: Commit**
 
 ```bash
 git add supabase/functions/shortcut_record_sale/
-git commit -m "feat(edge): shortcut_record_sale — token-auth quick sale entry"
+git commit -m "feat(edge): shortcut_record_sale — token-auth quick sale"
 ```
 
 ---
 
-## Task 6: `ShortcutsSettingsCard` Component
+## Task 8: Edge Function — `shortcut_record_breakdown`
+
+**Files:**
+- Create: `supabase/functions/shortcut_record_breakdown/index.ts`
+
+- [ ] **Step 1: Create the edge function**
+
+```typescript
+// shortcut_record_breakdown — quick breakdown entry from Apple Shortcuts.
+// Auth: token lookup via service role (no JWT required from caller).
+// Creates an incomplete box_openings row (source_lot_id = null, box_cost = null).
+// The user completes it in the web app via "Breakdown Inventory".
+import { serve } from "https://deno.land/std@0.224.0/http/server.ts";
+import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+
+const corsHeaders = {
+  "Access-Control-Allow-Origin": "*",
+  "Access-Control-Allow-Headers":
+    "authorization, x-client-info, apikey, content-type",
+  "Access-Control-Allow-Methods": "POST, OPTIONS",
+};
+
+function json(status: number, body: unknown) {
+  return new Response(JSON.stringify(body), {
+    status,
+    headers: { ...corsHeaders, "Content-Type": "application/json" },
+  });
+}
+
+serve(async (req) => {
+  if (req.method === "OPTIONS") return new Response("ok", { headers: corsHeaders });
+
+  try {
+    const supabase = createClient(
+      Deno.env.get("SUPABASE_URL")!,
+      Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!
+    );
+
+    const body = await req.json();
+    const { shortcut_token, item_name, quantity } = body;
+
+    if (!shortcut_token) return json(401, { error: "Missing shortcut_token" });
+    if (!item_name?.trim()) return json(400, { error: "Missing field: item_name" });
+    if (!quantity || Number(quantity) <= 0) return json(400, { error: "Missing field: quantity (must be > 0)" });
+
+    const { data: profile } = await supabase
+      .from("profiles")
+      .select("id")
+      .eq("shortcut_token", shortcut_token)
+      .maybeSingle();
+
+    if (!profile) return json(401, { error: "Invalid shortcut token" });
+
+    const openedAt = new Date().toISOString().split("T")[0];
+
+    const { data: opening, error: openingError } = await supabase
+      .from("box_openings")
+      .insert({
+        user_id: profile.id,
+        box_name: item_name.trim(),
+        quantity: Number(quantity),
+        opened_at: openedAt,
+        source_lot_id: null,
+        box_cost: null,
+        allocation_method: null,
+        transaction_id: null,
+      })
+      .select("id")
+      .single();
+
+    if (openingError) throw openingError;
+    return json(200, { success: true, box_opening_id: opening.id });
+  } catch (err) {
+    return json(500, { error: String(err) });
+  }
+});
+```
+
+- [ ] **Step 2: Deploy**
+
+```bash
+supabase functions deploy shortcut_record_breakdown
+```
+Expected: `Deployed Functions shortcut_record_breakdown`
+
+- [ ] **Step 3: Smoke test**
+
+```bash
+curl -X POST https://qmizmnbzergqbpgyqseg.supabase.co/functions/v1/shortcut_record_breakdown \
+  -H "Content-Type: application/json" \
+  -d '{"shortcut_token":"<your-token>","item_name":"Topps Blaster Box","quantity":1}'
+```
+Expected: `{"success":true,"box_opening_id":"<uuid>"}`
+
+Open the Inventory page in the web app — confirm the ⚠️ banner appears with "Topps Blaster Box".
+
+Test invalid token → expect HTTP 401.
+
+- [ ] **Step 4: Commit**
+
+```bash
+git add supabase/functions/shortcut_record_breakdown/
+git commit -m "feat(edge): shortcut_record_breakdown — token-auth quick breakdown entry"
+```
+
+---
+
+## Task 9: `ShortcutsSettingsCard` Component
 
 **Files:**
 - Create: `src/components/ShortcutsSettingsCard.tsx`
@@ -498,8 +782,9 @@ export default function ShortcutsSettingsCard() {
         </header>
         <div className="border border-gray-200 rounded-lg bg-white p-4 space-y-4">
           <p className="text-sm text-gray-500">
-            Record sales quickly from your iPhone. Generate a token, copy it, then
-            tap <strong>Add to Shortcuts</strong> and paste when prompted.
+            Record sales and breakdowns quickly from your iPhone. Generate a
+            token, copy it, then tap <strong>Add to Shortcuts</strong> and paste
+            when prompted on first run.
           </p>
 
           {!token ? (
@@ -577,40 +862,23 @@ git commit -m "feat(settings): ShortcutsSettingsCard — token generate/copy/reg
 
 ---
 
-## Task 7: Wire `ShortcutsSettingsCard` into `SettingsPage`
+## Task 10: Wire into `SettingsPage`
 
 **Files:**
 - Modify: `src/pages/SettingsPage.tsx`
 
 - [ ] **Step 1: Add import**
 
-At the top of `src/pages/SettingsPage.tsx`, after the existing imports, add:
+At the top of `src/pages/SettingsPage.tsx`, add:
 ```tsx
 import ShortcutsSettingsCard from '../components/ShortcutsSettingsCard'
 ```
 
-- [ ] **Step 2: Add section to the page**
+- [ ] **Step 2: Add to JSX**
 
-In the return JSX, after the `<section>` block for Custom Categories (and before the closing `</div>` of the outer container), add:
+After the Custom Categories `<section>` block and before the Plaid env debug line, insert:
 ```tsx
 <ShortcutsSettingsCard />
-```
-
-The outer `div` should now end like:
-```tsx
-      <section className="space-y-3">
-        ...CustomCategoriesList...
-      </section>
-
-      <ShortcutsSettingsCard />
-
-      {plaidEnv && plaidEnv !== 'production' && (
-        <div className="text-xs text-gray-400 text-center pt-6">
-          Plaid env: {plaidEnv}
-        </div>
-      )}
-    </div>
-  )
 ```
 
 - [ ] **Step 3: Manual smoke test**
@@ -618,106 +886,99 @@ The outer `div` should now end like:
 ```bash
 npm run dev
 ```
-Open `http://localhost:5173/settings`. Confirm:
+Navigate to `/settings`. Confirm:
 - "Apple Shortcuts" section is visible
-- "Generate Token" button appears
-- Clicking it shows a UUID in a code block with Copy + Add to Shortcuts + Regenerate buttons
-- Copying puts the UUID on clipboard
-- Regenerate shows the ConfirmDialog with the correct message
+- "Generate Token" button works, displays UUID
+- Copy button puts UUID on clipboard
+- Regenerate shows ConfirmDialog
+- "Add to Shortcuts" link points to `/reseller-sale.shortcut`
 
 - [ ] **Step 4: Verify build**
 
 ```bash
 npm run build 2>&1 | head -30
 ```
-Expected: no errors.
 
 - [ ] **Step 5: Commit**
 
 ```bash
 git add src/pages/SettingsPage.tsx
-git commit -m "feat(settings): add Apple Shortcuts section to Settings page"
+git commit -m "feat(settings): add Apple Shortcuts card to Settings page"
 ```
 
 ---
 
-## Task 8: Build and Commit the Apple Shortcut File
+## Task 11: Build Apple Shortcut File
 
 **Files:**
-- Create: `public/reseller-sale.shortcut` (binary plist — built in Shortcuts app)
+- Create: `public/reseller-sale.shortcut` (binary — built manually in Shortcuts app)
 
-The `.shortcut` format is a binary Apple plist. Build it manually in the iPhone/Mac Shortcuts app following these exact steps:
+This is a manual step. The `.shortcut` format is a binary Apple plist that cannot be generated programmatically.
 
 - [ ] **Step 1: Open Shortcuts app on iPhone or Mac, create a new shortcut named "Log Sale"**
 
-- [ ] **Step 2: Add these actions in order**
+- [ ] **Step 2: Build the token-check block**
 
-1. **Get Variable** → name: `ResellerConfig` (type: Dictionary)
-   - If the variable is empty (no key "token"), continue to step 2a; otherwise skip to step 3
+1. **Get Variable** → `ResellerConfig` (Dictionary type)
+2. **If** Dictionary value for key `"token"` is empty:
+   - **Ask for Input** (Text): `"Paste your Shortcut Token (find it in Settings > Apple Shortcuts)"`
+   - **Set Dictionary Value** for key `"token"` = input
+   - **Set Variable** `ResellerConfig` = updated dictionary
+3. **Get Dictionary Value** for key `"token"` from `ResellerConfig` → set variable `ShortcutToken`
 
-2a. **Ask for Input** → prompt: `"Paste your Shortcut Token (find it in Settings > Apple Shortcuts)"`, type: Text
-2b. **Set Variable** → name: `ShortcutToken`, to: result of 2a
-2c. **Set Dictionary** key `"token"` = `ShortcutToken`, store back in `ResellarConfig`
+- [ ] **Step 3: Build the mode choice**
 
-_(Shortcut will store this automatically for next run)_
+4. **Choose from List**: `Record a Sale`, `Break Down Inventory` → set variable `Mode`
 
-3. **Get Dictionary Value** key `"token"` from `ResellerConfig` → set variable `ShortcutToken`
+- [ ] **Step 4: Build the Sale branch (inside an If `Mode` is `Record a Sale`)**
 
-4. **Ask for Input** → prompt: `"What did you sell?"`, type: Text → set variable `ItemName`
+5. **Ask for Input** (Text): `"What did you sell?"` → variable `ItemName`
+6. **Ask for Input** (Number, default 1): `"Quantity?"` → variable `Qty`
+7. **Ask for Input** (Number): `"Sale price?"` → variable `SalePrice`
+8. **Choose from List**: Cash / Venmo / Cash App / PayPal / Apple Pay / Zelle / Card / Other → variable `PayLabel`
+9. **If/Otherwise If** chain to map `PayLabel` → `PayValue`:
+   - Cash → `cash`, Venmo → `venmo`, Cash App → `cashapp`, PayPal → `paypal`,
+     Apple Pay → `apple_pay`, Zelle → `zelle`, Card → `card`, Other → `other`
+10. **Get Contents of URL**:
+    - URL: `https://qmizmnbzergqbpgyqseg.supabase.co/functions/v1/shortcut_record_sale`
+    - Method: POST · Headers: `Content-Type: application/json`
+    - JSON body: `{ shortcut_token: ShortcutToken, item_name: ItemName, quantity: Qty, sale_price: SalePrice, payment_method: PayValue }`
+11. **If** result contains key `"success"`:
+    - **Show Notification**: `"Sale recorded — ItemName $SalePrice"`
+    **Otherwise**: **Show Alert**: `"Error recording sale. Check your token in Settings."`
 
-5. **Ask for Input** → prompt: `"Quantity?"`, type: Number, default: `1` → set variable `Qty`
+- [ ] **Step 5: Build the Breakdown branch (inside Otherwise / else)**
 
-6. **Ask for Input** → prompt: `"Sale price?"`, type: Number → set variable `SalePrice`
+12. **Ask for Input** (Text): `"What are you breaking down?"` → variable `ItemName`
+13. **Ask for Input** (Number, default 1): `"Quantity?"` → variable `Qty`
+14. **Get Contents of URL**:
+    - URL: `https://qmizmnbzergqbpgyqseg.supabase.co/functions/v1/shortcut_record_breakdown`
+    - Method: POST · Headers: `Content-Type: application/json`
+    - JSON body: `{ shortcut_token: ShortcutToken, item_name: ItemName, quantity: Qty }`
+15. **If** result contains key `"success"`:
+    - **Show Notification**: `"Breakdown recorded — ItemName ×Qty"`
+    **Otherwise**: **Show Alert**: `"Error recording breakdown. Check your token in Settings."`
 
-7. **Choose from List** → items: `Cash`, `Venmo`, `Cash App`, `PayPal`, `Apple Pay`, `Zelle`, `Card`, `Other` → set variable `PaymentLabel`
+- [ ] **Step 6: Test end-to-end**
 
-8. **If** `PaymentLabel` is `Cash` → set variable `PaymentValue` = `cash`
-   **Otherwise If** `Cash App` → `cashapp`
-   **Otherwise If** `Venmo` → `venmo`
-   **Otherwise If** `PayPal` → `paypal`
-   **Otherwise If** `Apple Pay` → `apple_pay`
-   **Otherwise If** `Zelle` → `zelle`
-   **Otherwise If** `Card` → `card`
-   **Otherwise** → `other`
+Generate a token in Settings, run the shortcut, paste token when prompted.
+- Record a Sale → verify it appears in the Sales page with ⚠️ badge and in the banner
+- Record a Breakdown → verify it appears in the Inventory page ⚠️ banner
 
-9. **Get Contents of URL**
-   - URL: `https://qmizmnbzergqbpgyqseg.supabase.co/functions/v1/shortcut_record_sale`
-   - Method: `POST`
-   - Headers: `Content-Type: application/json`
-   - Request Body: **JSON** with keys:
-     - `shortcut_token` → `ShortcutToken`
-     - `item_name` → `ItemName`
-     - `quantity` → `Qty`
-     - `sale_price` → `SalePrice`
-     - `payment_method` → `PaymentValue`
+- [ ] **Step 7: Export and commit**
 
-10. **Get Dictionary Value** key `"sale_id"` from result of step 9 → if not empty:
-    **Show Notification**: `"Sale recorded — ItemName $SalePrice"`
-    **Otherwise**:
-    **Show Alert**: `"Error recording sale. Check your token in Settings."`
-
-- [ ] **Step 3: Run the shortcut once to verify it works end-to-end**
-
-Generate a token in Settings, run the shortcut, paste the token when prompted, fill in a test sale. Verify the sale appears in the Sales page with the correct name, price, and payment method.
-
-- [ ] **Step 4: Export and commit the shortcut file**
-
-On iPhone: tap the shortcut's `...` menu → Share → Save to Files → save as `reseller-sale.shortcut`
-On Mac: right-click shortcut → Share → save to the repo's `public/` folder.
+On iPhone: shortcut `...` menu → Share → Save to Files → `reseller-sale.shortcut`
+On Mac: right-click shortcut → Share → save to `public/` in the repo.
 
 ```bash
-# Confirm the file landed in public/
-ls public/reseller-sale.shortcut
-```
-
-```bash
+ls public/reseller-sale.shortcut  # confirm file is there
 git add public/reseller-sale.shortcut
-git commit -m "feat(shortcut): add Apple Shortcut file for quick sale entry"
+git commit -m "feat(shortcut): Apple Shortcut file for quick sale and breakdown entry"
 ```
 
 ---
 
-## Task 9: Update Docs
+## Task 12: Update Docs
 
 **Files:**
 - Modify: `docs/supabase-schema.md`
@@ -725,45 +986,49 @@ git commit -m "feat(shortcut): add Apple Shortcut file for quick sale entry"
 
 - [ ] **Step 1: Update `docs/supabase-schema.md`**
 
-In the `sales` table column list, add after `item_id`:
+In the `sales` table columns section, add after `item_id`:
 ```
-| `item_name` | text | Nullable. Free-text item description from Apple Shortcuts quick-sale flow. Preserved after `item_id` is linked. |
+| `item_name` | text | Nullable. Free-text item description from Shortcuts quick-sale. Preserved after `item_id` is linked. |
 ```
 
-Add a new `profiles` table section (or add to existing if present):
+In the `box_openings` table section, update `box_cost` and `allocation_method` entries to note they are now nullable for shortcut-initiated records.
+
+Add a `profiles` table section (or update if present):
 ```markdown
 ### `profiles`
-Stores per-user app settings. Created by migration; `id` is a FK to `auth.users`.
+Per-user settings. `id` is FK → `auth.users`.
 
 | Column | Type | Notes |
 |---|---|---|
 | `id` | uuid | PK, FK → `auth.users(id)` ON DELETE CASCADE |
-| `shortcut_token` | uuid | Unique. Personal API token for Apple Shortcuts integration. Null = not configured. |
+| `shortcut_token` | uuid | Unique. Personal API token for Apple Shortcuts. Null = not configured. |
 ```
 
 - [ ] **Step 2: Update `docs/features/sales.md`**
 
-Add a section (or paragraph) on the Apple Shortcuts integration:
-
+Add a section:
 ```markdown
 ## Apple Shortcuts quick entry
 
-Users can record unlinked manual sales from the iPhone Shortcuts app without opening the web app.
+Users record unlinked manual sales from iPhone without opening the web app.
 
 **Setup:** Settings → Apple Shortcuts → Generate Token → Copy → Add to Shortcuts → paste token on first run.
 
-**Fields captured:** item name (free text), quantity, sale price, payment method. Sale date defaults to today UTC. No FIFO depletion — the sale is created with `item_id = null` and `source = 'manual'`. The `item_name` column stores the original description even after the sale is linked to an inventory item.
+**Fields captured (sale):** item name, quantity, sale price, payment method. Date defaults to today UTC.
+**Fields captured (breakdown):** item name, quantity. Date defaults to today UTC.
 
-**Auth:** A `shortcut_token uuid` column on `profiles` identifies the user. The `shortcut_record_sale` edge function uses the service role to look up the user — no JWT required in the Shortcut.
+**Auth:** `profiles.shortcut_token` UUID. The edge functions use service role — no JWT required in the Shortcut.
 
-**Regenerating the token** in Settings immediately invalidates the old one. The Shortcut will prompt for a new token on the next run (it stores the token in a local Shortcuts Dictionary variable named `ResellerConfig`).
+**Attention banners:** The Sales page shows a ⚠️ banner for unlinked shortcut sales (`item_id IS NULL AND item_name IS NOT NULL`). The Inventory page shows a ⚠️ banner for incomplete breakdowns (`box_openings.source_lot_id IS NULL`).
+
+**Regenerating** the token in Settings immediately invalidates the old one.
 ```
 
 - [ ] **Step 3: Commit**
 
 ```bash
 git add docs/supabase-schema.md docs/features/sales.md
-git commit -m "docs: document sales.item_name, profiles.shortcut_token, and Shortcuts integration"
+git commit -m "docs: Apple Shortcuts integration — schema, sales feature, banners"
 ```
 
 ---
@@ -771,18 +1036,24 @@ git commit -m "docs: document sales.item_name, profiles.shortcut_token, and Shor
 ## Self-Review
 
 **Spec coverage:**
-- [x] `profiles.shortcut_token` column — Task 2
-- [x] `sales.item_name` column — Task 1
-- [x] Edge function `shortcut_record_sale` with token auth — Task 5
-- [x] Settings UI: generate/copy/regenerate token — Task 6 + 7
-- [x] "Add to Shortcuts" download link — Task 6 (`/reseller-sale.shortcut`)
-- [x] Apple Shortcut: 4 prompts (item name, quantity, price, payment method) — Task 8
-- [x] Payment method label→value mapping in shortcut — Task 8 step 2, action 8
-- [x] First-run token prompt + persistent storage — Task 8 step 2, actions 1–3
-- [x] Success notification / error alert — Task 8 step 2, action 10
-- [x] `item_name` visible in sales list for unlinked sales — Task 4
-- [x] Docs updated — Task 9
+- [x] `profiles.shortcut_token` — Task 2
+- [x] `sales.item_name` — Task 1
+- [x] `box_openings` constraints relaxed — Task 3
+- [x] `BoxOpening` type nullable — Task 4
+- [x] Sales ⚠️ banner — Task 5
+- [x] Sales table shows `item_name` with ⚠️ prefix — Task 5
+- [x] Inventory ⚠️ banner for pending breakdowns — Task 6
+- [x] `useIncompleteBreakdowns` query — Task 6
+- [x] Edge function `shortcut_record_sale` — Task 7
+- [x] Edge function `shortcut_record_breakdown` — Task 8
+- [x] Settings card: generate/copy/regenerate — Task 9 + 10
+- [x] "Add to Shortcuts" download link — Task 9
+- [x] Shortcut: Sale or Breakdown choice — Task 11
+- [x] Shortcut: sale prompts (name, qty, price, payment) — Task 11
+- [x] Shortcut: breakdown prompts (name, qty) — Task 11
+- [x] Token persisted in ResellerConfig dictionary — Task 11
+- [x] Docs updated — Task 12
 
-**Types consistent:** `Sale.item_name?: string | null` defined in Task 3, used in Task 4 (`sale.item_name`), inserted in Task 5 edge function as `item_name: item_name.trim()`. All consistent.
+**Type consistency:** `BoxOpening.box_cost: number | null` and `allocation_method: BoxAllocationMethod | null` defined in Task 4, inserted as null in Task 8 edge function. `Sale.item_name?: string | null` defined in Task 4, inserted in Task 7, displayed in Task 5. All consistent.
 
-**No placeholders:** All code is complete. The only manual step is building the `.shortcut` file in the Shortcuts app — this cannot be generated programmatically from the binary plist format.
+**No placeholders:** All code is complete. Task 5 Step 3 and Task 6 Step 6 note to verify state setter names (`setEditSale`, `setDeleteSale`) by reading the file first — this is a read-before-edit instruction, not a placeholder.
