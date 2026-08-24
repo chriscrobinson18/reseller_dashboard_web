@@ -610,16 +610,17 @@ export default function InventoryPage() {
               {incompleteBreakdowns.map(b => (
                 <li key={b.id} className="flex items-center justify-between px-4 py-2 text-sm text-amber-900">
                   <span className="flex-1">
-                    {b.box_name} — {b.quantity} unit{b.quantity > 1 ? 's' : ''} — {b.opened_at}
+                    {b.box_name} — {b.quantity} unit{b.quantity > 1 ? 's' : ''} — {formatDate(b.opened_at)}
                   </span>
                   <span className="ml-4 text-xs text-amber-600 italic mr-3">
                     Use "Breakdown Inventory" to complete
                   </span>
                   <button
                     onClick={() => deleteIncompleteBreakdown.mutate(b.id)}
-                    className="text-xs text-red-500 hover:text-red-700"
+                    disabled={deleteIncompleteBreakdown.isPending}
+                    className="text-xs text-red-500 hover:text-red-700 disabled:opacity-50"
                   >
-                    delete
+                    {deleteIncompleteBreakdown.isPending ? 'Deleting…' : 'delete'}
                   </button>
                 </li>
               ))}
