@@ -172,6 +172,18 @@ Single scrollable form (matches `RecordTradeModal`'s pattern, not a stepper):
 - **Cards:** repeating rows — `ItemPicker` with inline "create new item" (same pattern as `RecordTradeModal`'s received side: click create, type a name inline, no separate modal) plus a mode-dependent input (est. value / cost $ / nothing for equal) and a read-only computed-basis column that updates live. "+ Add card" button; each row has a remove button (disabled below 1 row).
 - **Footer:** running allocated total, submit disabled until a box lot is picked, every card has an item, and (for `specific_id`) the entries sum to the box cost.
 
+### Incomplete-breakdown ⚠️ banner
+
+When the Apple Shortcuts quick-entry creates a breakdown (`shortcut_record_breakdown`), it inserts a `box_openings` row with `source_lot_id = null` — the source item isn't known yet. The Inventory page detects these via `useIncompleteBreakdowns()` (queries `box_openings` where `source_lot_id IS NULL AND deleted_at IS NULL`) and renders a collapsible ⚠️ banner between the action buttons and the inventory table:
+
+```
+⚠️  1 breakdown needs completion — source item not linked
+[collapse ▲]
+  • Topps Blaster Box — 1 unit — Aug 23     [delete]
+```
+
+**Delete** on a banner row permanently removes the incomplete `box_openings` row (no lots to cascade to — none were created). The banner does not support completing the breakdown in place; that requires opening "Breakdown Inventory" from the normal flow and picking the item + lot.
+
 ### `openBox` mutation (`src/lib/mutations.ts`)
 
 Not wrapped in a server-side transaction (v1, matching the spec) — reads the source lot's `unit_cost` and depletes `quantity_remaining` by the requested quantity (same shape as a sale, just a direct update rather than going through `record_sale`), inserts the `box_openings` audit row (`source_lot_id`, `quantity`, `transaction_id` mirroring the source lot's — may be `null`), then loops the cards: find-or-create the item, insert a `quantity_purchased = 1` lot (`unit_cost` = that card's computed basis, `box_opening_id` set, `transaction_id` shared with every other card from the same box), and mirror the funding link into `inventory_lot_transactions` **only if the source lot had one** (nothing to link to otherwise). A partial failure mid-loop leaves a partial opening; delete it and retry.
