@@ -225,10 +225,21 @@ shortcut = {
 
 # ── write binary plist ────────────────────────────────────────────────────────
 
+import subprocess, tempfile
+
 out = Path(__file__).parent.parent / "public" / "reseller-sale.shortcut"
 out.parent.mkdir(exist_ok=True)
-with open(out, "wb") as f:
-    plistlib.dump(shortcut, f, fmt=plistlib.FMT_BINARY)
+
+# Write unsigned plist to a temp file, then sign into the real output path
+with tempfile.NamedTemporaryFile(suffix=".shortcut", delete=False) as tmp:
+    plistlib.dump(shortcut, tmp, fmt=plistlib.FMT_BINARY)
+    tmp_path = tmp.name
+
+subprocess.run(
+    ["shortcuts", "sign", "--mode", "anyone", "--input", tmp_path, "--output", str(out)],
+    check=True,
+)
+Path(tmp_path).unlink(missing_ok=True)
 
 print(f"✓  {out}")
 print(f"   {out.stat().st_size:,} bytes  |  {len(actions)} actions  |  group {gid[:8]}…")
