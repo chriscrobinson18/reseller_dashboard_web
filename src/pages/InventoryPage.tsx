@@ -6,7 +6,8 @@ import { deleteItem, deleteLot, deleteLotCostAdjustment } from '../lib/mutations
 import { basisFromAdjustments } from '../lib/lotCost'
 import { adjustmentLabel } from '../lib/lotAdjustments'
 import type { InventoryLot, LotCostAdjustment } from '../lib/types'
-import { useItems, type ItemWithLots } from '../lib/queries'
+import { supabase } from '../lib/supabase'
+import { useItems, useIncompleteBreakdowns, type ItemWithLots } from '../lib/queries'
 import AddItemModal from '../components/modals/AddItemModal'
 import RecordTradeModal from '../components/modals/RecordTradeModal'
 import OpenBoxModal from '../components/modals/OpenBoxModal'
@@ -457,6 +458,8 @@ export default function InventoryPage() {
   const qc = useQueryClient()
 
   const { data: items = [], isLoading } = useItems()
+  const { data: incompleteBreakdowns = [] } = useIncompleteBreakdowns()
+  const [breakdownBannerOpen, setBreakdownBannerOpen] = useState(true)
 
   function toggleBasis(lotId: string) {
     setExpandedBasis(prev => {
@@ -484,6 +487,17 @@ export default function InventoryPage() {
   const delLotMutation = useMutation({
     mutationFn: (id: string) => deleteLot(id),
     onSuccess: () => { qc.invalidateQueries({ queryKey: ['items'] }); setDeleteLotTarget(null) },
+  })
+
+  const deleteIncompleteBreakdown = useMutation({
+    mutationFn: async (id: string) => {
+      const { error } = await supabase
+        .from('box_openings')
+        .update({ deleted_at: new Date().toISOString() })
+        .eq('id', id)
+      if (error) throw error
+    },
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['incomplete_breakdowns'] }),
   })
 
   const filtered = useMemo(() => {
@@ -578,6 +592,41 @@ export default function InventoryPage() {
           </div>
         </div>
       </div>
+
+      {/* Incomplete breakdowns banner */}
+      {incompleteBreakdowns.length > 0 && (
+        <div className="mb-4 rounded-lg border border-amber-200 bg-amber-50">
+          <button
+            onClick={() => setBreakdownBannerOpen(o => !o)}
+            className="flex w-full items-center justify-between px-4 py-3 text-sm font-medium text-amber-800"
+          >
+            <span>
+              ⚠️ {incompleteBreakdowns.length} breakdown{incompleteBreakdowns.length > 1 ? 's' : ''} need completion — source item not linked
+            </span>
+            <span className="text-amber-600">{breakdownBannerOpen ? '▲' : '▼'}</span>
+          </button>
+          {breakdownBannerOpen && (
+            <ul className="border-t border-amber-200 divide-y divide-amber-100">
+              {incompleteBreakdowns.map(b => (
+                <li key={b.id} className="flex items-center justify-between px-4 py-2 text-sm text-amber-900">
+                  <span className="flex-1">
+                    {b.box_name} — {b.quantity} unit{b.quantity > 1 ? 's' : ''} — {b.opened_at}
+                  </span>
+                  <span className="ml-4 text-xs text-amber-600 italic mr-3">
+                    Use "Breakdown Inventory" to complete
+                  </span>
+                  <button
+                    onClick={() => deleteIncompleteBreakdown.mutate(b.id)}
+                    className="text-xs text-red-500 hover:text-red-700"
+                  >
+                    delete
+                  </button>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+      )}
 
       {/* Table */}
       <div className="flex-1 overflow-y-auto">

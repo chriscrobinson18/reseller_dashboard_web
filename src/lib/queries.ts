@@ -326,3 +326,25 @@ export function usePlaidAccounts(itemId: string | null) {
     },
   })
 }
+
+/** box_openings rows that were created without a source_lot_id (e.g. via Apple Shortcut). */
+export function useIncompleteBreakdowns() {
+  return useQuery({
+    queryKey: ['incomplete_breakdowns'],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from('box_openings')
+        .select('id, box_name, quantity, opened_at')
+        .is('source_lot_id', null)
+        .is('deleted_at', null)
+        .order('opened_at', { ascending: false })
+      if (error) throw error
+      return data as Array<{
+        id: string
+        box_name: string
+        quantity: number
+        opened_at: string
+      }>
+    },
+  })
+}
