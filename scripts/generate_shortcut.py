@@ -1,240 +1,276 @@
 #!/usr/bin/env python3
 """Generate public/reseller-sale.shortcut as a binary plist.
 
-Structures validated against:
-  https://github.com/drewocarr/generate-shortcuts-skill
-  (CONTROL_FLOW.md, ACTIONS.md, PARAMETER_TYPES.md, VARIABLES.md)
+Reverse-engineered from the working reference shortcut (iCloud link shared by user).
 
-Data-passing strategy:
-  - Named variables (set_var/get_var) for all inter-action values.
-    Using Type="Variable"/VariableName is reliable regardless of what
-    Shortcuts internally names action outputs.
-  - ActionOutput UUIDs are still assigned but not used in WFInput refs.
+Key structural patterns discovered:
+  - gettext for static comparison strings (e.g. "Record a Sale")
+  - list action + choosefromlist(WFInput=list) for dynamic choice prompts
+  - conditional: WFCondition=4 (int), WFInput={Type:Variable, Variable:{ActionOutput}}
+    WFConditionalActionString = WFTextTokenString referencing gettext output
+  - setvariable always has explicit WFInput with ActionOutput ref to previous action
+  - choosefromlist from dictionary variable: shows keys, returns corresponding value
+    (no getvalueforkey needed)
 """
 import plistlib, uuid as _uuid, subprocess, tempfile
 from pathlib import Path
 
+
 def uid():
     return str(_uuid.uuid4()).upper()
 
-# ── serialization helpers ─────────────────────────────────────────────────────
+
+# ── serialization helpers ──────────────────────────────────────────────────────
 
 def plain(s):
-    """Static text — WFTextTokenString, no attachments."""
+    """Static text — WFTextTokenString."""
     return {"Value": {"attachmentsByRange": {}, "string": s},
             "WFSerializationType": "WFTextTokenString"}
 
+def action_out(output_uuid, output_name):
+    """ActionOutput ref — WFTextTokenAttachment."""
+    return {"Value": {"OutputUUID": output_uuid, "Type": "ActionOutput",
+                      "OutputName": output_name},
+            "WFSerializationType": "WFTextTokenAttachment"}
+
 def var_attach(name):
-    """Named-variable ref — WFTextTokenAttachment.
-    Use for WFInput, WFVariable, and other single-value parameters."""
-    return {"Value": {"Type": "Variable", "VariableName": name,
-                      "Aggrandizements": []},
+    """Named-variable ref — WFTextTokenAttachment."""
+    return {"Value": {"VariableName": name, "Type": "Variable"},
             "WFSerializationType": "WFTextTokenAttachment"}
 
 def var_str(name):
-    """Named-variable ref embedded in WFTextTokenString.
-    Use for text fields (HTTP body values, notification body, etc.)."""
-    return {"Value": {"attachmentsByRange": {"{0, 1}": {
+    """Named-variable ref embedded in WFTextTokenString."""
+    return {"Value": {"string": "\ufffc",
+                      "attachmentsByRange": {"{0, 1}": {
                           "Aggrandizements": [], "Type": "Variable",
-                          "VariableName": name}},
-                      "string": "\ufffc"},
+                          "VariableName": name}}},
             "WFSerializationType": "WFTextTokenString"}
 
 def var_str_prefix(prefix, name):
     """Literal prefix + named-variable ref in WFTextTokenString."""
     pos = len(prefix)
-    return {"Value": {"attachmentsByRange": {f"{{{pos}, 1}}": {
-                          "Aggrandizements": [], "Type": "Variable",
-                          "VariableName": name}},
-                      "string": prefix + "\ufffc"},
+    return {"Value": {"string": prefix + "\ufffc",
+                      "attachmentsByRange": {f"{{{pos}, 1}}": {
+                          "Type": "Variable", "VariableName": name}}},
             "WFSerializationType": "WFTextTokenString"}
 
-# ── action builders ───────────────────────────────────────────────────────────
+def output_str(output_uuid, output_name):
+    """ActionOutput ref embedded in WFTextTokenString (for WFConditionalActionString)."""
+    return {"Value": {"string": "\ufffc",
+                      "attachmentsByRange": {"{0, 1}": {
+                          "OutputUUID": output_uuid, "Type": "ActionOutput",
+                          "OutputName": output_name}}},
+            "WFSerializationType": "WFTextTokenString"}
 
-def text_act(s, u=None):
-    p = {"WFTextActionText": plain(s)}
-    if u: p["UUID"] = u
-    return {"WFWorkflowActionIdentifier": "is.workflow.actions.gettext",
-            "WFWorkflowActionParameters": p}
 
-def set_var(name):
-    """Store previous action's output as a named variable."""
+# ── action builders ────────────────────────────────────────────────────────────
+
+def text_act(s, custom_output_name=None):
+    """Static text action. Returns (uuid, action)."""
+    u = uid()
+    p = {"UUID": u, "WFTextActionText": s}
+    if custom_output_name:
+        p["CustomOutputName"] = custom_output_name
+    return u, {"WFWorkflowActionIdentifier": "is.workflow.actions.gettext",
+               "WFWorkflowActionParameters": p}
+
+def list_act(items):
+    """List action. Returns (uuid, action)."""
+    u = uid()
+    return u, {"WFWorkflowActionIdentifier": "is.workflow.actions.list",
+               "WFWorkflowActionParameters": {"UUID": u, "WFItems": items}}
+
+def set_var(name, from_uuid, output_name):
+    """Store a previous action's output as a named variable (explicit WFInput)."""
     return {"WFWorkflowActionIdentifier": "is.workflow.actions.setvariable",
-            "WFWorkflowActionParameters": {"WFVariableName": name}}
+            "WFWorkflowActionParameters": {
+                "WFInput": action_out(from_uuid, output_name),
+                "WFVariableName": name}}
 
-def get_var(name, u=None):
-    p = {"WFVariable": var_attach(name)}
-    if u: p["UUID"] = u
-    return {"WFWorkflowActionIdentifier": "is.workflow.actions.getvariable",
-            "WFWorkflowActionParameters": p}
+def ask_text(prompt):
+    """Ask for text input. Returns (uuid, action)."""
+    u = uid()
+    return u, {"WFWorkflowActionIdentifier": "is.workflow.actions.ask",
+               "WFWorkflowActionParameters": {
+                   "UUID": u, "WFAskActionPrompt": prompt, "WFInputType": "Text"}}
 
-def ask_text(prompt, u=None):
-    p = {"WFAskActionPrompt": prompt, "WFInputType": "Text"}
-    if u: p["UUID"] = u
-    return {"WFWorkflowActionIdentifier": "is.workflow.actions.ask",
-            "WFWorkflowActionParameters": p}
+def ask_num(prompt, default=None):
+    """Ask for number input. Returns (uuid, action)."""
+    u = uid()
+    p = {"UUID": u, "WFAskActionPrompt": prompt, "WFInputType": "Number"}
+    if default is not None:
+        p["WFAskActionDefaultAnswer"] = str(default)
+    return u, {"WFWorkflowActionIdentifier": "is.workflow.actions.ask",
+               "WFWorkflowActionParameters": p}
 
-def ask_num(prompt, default=None, u=None):
-    p = {"WFAskActionPrompt": prompt, "WFInputType": "Number"}
-    if default is not None: p["WFAskActionDefaultAnswer"] = str(default)
-    if u: p["UUID"] = u
-    return {"WFWorkflowActionIdentifier": "is.workflow.actions.ask",
-            "WFWorkflowActionParameters": p}
+def choose_from_list_input(from_uuid, output_name, prompt=None):
+    """Choose from list, WFInput = previous action output. Returns (uuid, action)."""
+    u = uid()
+    p = {"UUID": u,
+         "WFInput": action_out(from_uuid, output_name),
+         "WFChooseFromListActionSelectMultiple": False}
+    if prompt:
+        p["WFChooseFromListActionPrompt"] = prompt
+    return u, {"WFWorkflowActionIdentifier": "is.workflow.actions.choosefromlist",
+               "WFWorkflowActionParameters": p}
 
-def choose_list(items, prompt=None, u=None):
-    p = {"WFChooseFromListActionList": [
-        {"WFItemType": 0, "WFValue": i} for i in items]}
-    if prompt: p["WFChooseFromListActionPrompt"] = prompt
-    if u: p["UUID"] = u
-    return {"WFWorkflowActionIdentifier": "is.workflow.actions.choosefromlist",
-            "WFWorkflowActionParameters": p}
+def choose_from_dict_var(var_name, labels, prompt=None):
+    """Choose from dictionary variable (shows keys, returns value). Returns (uuid, action)."""
+    u = uid()
+    p = {"UUID": u,
+         "WFInput": var_attach(var_name),
+         "WFChooseFromListActionList": [{"WFItemType": 0, "WFValue": lbl} for lbl in labels],
+         "WFChooseFromListActionSelectMultiple": False}
+    if prompt:
+        p["WFChooseFromListActionPrompt"] = prompt
+    return u, {"WFWorkflowActionIdentifier": "is.workflow.actions.choosefromlist",
+               "WFWorkflowActionParameters": p}
 
-def dict_act(pairs, u=None):
-    items = [{"WFItemType": 0, "WFKey": plain(k), "WFValue": plain(v)}
-             for k, v in pairs]
-    p = {"WFItems": {"Value": {"WFDictionaryFieldValueItems": items},
-                     "WFSerializationType": "WFDictionaryFieldValue"}}
-    if u: p["UUID"] = u
-    return {"WFWorkflowActionIdentifier": "is.workflow.actions.dictionary",
-            "WFWorkflowActionParameters": p}
+def dict_act(pairs):
+    """Dictionary action. Returns (uuid, action)."""
+    u = uid()
+    items = [{"WFKey": plain(k), "WFItemType": 0, "WFValue": plain(v)} for k, v in pairs]
+    return u, {"WFWorkflowActionIdentifier": "is.workflow.actions.dictionary",
+               "WFWorkflowActionParameters": {
+                   "UUID": u,
+                   "WFItems": {"Value": {"WFDictionaryFieldValueItems": items},
+                               "WFSerializationType": "WFDictionaryFieldValue"}}}
 
-def get_dict_val(dict_var, key_var, u=None):
-    """Get value from a named-variable dictionary by a named-variable key.
-    WFInput  = WFTextTokenAttachment referencing the dict named var.
-    WFDictionaryKey = WFTextTokenString referencing the key named var."""
-    p = {"WFInput": var_attach(dict_var),
-         "WFDictionaryKey": var_str(key_var)}
-    if u: p["UUID"] = u
-    return {"WFWorkflowActionIdentifier": "is.workflow.actions.getvalueforkey",
-            "WFWorkflowActionParameters": p}
-
-def cond_if(gid, var_name, cond_str):
-    """Conditional start.
-    WFCondition = "Equals" (string, confirmed by official docs).
-    WFInput = WFTextTokenAttachment referencing a named variable."""
+def cond_if(gid, chosen_uuid, compare_text_uuid):
+    """If block: chosen item (ActionOutput) equals compare text (ActionOutput).
+    WFCondition=4 (int). WFInput wrapped as {Type:Variable, Variable:...}."""
     return {"WFWorkflowActionIdentifier": "is.workflow.actions.conditional",
             "WFWorkflowActionParameters": {
                 "GroupingIdentifier": gid,
                 "WFControlFlowMode": 0,
-                "WFCondition": "Equals",
-                "WFConditionalActionString": cond_str,
-                "WFInput": var_attach(var_name)}}
+                "WFCondition": 4,
+                "WFInput": {
+                    "Type": "Variable",
+                    "Variable": action_out(chosen_uuid, "Selected Item")},
+                "WFConditionalActionString": output_str(compare_text_uuid, "Text")}}
 
 def cond_else(gid):
     return {"WFWorkflowActionIdentifier": "is.workflow.actions.conditional",
-            "WFWorkflowActionParameters": {
-                "GroupingIdentifier": gid, "WFControlFlowMode": 1}}
+            "WFWorkflowActionParameters": {"GroupingIdentifier": gid, "WFControlFlowMode": 1}}
 
 def cond_end(gid):
     return {"WFWorkflowActionIdentifier": "is.workflow.actions.conditional",
-            "WFWorkflowActionParameters": {
-                "GroupingIdentifier": gid, "WFControlFlowMode": 2}}
+            "WFWorkflowActionParameters": {"GroupingIdentifier": gid, "WFControlFlowMode": 2}}
 
-def http_post(url, body_kv, u=None):
-    """POST JSON body.
-    WFHTTPBodyType = "JSON" → body key is WFJSONValues (not WFFormValues).
-    body_kv: list of (key_str, WFTextTokenString value)."""
-    body_items = [{"WFItemType": 0, "WFKey": plain(k), "WFValue": v}
-                  for k, v in body_kv]
-    p = {
-        "WFHTTPMethod": "POST",
-        "WFURL": plain(url),
-        "WFHTTPBodyType": "JSON",
-        "ShowHeaders": False,
-        "WFHTTPHeaders": {
-            "Value": {"WFDictionaryFieldValueItems": [
-                {"WFItemType": 0,
-                 "WFKey": plain("Content-Type"),
-                 "WFValue": plain("application/json")}]},
-            "WFSerializationType": "WFDictionaryFieldValue"},
-        "WFJSONValues": {
-            "Value": {"WFDictionaryFieldValueItems": body_items},
-            "WFSerializationType": "WFDictionaryFieldValue"},
-    }
-    if u: p["UUID"] = u
-    return {"WFWorkflowActionIdentifier": "is.workflow.actions.downloadurl",
-            "WFWorkflowActionParameters": p}
+def http_post(url, body_kv, show_headers=False):
+    """POST JSON. Returns (uuid, action)."""
+    u = uid()
+    body_items = [{"WFKey": plain(k), "WFItemType": 0, "WFValue": v} for k, v in body_kv]
+    return u, {"WFWorkflowActionIdentifier": "is.workflow.actions.downloadurl",
+               "WFWorkflowActionParameters": {
+                   "UUID": u,
+                   "WFHTTPMethod": "POST",
+                   "WFURL": url,
+                   "WFHTTPBodyType": "JSON",
+                   "ShowHeaders": show_headers,
+                   "WFHTTPHeaders": {
+                       "Value": {"WFDictionaryFieldValueItems": [
+                           {"WFKey": plain("Content-Type"), "WFItemType": 0,
+                            "WFValue": plain("application/json")}]},
+                       "WFSerializationType": "WFDictionaryFieldValue"},
+                   "WFJSONValues": {
+                       "Value": {"WFDictionaryFieldValueItems": body_items},
+                       "WFSerializationType": "WFDictionaryFieldValue"}}}
 
-def notify(prefix, var_name, title=None):
-    p = {"WFNotificationActionBody": var_str_prefix(prefix, var_name),
-         "WFNotificationActionSound": True}
-    if title: p["WFNotificationActionTitle"] = plain(title)
+def notify(body_prefix, var_name):
+    """Show notification — no title."""
     return {"WFWorkflowActionIdentifier": "is.workflow.actions.notification",
-            "WFWorkflowActionParameters": p}
+            "WFWorkflowActionParameters": {
+                "WFNotificationActionBody": var_str_prefix(body_prefix, var_name),
+                "WFNotificationActionSound": True}}
 
-# ── shortcut definition ───────────────────────────────────────────────────────
+
+# ── shortcut definition ────────────────────────────────────────────────────────
 
 SALE_URL  = "https://qmizmnbzergqbpgyqseg.supabase.co/functions/v1/shortcut_record_sale"
 BREAK_URL = "https://qmizmnbzergqbpgyqseg.supabase.co/functions/v1/shortcut_record_breakdown"
 
 PAYMENT_METHODS = [
     ("Cash", "cash"), ("Venmo", "venmo"), ("Cash App", "cashapp"),
-    ("PayPal", "paypal"), ("Apple Pay", "apple_pay"), ("Zelle", "zelle"),
-    ("Card", "card"), ("Other", "other"),
+    ("PayPal", "paypal"), ("Zelle", "zelle"), ("Card", "card"),
+    ("Other", "other"), ("Apple Pay", "apple_pay"),
 ]
 
 gid = uid()
+actions = []
 
-actions = [
-    # ── Token (Import Question pre-fills on first install) ────────────────────
-    text_act("PASTE_YOUR_TOKEN_HERE"),
-    set_var("Token"),
+# ── Token (Import Question pre-fills on install) ───────────────────────────────
+tok_uuid, tok_act = text_act("", custom_output_name="Token")
+actions.append(tok_act)
+actions.append(set_var("Token", tok_uuid, "Token"))
 
-    # ── Payment label → value map ─────────────────────────────────────────────
-    dict_act(PAYMENT_METHODS),
-    set_var("PaymentMap"),
+# ── Compare string for the If condition ───────────────────────────────────────
+cmp_uuid, cmp_act = text_act("Record a Sale")
+actions.append(cmp_act)
 
-    # ── Mode: Sale or Breakdown ───────────────────────────────────────────────
-    choose_list(["Record a Sale", "Break Down Inventory"],
-                "What would you like to do?"),
-    set_var("Mode"),
+# ── Mode choice ───────────────────────────────────────────────────────────────
+lst_uuid, lst_act = list_act(["Record a Sale", "Breakdown Inventory"])
+actions.append(lst_act)
 
-    # ── If Mode == "Record a Sale" ────────────────────────────────────────────
-    cond_if(gid, "Mode", "Record a Sale"),
+chosen_uuid, chosen_act = choose_from_list_input(lst_uuid, "List")
+actions.append(chosen_act)
 
-        ask_text("What did you sell?"),
-        set_var("ItemName"),
+# ── If "Record a Sale" ────────────────────────────────────────────────────────
+actions.append(cond_if(gid, chosen_uuid, cmp_uuid))
 
-        ask_num("Quantity?", default=1),
-        set_var("Qty"),
+item_uuid, item_act = ask_text("What did you sell?")
+actions.append(item_act)
+actions.append(set_var("ItemName", item_uuid, "Ask for Input"))
 
-        ask_num("Sale price?"),
-        set_var("SalePrice"),
+qty_uuid, qty_act = ask_num("Quantity?", default=1)
+actions.append(qty_act)
+actions.append(set_var("Qty", qty_uuid, "Ask for Input"))
 
-        choose_list([p[0] for p in PAYMENT_METHODS], "Payment method?"),
-        set_var("PayLabel"),
+price_uuid, price_act = ask_num("Sale price?")
+actions.append(price_act)
+actions.append(set_var("SalePrice", price_uuid, "Ask for Input"))
 
-        # Map label → code using the PaymentMap dictionary
-        get_dict_val("PaymentMap", "PayLabel"),
-        set_var("PayValue"),
+pm_uuid, pm_act = dict_act(PAYMENT_METHODS)
+actions.append(pm_act)
+actions.append(set_var("PaymentMap", pm_uuid, "Dictionary"))
 
-        http_post(SALE_URL, [
-            ("shortcut_token", var_str("Token")),
-            ("item_name",      var_str("ItemName")),
-            ("quantity",       var_str("Qty")),
-            ("sale_price",     var_str("SalePrice")),
-            ("payment_method", var_str("PayValue")),
-        ]),
-        notify("Sale recorded: ", "ItemName", "Log Sale"),
+pay_uuid, pay_act = choose_from_dict_var(
+    "PaymentMap", [lbl for lbl, _ in PAYMENT_METHODS], "Payment method?")
+actions.append(pay_act)
+actions.append(set_var("PayValue", pay_uuid, "Selected Item"))
 
-    # ── Otherwise → Breakdown ─────────────────────────────────────────────────
-    cond_else(gid),
+_, post_sale_act = http_post(SALE_URL, [
+    ("shortcut_token", var_str("Token")),
+    ("item_name",      var_str("ItemName")),
+    ("quantity",       var_str("Qty")),
+    ("sale_price",     var_str("SalePrice")),
+    ("payment_method", var_str("PayValue")),
+], show_headers=True)
+actions.append(post_sale_act)
+actions.append(notify("Sale recorded: ", "ItemName"))
 
-        ask_text("What are you breaking down?"),
-        set_var("ItemName"),
+# ── Otherwise → Breakdown ─────────────────────────────────────────────────────
+actions.append(cond_else(gid))
 
-        ask_num("Quantity?", default=1),
-        set_var("Qty"),
+bitem_uuid, bitem_act = ask_text("What are you breaking down?")
+actions.append(bitem_act)
+actions.append(set_var("ItemName", bitem_uuid, "Ask for Input"))
 
-        http_post(BREAK_URL, [
-            ("shortcut_token", var_str("Token")),
-            ("item_name",      var_str("ItemName")),
-            ("quantity",       var_str("Qty")),
-        ]),
-        notify("Breakdown recorded: ", "ItemName", "Log Sale"),
+bqty_uuid, bqty_act = ask_num("Quantity?", default=1)
+actions.append(bqty_act)
+actions.append(set_var("Qty", bqty_uuid, "Ask for Input"))
 
-    cond_end(gid),
-]
+_, post_break_act = http_post(BREAK_URL, [
+    ("shortcut_token", var_str("Token")),
+    ("item_name",      var_str("ItemName")),
+    ("quantity",       var_str("Qty")),
+])
+actions.append(post_break_act)
+actions.append(notify("Breakdown recorded: ", "ItemName"))
+
+actions.append(cond_end(gid))
+
+# ── shortcut wrapper ──────────────────────────────────────────────────────────
 
 shortcut = {
     "WFWorkflowActions": actions,
@@ -261,7 +297,7 @@ shortcut = {
     "WFWorkflowHasShortcutInputVariables": False,
 }
 
-# ── write: unsigned temp → sign → output ─────────────────────────────────────
+# ── write: unsigned temp → sign → output ──────────────────────────────────────
 
 out = Path(__file__).parent.parent / "public" / "reseller-sale.shortcut"
 out.parent.mkdir(exist_ok=True)
