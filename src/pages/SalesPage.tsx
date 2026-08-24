@@ -219,7 +219,7 @@ function SaleDetail({ sale, netPayoutBySale, onLinkItem, onEdit, onDelete, onPro
       <div className="bg-gray-50 rounded-xl p-4">
         <div className="text-2xl font-bold text-gray-900 tabular-nums">{formatUSD(sale.sale_price)}</div>
         <div className="text-sm font-medium text-gray-700 mt-1">
-          {sale.items?.name ?? <span className="text-gray-400 italic">Unlinked sale</span>}
+          {sale.items?.name ?? sale.item_name ?? <span className="text-gray-400 italic">Unlinked sale</span>}
         </div>
         <div className="flex items-center gap-2 mt-1.5 flex-wrap">
           <PlatformBadge platform={sale.platform} />
@@ -399,6 +399,12 @@ export default function SalesPage() {
 
   const needsLink = filtered.filter(s => !s.item_id).length
 
+  const [shortcutBannerOpen, setShortcutBannerOpen] = useState(true)
+  const shortcutSales = useMemo(
+    () => (sales ?? []).filter(s => !s.item_id && s.item_name),
+    [sales]
+  )
+
   return (
     <div className="flex h-full">
       <div className="flex-1 flex flex-col overflow-hidden">
@@ -437,6 +443,38 @@ export default function SalesPage() {
           ) : filtered.length === 0 ? (
             <div className="p-8 text-center text-gray-400 text-sm">No sales found.</div>
           ) : (
+            <>
+            {shortcutSales.length > 0 && (
+              <div className="mb-4 rounded-lg border border-amber-200 bg-amber-50">
+                <button
+                  onClick={() => setShortcutBannerOpen(o => !o)}
+                  className="flex w-full items-center justify-between px-4 py-3 text-sm font-medium text-amber-800"
+                >
+                  <span>⚠️ {shortcutSales.length} sale{shortcutSales.length > 1 ? 's' : ''} need attention — item not linked to inventory</span>
+                  <span className="text-amber-600">{shortcutBannerOpen ? '▲' : '▼'}</span>
+                </button>
+                {shortcutBannerOpen && (
+                  <ul className="border-t border-amber-200 divide-y divide-amber-100">
+                    {shortcutSales.map(sale => (
+                      <li key={sale.id} className="flex items-center justify-between px-4 py-2 text-sm text-amber-900">
+                        <button
+                          className="flex-1 text-left hover:underline"
+                          onClick={() => setEditSale(sale)}
+                        >
+                          {sale.item_name} — {formatUSD(sale.sale_price)} — {sale.sold_at}
+                        </button>
+                        <button
+                          onClick={() => setDeleteSaleTarget(sale)}
+                          className="ml-4 text-xs text-amber-600 hover:text-amber-800"
+                        >
+                          dismiss
+                        </button>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </div>
+            )}
             <table className="w-full text-sm">
               <thead className="sticky top-0 bg-gray-50 border-b border-gray-200 z-10">
                 <tr>
@@ -467,6 +505,16 @@ export default function SalesPage() {
                             <div className="text-xs text-gray-400">{sale.items.category}</div>
                           )}
                         </>
+                      ) : sale.item_name ? (
+                        <div>
+                          <div className="font-medium text-gray-900 truncate max-w-xs">⚠️ {sale.item_name}</div>
+                          <button
+                            onClick={e => { e.stopPropagation(); setLinkSale(sale) }}
+                            className="flex items-center gap-1 text-amber-600 hover:text-amber-800 text-xs font-medium mt-0.5"
+                          >
+                            <Link2 size={12} /> Link to inventory
+                          </button>
+                        </div>
                       ) : (
                         <button
                           onClick={e => { e.stopPropagation(); setLinkSale(sale) }}
@@ -520,6 +568,7 @@ export default function SalesPage() {
                 ))}
               </tbody>
             </table>
+            </>
           )}
         </div>
 
