@@ -49,16 +49,18 @@ export default function BoxOpeningDetailSlideOver({ boxOpeningId, onClose }: Pro
               <div className="flex items-center gap-1.5 mt-1 flex-wrap">
                 <span className="text-sm text-gray-600">{formatDate(data.opening.opened_at)}</span>
                 <span className="text-gray-300 text-sm">·</span>
-                <span className="px-1.5 py-0.5 rounded text-[10px] font-medium bg-gray-100 text-gray-700">
-                  {METHOD_LABELS[data.opening.allocation_method] ?? data.opening.allocation_method}
-                </span>
+                {data.opening.allocation_method && (
+                  <span className="px-1.5 py-0.5 rounded text-[10px] font-medium bg-gray-100 text-gray-700">
+                    {METHOD_LABELS[data.opening.allocation_method] ?? data.opening.allocation_method}
+                  </span>
+                )}
               </div>
             </div>
 
             <div className="border border-gray-200 rounded-lg p-3 bg-gray-50">
               <div className="text-[10px] font-semibold text-gray-500 uppercase tracking-wide mb-1">Cost</div>
               <div className="text-base font-semibold text-gray-900 tabular-nums">
-                {formatUSD(data.opening.box_cost)}
+                {data.opening.box_cost !== null ? formatUSD(data.opening.box_cost) : '—'}
               </div>
               {data.sourceLot && (
                 <div className="text-xs text-gray-500 mt-1">

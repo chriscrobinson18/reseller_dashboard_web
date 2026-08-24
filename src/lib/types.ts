@@ -45,6 +45,7 @@ export interface Sale {
   id: string
   user_id: string
   item_id?: string
+  item_name?: string | null
   platform?: string
   source: 'manual' | 'csv_import' | 'plaid' | 'trade'
   quantity: number
@@ -215,10 +216,10 @@ export interface BoxOpening {
   deleted_at?: string | null
   opened_at: string                          // 'yyyy-MM-dd'
   box_name: string
-  box_cost: number
+  box_cost: number | null
   /** Mirrors the source lot's purchase transaction, if any — display only; no transaction is created by opening. */
   transaction_id: string | null
-  allocation_method: BoxAllocationMethod
+  allocation_method: BoxAllocationMethod | null
   /** The inventory_lots row this box was opened from — an existing item already in inventory. */
   source_lot_id: string | null
   /** How many units of the source lot were opened (usually 1). */
