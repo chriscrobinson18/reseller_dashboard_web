@@ -13,7 +13,7 @@ interface CategoryDef {
 }
 ```
 
-## The 21 categories
+## The categories
 
 | value | label | scheduleLine | isExcluded | mealsHalf |
 |---|---|---|---|---|
@@ -22,6 +22,7 @@ interface CategoryDef {
 | `settlement` | Settlement | — | ✅ | |
 | `balance_adjustment` | Balance Adjustment | — | ✅ | |
 | `payout` | Payout / Income | Part I | | |
+| `returns_allowances` | Returns & Allowances | Part I | | |
 | `cost_of_goods` | Cost of Goods | Part III | | |
 | `advertising` | Advertising | Line 8 | | |
 | `car_truck` | Car & Truck | Line 9 | | |
