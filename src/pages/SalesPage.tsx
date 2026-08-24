@@ -461,7 +461,7 @@ export default function SalesPage() {
                           className="flex-1 text-left hover:underline"
                           onClick={() => setEditSale(sale)}
                         >
-                          {sale.item_name} — {formatUSD(sale.sale_price)} — {sale.sold_at}
+                          {sale.item_name} — {formatUSD(sale.sale_price)} — {formatDate(sale.sold_at)}
                         </button>
                         <button
                           onClick={() => setDeleteSaleTarget(sale)}
