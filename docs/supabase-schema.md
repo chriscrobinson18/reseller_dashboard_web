@@ -62,6 +62,7 @@ The relational centerpiece — one row per sale event, FIFO-depletes inventory v
 |---|---|
 | `id`, `user_id`, `created_at`, `deleted_at` | soft-deleted |
 | `item_id` | nullable — sales can arrive unlinked (e.g. from CSV import) and get linked later via `linkSaleToItem` |
+| `item_name` | text | Nullable. Free-text item description from Shortcuts quick-sale. Preserved after `item_id` is linked. |
 | `platform`, `source`, `external_order_id` | `source` values gated by the `sales_source_check` CHECK constraint (DB-side): `'manual' \| 'amazon' \| 'ebay' \| 'tcgplayer' \| 'csv_import' \| 'trade'`. **Adding a new value requires a migration to extend the constraint** — the TS `Sale.source` union is not authoritative for the DB. Trade-leg sales set `source = 'trade'`. (Note: the TS union also lists `'plaid'`, but the DB constraint does not — pre-existing drift; plaid sales aren't yet written from the web client.) |
 | `quantity`, `sale_price` | `sale_price` is the **gross** unsigned sale amount |
 | `fees`, `shipping_cost` | unsigned magnitudes, stored separately from `sale_price` |
@@ -118,9 +119,9 @@ Audit-trail row for one "Breakdown Inventory" event — an existing inventory lo
 | `id`, `user_id`, `created_at`, `deleted_at` | soft-deleted |
 | `opened_at` | `date` — when the box was physically broken down; sets the resulting cards' `purchase_date` |
 | `box_name`, `notes` | free text; `box_name` is captured from the source item's name at breakdown time, not user-typed |
-| `box_cost` | positive numeric, `CHECK (box_cost > 0)` — `source_lot.unit_cost × quantity`. **Not a Schedule C deduction** — the source lot's cost was already deducted when it was purchased and linked, same as any other lot. Breaking it down creates no transaction. |
+| `box_cost` | positive numeric, `CHECK (box_cost > 0)` (nullable for shortcut-initiated incomplete breakdowns) — `source_lot.unit_cost × quantity`. **Not a Schedule C deduction** — the source lot's cost was already deducted when it was purchased and linked, same as any other lot. Breaking it down creates no transaction. |
 | `transaction_id` | nullable FK to the `cost_of_goods` transaction, `ON DELETE SET NULL` — mirrors the source lot's purchase transaction for display only; not created or owned by this row |
-| `allocation_method` | `'relative_fmv' \| 'specific_id' \| 'equal'`, CHECK-constrained. Math lives in `src/lib/boxAllocation.ts` (`allocateBoxCost`) |
+| `allocation_method` | `'relative_fmv' \| 'specific_id' \| 'equal'`, CHECK-constrained (nullable until user completes the breakdown in the web app). Math lives in `src/lib/boxAllocation.ts` (`allocateBoxCost`) |
 | `source_lot_id` | nullable FK to `inventory_lots`, `ON DELETE SET NULL` — the lot this was broken down from. `openBox` depletes its `quantity_remaining` by `quantity`; `deleteBoxOpening` restores it. |
 | `quantity` | integer, `CHECK (quantity > 0)`, default 1 — units of the source lot broken down in this event |
 
@@ -212,6 +213,14 @@ Per-user, tax-aware Schedule C categories. See [`docs/superpowers/specs/2026-06-
 **CHECK:** `(parent_value IS NOT NULL) <> (schedule_line IS NOT NULL)` — exactly one of `parent_value` / `schedule_line` is non-null.
 
 `transactions.schedule_c_category` stores `cust_<uuid-no-hyphens>` for rows tagged with a custom category. No schema change to `transactions`.
+
+### `profiles`
+Per-user settings. `id` is FK → `auth.users`.
+
+| Column | Type | Notes |
+|---|---|---|
+| `id` | uuid | PK, FK → `auth.users(id)` ON DELETE CASCADE |
+| `shortcut_token` | uuid | Unique. Personal API token for Apple Shortcuts. Null = not configured. |
 
 ### `plaid_items`
 

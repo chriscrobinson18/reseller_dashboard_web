@@ -70,6 +70,24 @@ Sales created as the given side of a barter trade (`source = 'trade'`, `trade_id
 
 **Do not edit trade-linked sales directly** — the sale's `sale_price` is the given-side FMV, and its linked income/COGS transactions are the trade's bundled non-cash legs, not per-sale transactions. Use the trade as the canonical handle: delete the trade via `TradeDetailSlideOver` to reverse all legs atomically. The current `deleteSale` still works on a trade-linked sale via `reverse_sale` (it will restore the depleted lots and soft-delete the sale), but it leaves the paired non-cash transactions and the `trades` row orphaned. The `EditSaleModal` is disabled for `source = 'trade'` sales.
 
+## Apple Shortcuts quick entry
+
+Users record unlinked manual sales and inventory breakdowns from iPhone without opening the web app.
+
+**Setup:** Settings → Apple Shortcuts → Generate Token → Copy → Add to Shortcuts → paste token on first run.
+
+**Fields captured (sale):** item name (free text), quantity, sale price, payment method. Date defaults to today UTC. No FIFO depletion — sale is created with `item_id = null` and `source = 'manual'`. The `item_name` column stores the original description even after the sale is linked to inventory.
+
+**Fields captured (breakdown):** item name (free text), quantity. Date defaults to today UTC. Creates an incomplete `box_openings` row with `source_lot_id = null` and `box_cost = null`. Complete it via "Breakdown Inventory" in the web app.
+
+**Attention banners:**
+- Sales page: ⚠️ banner for shortcut sales where `item_id IS NULL AND item_name IS NOT NULL`
+- Inventory page: ⚠️ banner for incomplete breakdowns where `box_openings.source_lot_id IS NULL`
+
+**Auth:** `profiles.shortcut_token` UUID. Edge functions `shortcut_record_sale` and `shortcut_record_breakdown` use service role — no JWT required in the Shortcut.
+
+**Regenerating** the token in Settings immediately invalidates the old one. The Shortcut will prompt for a new token on the next run.
+
 ## Gaps vs. mobile (TASKS.md P1)
 
 No per-platform breakdown/filter in the table.
