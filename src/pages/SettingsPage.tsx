@@ -5,6 +5,7 @@ import type { PlaidItem } from '../lib/types'
 import { plaidCreateLinkToken, plaidExchangeToken } from '../lib/mutations'
 import BankConnectionsSection from './settings/BankConnectionsSection'
 import CustomCategoriesList from '../components/CustomCategoriesList'
+import ShortcutsSettingsCard from '../components/ShortcutsSettingsCard'
 
 export default function SettingsPage() {
   const qc = useQueryClient()
@@ -85,6 +86,8 @@ export default function SettingsPage() {
           <CustomCategoriesList />
         </div>
       </section>
+
+      <ShortcutsSettingsCard />
 
       {plaidEnv && plaidEnv !== 'production' && (
         <div className="text-xs text-gray-400 text-center pt-6">
