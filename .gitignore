@@ -31,3 +31,6 @@ dist-ssr
 # Supabase local stack
 supabase/.branches
 supabase/.temp
+
+# Git worktrees
+.worktrees
