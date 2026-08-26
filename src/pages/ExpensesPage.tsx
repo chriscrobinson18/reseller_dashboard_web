@@ -441,6 +441,9 @@ export default function ExpensesPage() {
   const [search, setSearch] = useState('')
   const [catFilter, setCatFilter] = useState<string | null>(null)
   const [showSaleLinked, setShowSaleLinked] = useState(false)
+  const [dirFilter, setDirFilter] = useState<'all' | 'income' | 'expense'>('all')
+  const [sourceFilter, setSourceFilter] = useState<'all' | 'plaid' | 'manual'>('all')
+  const [accountFilter, setAccountFilter] = useState<string | null>(null)
   // Hold only the id, never a snapshot: the detail panel must re-render from
   // freshly-fetched data after a category/notes/field edit, otherwise it keeps
   // showing the values captured when the row was clicked until it's reopened.
@@ -484,14 +487,29 @@ export default function ExpensesPage() {
     [transactions, selectedId],
   )
 
+  const accountOptions = useMemo(() => {
+    const seen = new Map<string, string>()
+    for (const t of transactions) {
+      if (t.plaid_account_id && t.account_display && !seen.has(t.plaid_account_id)) {
+        seen.set(t.plaid_account_id, t.account_display)
+      }
+    }
+    return [...seen.entries()].map(([id, label]) => ({ id, label }))
+  }, [transactions])
+
   const filtered = useMemo(() => {
     const terms = parseSearchTerms(search)
     return transactions.filter(t => {
       if (!showSaleLinked && (t.related_sale_id || t.source === 'csv_import')) return false
       if (catFilter && t.schedule_c_category !== catFilter) return false
+      if (dirFilter === 'income' && t.amount <= 0) return false
+      if (dirFilter === 'expense' && t.amount >= 0) return false
+      if (sourceFilter === 'plaid' && t.source !== 'plaid') return false
+      if (sourceFilter === 'manual' && t.source !== 'manual') return false
+      if (accountFilter && t.plaid_account_id !== accountFilter) return false
       return matchesSearch(t, terms, customsAll)
     })
-  }, [transactions, showSaleLinked, catFilter, search, customsAll])
+  }, [transactions, showSaleLinked, catFilter, dirFilter, sourceFilter, accountFilter, search, customsAll])
 
   // Trade-linked transactions have locked categories (edited via the trade),
   // so they're excluded from bulk selection.
@@ -500,7 +518,7 @@ export default function ExpensesPage() {
   // Clear any selection when the visible set changes, so a bulk action never
   // silently applies to rows the user can no longer see. Render-phase reset
   // (React's "storing info from previous renders" pattern) rather than an effect.
-  const filterSig = `${range.start}|${range.end}|${search}|${catFilter}|${showSaleLinked}`
+  const filterSig = `${range.start}|${range.end}|${search}|${catFilter}|${showSaleLinked}|${dirFilter}|${sourceFilter}|${accountFilter}`
   const [lastFilterSig, setLastFilterSig] = useState(filterSig)
   if (filterSig !== lastFilterSig) {
     setLastFilterSig(filterSig)
@@ -592,6 +610,34 @@ export default function ExpensesPage() {
                 </div>
               )}
             </div>
+            <select
+              value={dirFilter}
+              onChange={e => setDirFilter(e.target.value as 'all' | 'income' | 'expense')}
+              className="border border-gray-200 rounded-lg px-2 py-1.5 text-sm text-gray-700 bg-white focus:outline-none focus:ring-2 focus:ring-gray-900"
+            >
+              <option value="all">All directions</option>
+              <option value="income">Income</option>
+              <option value="expense">Expense</option>
+            </select>
+            <select
+              value={sourceFilter}
+              onChange={e => setSourceFilter(e.target.value as 'all' | 'plaid' | 'manual')}
+              className="border border-gray-200 rounded-lg px-2 py-1.5 text-sm text-gray-700 bg-white focus:outline-none focus:ring-2 focus:ring-gray-900"
+            >
+              <option value="all">All sources</option>
+              <option value="plaid">Bank (Plaid)</option>
+              <option value="manual">Manual</option>
+            </select>
+            <select
+              value={accountFilter ?? ''}
+              onChange={e => setAccountFilter(e.target.value || null)}
+              className="border border-gray-200 rounded-lg px-2 py-1.5 text-sm text-gray-700 bg-white focus:outline-none focus:ring-2 focus:ring-gray-900"
+            >
+              <option value="">All accounts</option>
+              {accountOptions.map(({ id, label }) => (
+                <option key={id} value={id}>{label}</option>
+              ))}
+            </select>
             <button
               onClick={() => setShowSaleLinked(!showSaleLinked)}
               className={`flex items-center gap-1.5 border rounded-lg px-3 py-1.5 text-xs font-medium transition-colors ${

@@ -11,6 +11,7 @@ export interface Transaction {
   platform?: string
   record_type: 'transaction' | 'settlement'
   account_display?: string
+  plaid_account_id?: string
   schedule_c_category?: string
   notes?: string
   net_zero_pair_id?: string
