@@ -45,7 +45,8 @@ serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response(null, { headers: corsHeaders })
 
   try {
-    const authHeader = req.headers.get('Authorization')!
+    const authHeader = req.headers.get('Authorization')
+    if (!authHeader) return jsonResponse({ error: 'Missing Authorization header' }, 401)
     const supabase = createClient(
       Deno.env.get('SUPABASE_URL') ?? '',
       Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? '',
@@ -147,10 +148,15 @@ serve(async (req) => {
         } catch (removeErr: any) {
           console.warn('Could not revoke old Plaid item (non-fatal):', removeErr?.message)
         }
-        await supabase.from('plaid_accounts').delete().eq('item_id', existing_item_id)
-        await supabase.from('plaid_items').delete().eq('item_id', existing_item_id)
+        await supabase.from('plaid_accounts').delete().eq('item_id', existing_item_id).eq('user_id', user.id)
+        await supabase.from('plaid_items').delete().eq('item_id', existing_item_id).eq('user_id', user.id)
       }
       // Fall through to exchange + create new item below.
+    }
+
+    // Reject unknown choice values — prevents silent fallthrough to exchange on bad input.
+    if (choice !== undefined && choice !== 'keep' && choice !== 'fresh') {
+      return jsonResponse({ error: `Unknown choice value: ${choice}` }, 400)
     }
 
     // Phase 0: First call (no choice yet) — pre-exchange duplicate detection.
