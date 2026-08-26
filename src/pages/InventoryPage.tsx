@@ -439,6 +439,7 @@ type InventoryView = 'item' | 'date'
 
 export default function InventoryPage() {
   const [search, setSearch] = useState('')
+  const [inStockOnly, setInStockOnly] = useState(false)
   const [view, setView] = useState<InventoryView>('item')
   const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set())
   const [showAddItem, setShowAddItem] = useState(false)
@@ -501,13 +502,17 @@ export default function InventoryPage() {
   })
 
   const filtered = useMemo(() => {
-    if (!search) return items
+    let result = items
+    if (inStockOnly) result = result.filter(i =>
+      (i.inventory_lots ?? []).some(l => l.quantity_remaining > 0)
+    )
+    if (!search) return result
     const q = search.toLowerCase()
-    return items.filter(i =>
+    return result.filter(i =>
       i.name.toLowerCase().includes(q) ||
       (i.category ?? '').toLowerCase().includes(q)
     )
-  }, [items, search])
+  }, [items, search, inStockOnly])
 
   /** Every lot across the (search-filtered) items, newest purchase first. */
   const ledgerRows = useMemo(() => {
@@ -556,6 +561,17 @@ export default function InventoryPage() {
               placeholder="Search items…"
               className="w-64 border border-gray-200 rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-gray-900"
             />
+            <button
+              type="button"
+              onClick={() => setInStockOnly(v => !v)}
+              className={`border rounded-lg px-3 py-1.5 text-xs font-medium transition-colors ${
+                inStockOnly
+                  ? 'bg-gray-900 border-gray-900 text-white'
+                  : 'border-gray-200 text-gray-600 hover:border-gray-400'
+              }`}
+            >
+              In stock only
+            </button>
             <div className="flex gap-0.5 bg-gray-100 rounded-lg p-0.5">
               {([['item', 'By Item'], ['date', 'By Date']] as const).map(([v, label]) => (
                 <button
