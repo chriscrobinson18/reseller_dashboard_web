@@ -526,6 +526,15 @@ export default function ExpensesPage() {
     setShowBulkCat(false)
   }
 
+  // Clear accountFilter if selected account has no transactions in the current period.
+  const [lastAccountOptions, setLastAccountOptions] = useState(accountOptions)
+  if (lastAccountOptions !== accountOptions) {
+    setLastAccountOptions(accountOptions)
+    if (accountFilter && !accountOptions.some(o => o.id === accountFilter)) {
+      setAccountFilter(null)
+    }
+  }
+
   const allSelected = selectable.length > 0 && selectable.every(t => selectedIds.has(t.id))
   const someSelected = selectedIds.size > 0
 
@@ -631,7 +640,8 @@ export default function ExpensesPage() {
             <select
               value={accountFilter ?? ''}
               onChange={e => setAccountFilter(e.target.value || null)}
-              className="border border-gray-200 rounded-lg px-2 py-1.5 text-sm text-gray-700 bg-white focus:outline-none focus:ring-2 focus:ring-gray-900"
+              disabled={isLoading}
+              className="border border-gray-200 rounded-lg px-2 py-1.5 text-sm text-gray-700 bg-white focus:outline-none focus:ring-2 focus:ring-gray-900 disabled:opacity-50"
             >
               <option value="">All accounts</option>
               {accountOptions.map(({ id, label }) => (
