@@ -4,7 +4,7 @@
 -- Used for targeted deletion in the "Start fresh" reconnect path and for
 -- grouping in the duplicate review UI (Phase C).
 alter table public.transactions
-  add column plaid_account_id text;
+  add column if not exists plaid_account_id text;
 
 -- Backfill from plaid_metadata JSONB already stored on every Plaid row.
 -- account_id is a top-level field of the raw Plaid transaction object.
@@ -14,7 +14,7 @@ update public.transactions
     and plaid_metadata is not null
     and plaid_account_id is null;
 
-create index transactions_plaid_account_id_idx
+create index if not exists transactions_plaid_account_id_idx
   on public.transactions(plaid_account_id)
   where plaid_account_id is not null;
 
