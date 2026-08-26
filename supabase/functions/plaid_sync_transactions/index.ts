@@ -2,7 +2,7 @@
 // v34: populate plaid_account_id on all new rows (tx.account_id, stable across
 // item reconnects). Used by plaid_exchange_token v17's "Start fresh" deletion path
 // and by the future duplicate review UI. No behavior change to sync logic.
-// plaid_sync_transactions v32
+// v32:
 // Adds rich Plaid metadata capture: 14 new columns on transactions (logo, location,
 // payment_channel, authorized_date, pending, detailed PFC + confidence, currency,
 // plaid_metadata jsonb). A side-channel metadata UPDATE pass refreshes those fields
