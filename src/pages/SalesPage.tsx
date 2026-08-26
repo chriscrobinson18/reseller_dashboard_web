@@ -352,6 +352,8 @@ function SaleDetail({ sale, netPayoutBySale, onLinkItem, onEdit, onDelete, onPro
 export default function SalesPage() {
   const [period, setPeriod] = useState<PeriodPreset>('ytd')
   const [search, setSearch] = useState('')
+  const [platformFilter, setPlatformFilter] = useState<string | null>(null)
+  const [returnFilter, setReturnFilter] = useState<'all' | 'none' | 'has_return'>('all')
   const [selected, setSelected] = useState<Sale | null>(null)
   const [showRecordSale, setShowRecordSale] = useState(false)
   const [linkSale, setLinkSale] = useState<Sale | null>(null)
@@ -378,17 +380,28 @@ export default function SalesPage() {
     queryFn: () => fetchSales(range.start, range.end),
   })
 
+  const platformOptions = useMemo(() => {
+    const seen = new Set<string>()
+    for (const s of sales) { if (s.platform) seen.add(s.platform) }
+    return [...seen].sort()
+  }, [sales])
+
   const filtered = useMemo(() => {
-    if (!search) return sales
-    const q = search.toLowerCase()
-    return sales.filter(s =>
-      (s.items?.name ?? '').toLowerCase().includes(q) ||
-      (s.external_order_id ?? '').toLowerCase().includes(q) ||
-      (s.platform ?? '').toLowerCase().includes(q) ||
-      (s.payment_method ?? '').toLowerCase().includes(q) ||
-      (paymentMethodLabel(s.payment_method) ?? '').toLowerCase().includes(q)
-    )
-  }, [sales, search])
+    return sales.filter(s => {
+      if (platformFilter && s.platform !== platformFilter) return false
+      if (returnFilter === 'none' && s.return_status != null) return false
+      if (returnFilter === 'has_return' && s.return_status == null) return false
+      if (!search) return true
+      const q = search.toLowerCase()
+      return (
+        (s.items?.name ?? '').toLowerCase().includes(q) ||
+        (s.external_order_id ?? '').toLowerCase().includes(q) ||
+        (s.platform ?? '').toLowerCase().includes(q) ||
+        (s.payment_method ?? '').toLowerCase().includes(q) ||
+        (paymentMethodLabel(s.payment_method) ?? '').toLowerCase().includes(q)
+      )
+    })
+  }, [sales, search, platformFilter, returnFilter])
 
   const totalRevenue = filtered
     .filter(s => s.return_status !== 'full')
@@ -421,13 +434,33 @@ export default function SalesPage() {
             </div>
           </div>
           <PeriodPicker value={period} onChange={setPeriod} />
-          <div className="flex items-center justify-between">
+          <div className="flex items-center gap-2">
             <input
               value={search}
               onChange={e => setSearch(e.target.value)}
               placeholder="Search item, order ID, platform, payment…"
               className="w-64 border border-gray-200 rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-gray-900"
             />
+            <select
+              value={platformFilter ?? ''}
+              onChange={e => setPlatformFilter(e.target.value || null)}
+              className="border border-gray-200 rounded-lg px-2 py-1.5 text-sm text-gray-700 bg-white focus:outline-none focus:ring-2 focus:ring-gray-900"
+            >
+              <option value="">All platforms</option>
+              {platformOptions.map(p => (
+                <option key={p} value={p}>{p}</option>
+              ))}
+            </select>
+            <select
+              value={returnFilter}
+              onChange={e => setReturnFilter(e.target.value as 'all' | 'none' | 'has_return')}
+              className="border border-gray-200 rounded-lg px-2 py-1.5 text-sm text-gray-700 bg-white focus:outline-none focus:ring-2 focus:ring-gray-900"
+            >
+              <option value="all">All returns</option>
+              <option value="none">No returns</option>
+              <option value="has_return">Has return</option>
+            </select>
+            <div className="flex-1" />
             <button
               onClick={() => setShowRecordSale(true)}
               className="flex items-center gap-1.5 bg-gray-900 text-white px-3 py-1.5 rounded-lg text-sm font-medium hover:bg-gray-700 transition-colors"
