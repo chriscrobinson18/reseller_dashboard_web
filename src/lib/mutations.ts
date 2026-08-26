@@ -1768,18 +1768,50 @@ export async function plaidCreateLinkToken(itemId?: string): Promise<PlaidCreate
   return data as PlaidCreateLinkTokenResult
 }
 
+export type PlaidExchangeResult =
+  | {
+      status: 'duplicate_detected'
+      existing_item_id: string
+      existing_institution_name: string
+      matched_masks: string[]
+      existing_item_status: 'active' | 'login_required' | 'error'
+    }
+  | {
+      status: 'kept'
+      institution_name: string | null
+      warning?: 'login_required'
+      message?: string
+    }
+  | {
+      status: 'reconnected'
+      success: true
+    }
+  | {
+      success: true
+      institution_name: string | null
+      note?: string
+    }
+
 /**
  * Exchanges a Plaid Link public_token for an access_token and persists a plaid_items row
  * (or refreshes the existing one for update mode). Backend reads institution from metadata.
  */
 export async function plaidExchangeToken(params: {
   public_token: string
-  metadata: unknown
-}): Promise<void> {
-  const { error } = await supabase.functions.invoke('plaid_exchange_token', {
+  metadata?: unknown
+  mode?: 'create' | 'update'
+  /** update mode: the existing plaid_items.item_id being re-authenticated */
+  item_id?: string
+  /** create mode, second call: user's choice after duplicate_detected */
+  choice?: 'keep' | 'fresh'
+  /** create mode, second call: the item_id to keep or replace */
+  existing_item_id?: string
+}): Promise<PlaidExchangeResult> {
+  const { data, error } = await supabase.functions.invoke('plaid_exchange_token', {
     body: params,
   })
   if (error) throw error
+  return (data ?? {}) as PlaidExchangeResult
 }
 
 export interface PlaidSyncResult {
