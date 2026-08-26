@@ -433,7 +433,7 @@ export default function SalesPage() {
               )}
             </div>
           </div>
-          <PeriodPicker value={period} onChange={setPeriod} />
+          <PeriodPicker value={period} onChange={p => { setPeriod(p); setPlatformFilter(null); setReturnFilter('all') }} />
           <div className="flex items-center gap-2">
             <input
               value={search}
