@@ -1,4 +1,5 @@
 import { useState, useMemo } from 'react'
+import { Link } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
 import {
   BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Legend,
@@ -223,9 +224,12 @@ export default function DashboardPage() {
 
       {/* Uncategorized warning */}
       {uncategorized > 0 && (
-        <div className="bg-amber-50 border border-amber-200 rounded-lg px-4 py-2.5 text-sm text-amber-800">
-          ⚠️ <strong>{uncategorized}</strong> transactions need a category — go to Expenses to categorize them.
-        </div>
+        <Link
+          to="/expenses?cat=__uncategorized__"
+          className="block bg-amber-50 border border-amber-200 rounded-lg px-4 py-2.5 text-sm text-amber-800 hover:bg-amber-100 transition-colors"
+        >
+          ⚠️ <strong>{uncategorized}</strong> transactions need a category — click to categorize.
+        </Link>
       )}
 
       {/* KPI row */}

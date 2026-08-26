@@ -17,8 +17,9 @@ import TransactionInventorySection from '../components/TransactionInventorySecti
 import { Field, inputCls } from '../components/Modal'
 import TradeDetailSlideOver from '../components/TradeDetailSlideOver'
 import MerchantAvatar from '../components/MerchantAvatar'
+import { useSearchParams } from 'react-router-dom'
 import { useTrade, useCustomCategories } from '../lib/queries'
-import CategoryDropdown from '../components/CategoryDropdown'
+import CategoryDropdown, { UNCATEGORIZED_SENTINEL } from '../components/CategoryDropdown'
 import type { Transaction } from '../lib/types'
 
 // ─── Data ────────────────────────────────────────────────────────────────────
@@ -439,7 +440,8 @@ function TransactionDetail({ tx, onClose, onOpenTrade, onManage }: { tx: Transac
 export default function ExpensesPage() {
   const [period, setPeriod] = useState<PeriodPreset>('ytd')
   const [search, setSearch] = useState('')
-  const [catFilter, setCatFilter] = useState<string | null>(null)
+  const [searchParams] = useSearchParams()
+  const [catFilter, setCatFilter] = useState<string | null>(() => searchParams.get('cat') || null)
   const [showSaleLinked, setShowSaleLinked] = useState(false)
   const [dirFilter, setDirFilter] = useState<'all' | 'income' | 'expense'>('all')
   const [sourceFilter, setSourceFilter] = useState<'all' | 'plaid' | 'manual'>('all')
@@ -501,7 +503,11 @@ export default function ExpensesPage() {
     const terms = parseSearchTerms(search)
     return transactions.filter(t => {
       if (!showSaleLinked && (t.related_sale_id || t.source === 'csv_import')) return false
-      if (catFilter && t.schedule_c_category !== catFilter) return false
+      if (catFilter === UNCATEGORIZED_SENTINEL) {
+        if (t.schedule_c_category) return false
+      } else if (catFilter) {
+        if (t.schedule_c_category !== catFilter) return false
+      }
       if (dirFilter === 'income' && t.amount <= 0) return false
       if (dirFilter === 'expense' && t.amount >= 0) return false
       if (sourceFilter === 'plaid' && t.source !== 'plaid') return false
@@ -577,9 +583,13 @@ export default function ExpensesPage() {
             <h1 className="text-lg font-semibold text-gray-900">Expenses</h1>
             <div className="flex items-center gap-3 text-sm text-gray-500">
               {uncategorized > 0 && (
-                <span className="bg-amber-100 text-amber-700 px-2 py-0.5 rounded-full text-xs font-medium">
+                <button
+                  type="button"
+                  onClick={() => setCatFilter(UNCATEGORIZED_SENTINEL)}
+                  className="bg-amber-100 text-amber-700 px-2 py-0.5 rounded-full text-xs font-medium hover:bg-amber-200 transition-colors cursor-pointer"
+                >
                   {uncategorized} uncategorized
-                </span>
+                </button>
               )}
               <span className="text-green-600 font-medium">{formatUSD(income)} in</span>
               <span className="text-red-500 font-medium">{formatUSD(expenses)} out</span>
@@ -603,9 +613,11 @@ export default function ExpensesPage() {
                 className="border border-gray-200 rounded-lg px-2 py-1.5 text-sm text-gray-700 bg-white flex items-center gap-1 min-w-[10rem]"
               >
                 <span className="truncate">
-                  {catFilter
-                    ? (resolveCategory(catFilter, customsAll)?.label ?? catFilter)
-                    : 'All categories'}
+                  {catFilter === UNCATEGORIZED_SENTINEL
+                    ? 'Uncategorized'
+                    : catFilter
+                      ? (resolveCategory(catFilter, customsAll)?.label ?? catFilter)
+                      : 'All categories'}
                 </span>
                 <ChevronDown size={12} className="ml-auto text-gray-400 shrink-0" />
               </button>
@@ -615,6 +627,7 @@ export default function ExpensesPage() {
                     current={catFilter}
                     onSelect={(v) => { setCatFilter(v); setShowCatFilter(false) }}
                     onManage={() => { setShowCatFilter(false); setShowManage(true) }}
+                    showUncategorized
                   />
                 </div>
               )}

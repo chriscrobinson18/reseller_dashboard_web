@@ -3,6 +3,8 @@ import { CATEGORIES } from '../lib/categories'
 import { PALETTE } from '../lib/categoryPalette'
 import { useCustomCategories, activeCustomCategories } from '../lib/queries'
 
+export const UNCATEGORIZED_SENTINEL = '__uncategorized__'
+
 interface Props {
   /** Currently selected value; for highlighting. */
   current?: string | null
@@ -12,6 +14,7 @@ interface Props {
   onManage: () => void
   /** Hide the "Clear category" row (e.g. when used for an Add modal where empty=uncategorized). */
   hideClear?: boolean
+  showUncategorized?: boolean
 }
 
 /**
@@ -23,7 +26,7 @@ interface Props {
  *
  * Caller is responsible for positioning (absolute / floating / inline).
  */
-export default function CategoryDropdown({ current, onSelect, onManage, hideClear }: Props) {
+export default function CategoryDropdown({ current, onSelect, onManage, hideClear, showUncategorized }: Props) {
   const { data: allCustoms = [] } = useCustomCategories()
   const customs = activeCustomCategories(allCustoms)
 
@@ -38,6 +41,15 @@ export default function CategoryDropdown({ current, onSelect, onManage, hideClea
           onClick={() => onSelect(null)}
         >
           — Clear category
+        </div>
+      )}
+      {showUncategorized && (
+        <div
+          className={`px-3 py-1.5 text-xs cursor-pointer hover:bg-gray-50 flex items-center gap-2 ${current === UNCATEGORIZED_SENTINEL ? 'bg-gray-50 font-medium' : ''}`}
+          onClick={() => onSelect(UNCATEGORIZED_SENTINEL)}
+        >
+          <span className="w-2 h-2 rounded-full shrink-0 bg-gray-300" />
+          <span className="text-gray-500 italic">Uncategorized</span>
         </div>
       )}
 
