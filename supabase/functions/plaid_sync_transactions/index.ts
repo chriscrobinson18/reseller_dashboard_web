@@ -1,9 +1,7 @@
-// plaid_sync_transactions v33
-// v33: surface item failures instead of swallowing them. Any Plaid error other
-// than PRODUCT_NOT_READY now writes plaid_items.status/error_message and returns
-// a warning, and a clean sync resets status to 'active'. Previously these were
-// console.error-only while the response still reported success, so an expired
-// connection kept rendering a green "Connected" badge indefinitely.
+// plaid_sync_transactions v34
+// v34: populate plaid_account_id on all new rows (tx.account_id, stable across
+// item reconnects). Used by plaid_exchange_token v17's "Start fresh" deletion path
+// and by the future duplicate review UI. No behavior change to sync logic.
 // plaid_sync_transactions v32
 // Adds rich Plaid metadata capture: 14 new columns on transactions (logo, location,
 // payment_channel, authorized_date, pending, detailed PFC + confidence, currency,
@@ -134,6 +132,7 @@ function buildRow(tx: any, userId: string, accountMap: Record<string, string>) {
     type: getTransactionType(tx),
     source: 'plaid',
     account_display: accountMap[tx.account_id] ?? null,
+    plaid_account_id: tx.account_id ?? null,
     plaid_category: pfc.primary ?? null,
     record_type: settlement?.record_type ?? 'transaction',
     platform: settlement?.platform ?? null,
