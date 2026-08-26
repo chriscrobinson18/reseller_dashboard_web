@@ -13,6 +13,11 @@ institution from `plaid_accounts`.
 - **Connect Bank** — launches Plaid Link in create mode. On success the
   `plaid_exchange_token` edge function persists a new `plaid_items` row + its
   `plaid_accounts`. React Query invalidations refresh the list.
+- **Duplicate detection** — if the accounts being connected share a Plaid `account_id`
+  with an existing connection, the exchange is paused and the user is prompted to
+  **Keep existing transactions** (existing connection preserved, a sync is triggered)
+  or **Start fresh** (old transactions deleted, new item created). Implemented in
+  `plaid_exchange_token` v17. See `docs/superpowers/specs/2026-08-25-plaid-dedup-design.md`.
 - **Sync Now** — per-item button calling `plaid_sync_transactions`. On success, surfaces
   an inline count of newly-added transactions (`transactions_added` — the response has
   never actually had an `inserted` field; that was a client-side type bug, fixed
@@ -27,6 +32,8 @@ institution from `plaid_accounts`.
   - After the `plaid_metadata_capture` migration (2026-06-26), running Force Full Resync once per institution backfills merchant logos, locations, payment channel, and detailed PFC onto historical transactions. User edits (categories, notes, sale links, receipts) are not touched.
 - **Reconnect** — appears as a red button when `plaid_items.status = 'login_required'`.
   Launches Plaid Link in update mode (passes `item_id` to `plaid_create_link_token`).
+  - On successful reconnect, `plaid_exchange_token` v17 resets `plaid_items.status = 'active'`
+    immediately — the badge clears without waiting for the next sync.
 - **Disconnect** — kebab menu → confirm dialog → `plaid_remove_item`. Historical
   transactions are retained with `source = 'plaid'`; the `account_display` column on
   each transaction keeps the institution + mask readable on the Expenses page.
@@ -114,12 +121,9 @@ that used to be listed as pending are now shipped:
    of v33 (2026-07-24) also writes `status`/`error_message` on any Plaid error, not just
    `ITEM_LOGIN_REQUIRED` — see the status-badge section above for the full code mapping and
    why the response is `success: true` even when an item failed.
-3. **`plaid_exchange_token` update-mode status reset** — **not implemented.** Reconnecting
-   via Link (update mode) never writes `plaid_items.status` back to `'active'`; in practice
-   this is masked because the *next* `plaid_sync_transactions` call resets it on success (#2
-   above), but there's a window right after a successful reconnect where the badge can still
-   read "Reconnect needed" until that next sync runs. Worth fixing directly if that gap ever
-   causes confusion.
+3. **`plaid_exchange_token` update-mode status reset** — ✅ Resolved in v17. Reconnecting
+   via Link (update mode) now writes `plaid_items.status = 'active'` immediately on success;
+   the "Reconnect needed" badge clears without waiting for the next sync.
 4. **`plaid_exchange_token` duplicate-connection matching** — fixed 2026-07-25. Matching an
    existing item for the same institution used `.eq('institution_id', id)`, which never
    matches `NULL` — and every item created before institution capture existed has
