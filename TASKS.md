@@ -67,12 +67,11 @@ _These bugs exist in mobile's codebase (see mobile TASKS.md "P0 — June 2026 Au
 
 _Not ported from mobile. These are actual defects in the production dataset, found while debugging a stale Plaid connection. Both affect filed numbers._
 
-- [ ] **Duplicate transactions in the live dataset — overstates BOTH income and COGS** — _Partially cleaned 2026-08-25. Three-step remediation in progress:_
+- [ ] **Duplicate transactions in the live dataset — overstates BOTH income and COGS** — _Partially remediated 2026-08-25. Three-step plan:_
   - **Cleaned:** July 25 AmEx reconnect re-imports (bare nulls with older copies), July 22 ••6883 Chase reconnect re-imports (same criteria), 10 ••4979 AmEx bill-payment dupes. ~500+ rows removed total.
-  - **Step 1 — Content-level dedup (P1, do first):** add date + amount + account + merchant guard to `plaid_sync_transactions` so re-sync below doesn't flood with new dupes. See "Guard against duplicate connections" item in P1.
-  - **Step 2 — Re-sync affected cards:** once Step 1 is live, force-resync ••1000, ••1004, ••2003 from Plaid to restore any transactions accidentally deleted in the cleanup pass (hard-deleted, no audit trail, but every deletion required an older copy to exist + no user work on the deleted row).
-  - **Step 3 — Dedupe review UI:** surface remaining ~441 groups / 734 ambiguous rows (mix of legitimate repeat purchases and real re-import dupes) side-by-side for manual keep/dismiss, after re-sync fills any gaps.
-  - **Root cause not fully fixed until Step 1:** `plaid_sync_transactions` dedupes on `plaid_transaction_id` only; reconnecting a card issues fresh IDs for all historical transactions, so every future reconnect will re-create this problem.
+  - **Step 1 — Prevention shipped (2026-08-25):** `plaid_exchange_token` v17 detects duplicate connections by `account_id` before exchanging a public token. Future reconnects cannot create new items for existing accounts — user gets Keep/Fresh choice instead. Content-level dedup was rejected (resellers routinely make 20+ identical purchases same-card same-day). See `docs/superpowers/specs/2026-08-25-plaid-dedup-design.md`.
+  - **Step 2 — Re-sync affected cards:** force-resync ••1000, ••1004, ••2003 from Settings → Force Full Resync. Same item → same `plaid_transaction_id`s → `ignoreDuplicates: true` skips existing rows and restores any accidentally deleted. New rows will have `plaid_account_id` populated (v34).
+  - **Step 3 — Dedupe review UI:** surface remaining ~441 groups / 734 ambiguous rows (mix of legitimate repeat purchases and real re-import dupes) side-by-side for manual keep/dismiss, after Step 2 fills any gaps. See P0 item below.
 - [x] **22 uncategorized AmEx bill payments — latent double-deduction** — _Closed 2026-08-25._ Found 33 null rows total (more than the original 22 count). 10 were exact Plaid re-import duplicates on ••4979 (null copy deleted, transfer copy kept). 23 on ••7382 were genuine uncategorized bill payments → bulk-set to `transfer`. Two ••7382 pairs (2026-03-09: -$1,685.37 and -$383.97) remain as duplicate transfer rows — no tax impact (both excluded), flag for duplicate cleanup pass.
 - [x] **`record_sale`/`reverse_return` need redeploying — deleted lots stayed FIFO-eligible (found 2026-08-02)** — _Deployed 2026-08-25._ Both functions now filter `deleted_at is null` in FIFO lot query.
 
@@ -91,6 +90,7 @@ _Daily-workflow features mobile has that web doesn't yet. Ordered by how often t
 - [x] **Deploy `plaid_sync_transactions` v33** — _Deployed 2026-08-25._ Plaid errors now surface correctly; reconnect-class codes set `status='login_required'`, others set `'error'`.
 - [x] **`plaid_exchange_token`: reset item status on update-mode reconnect** — Closed by `plaid_exchange_token` v17: update mode now resets `plaid_items.status = 'active'` immediately on success.
 - [x] **Guard against duplicate connections re-importing history** — Closed by `plaid_exchange_token` v17: pre-exchange account_id detection prevents new items from being created for existing accounts; Keep/Fresh modal gives user control. `transactions.plaid_account_id` column enables targeted deletion on Fresh.
+- [ ] **"Start Fresh" path does not clean up receipt storage blobs** — `plaid_exchange_token` v17's fresh-path `.delete()` removes transaction rows but not any `receipts` storage objects attached to them (unlike `plaid_sync_transactions`' removal path which does clean up). Low impact today (Plaid-synced rows rarely have user receipts), but should be fixed when the Receipt attachment feature ships (P1 Receipts item above).
 
 ### CSV Import
 - [ ] **Marketplace CSV import UI** — eBay Transaction Report, Amazon Settlement/Transaction View, Mercari CSV; drag-and-drop or file input calling `import_marketplace_csv` edge function (already shared with mobile — v16)
