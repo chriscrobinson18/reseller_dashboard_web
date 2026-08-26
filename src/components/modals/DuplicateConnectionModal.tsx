@@ -36,6 +36,7 @@ export default function DuplicateConnectionModal({
 
         <div className="space-y-2 pt-1">
           <button
+            type="button"
             onClick={onKeep}
             disabled={isPending}
             className="w-full rounded-lg bg-blue-600 px-4 py-2.5 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50"
@@ -43,6 +44,7 @@ export default function DuplicateConnectionModal({
             Keep existing transactions
           </button>
           <button
+            type="button"
             onClick={onFresh}
             disabled={isPending}
             className="w-full rounded-lg border border-red-300 bg-red-50 px-4 py-2.5 text-sm font-medium text-red-700 hover:bg-red-100 disabled:opacity-50"
@@ -50,6 +52,7 @@ export default function DuplicateConnectionModal({
             Start fresh — delete existing transactions
           </button>
           <button
+            type="button"
             onClick={onCancel}
             disabled={isPending}
             className="w-full rounded-lg border border-gray-200 px-4 py-2.5 text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50"
