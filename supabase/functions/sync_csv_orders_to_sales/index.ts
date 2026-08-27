@@ -154,7 +154,9 @@ serve(async (req) => {
         shipping_cost: entry.shippingCost,
         net_payout: netPayout,
         return_status: returnStatus,
-        date: entry.date,
+        sold_at: entry.date,
+        inventory_status: 'ok',
+        refunded_quantity: 0,
       }
 
       const existing = existingMap.get(ref)

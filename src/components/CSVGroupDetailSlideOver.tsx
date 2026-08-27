@@ -99,6 +99,7 @@ export default function CSVGroupDetailSlideOver({ group, platform, open, onClose
       .eq('amount', expectedDeposit)
       .gte('date', dateMin ?? '2000-01-01')
       .lte('date', searchEnd ?? '2099-12-31')
+      .neq('record_type', 'settlement')
       .order('date')
 
     if ((exact ?? []).length > 0) {
@@ -116,6 +117,7 @@ export default function CSVGroupDetailSlideOver({ group, platform, open, onClose
         .lte('amount', hi)
         .gte('date', dateMin ?? '2000-01-01')
         .lte('date', searchEnd ?? '2099-12-31')
+        .neq('record_type', 'settlement')
         .order('date')
       setCandidates((near ?? []) as Transaction[])
       setIsNearMatch(true)
@@ -131,8 +133,8 @@ export default function CSVGroupDetailSlideOver({ group, platform, open, onClose
     try {
       // If near-match, auto-create a gap expense
       if (isNearMatch && expectedDeposit !== undefined) {
-        const gap = Math.abs(expectedDeposit - candidate.amount)
-        if (gap > 0) {
+        const gap = expectedDeposit - candidate.amount  // positive = received less (expense); negative = received more (income)
+        if (Math.abs(gap) > 0) {
           await insertTransaction({
             date: candidate.date,
             amount: -gap,
