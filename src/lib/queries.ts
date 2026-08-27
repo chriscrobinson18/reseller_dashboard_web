@@ -1,6 +1,6 @@
 import { useQuery } from '@tanstack/react-query'
 import { supabase } from './supabase'
-import type { Item, InventoryLot, Trade, SaleBundle, PlaidItem, PlaidAccount, Transaction, BoxOpening } from './types'
+import type { Item, InventoryLot, Trade, SaleBundle, PlaidItem, PlaidAccount, Transaction, BoxOpening, CSVGroup } from './types'
 import type { CustomCategory } from './categories'
 import { customCategoryValue } from './categories'
 import type { ColorKey } from './categoryPalette'
@@ -345,6 +345,90 @@ export function useIncompleteBreakdowns() {
         quantity: number
         opened_at: string
       }>
+    },
+  })
+}
+
+// ─── CSV Group helpers ────────────────────────────────────────────────────────
+
+export function getTransferRow(g: CSVGroup): Transaction | undefined {
+  return g.transactions.find(tx => tx.schedule_c_category === 'transfer')
+}
+
+export function getNonTransferRows(g: CSVGroup): Transaction[] {
+  return g.transactions.filter(tx => tx.schedule_c_category !== 'transfer')
+}
+
+export function getExpectedDeposit(g: CSVGroup): number | undefined {
+  const t = getTransferRow(g)
+  return t !== undefined ? -t.amount : undefined
+}
+
+export function isLinkedGroup(g: CSVGroup): boolean {
+  return g.transactions.some(tx => tx.parent_settlement_id != null)
+}
+
+export function getLinkedSettlementId(g: CSVGroup): string | undefined {
+  return g.transactions.find(tx => tx.parent_settlement_id != null)?.parent_settlement_id ?? undefined
+}
+
+export function getNetTotal(g: CSVGroup): number {
+  return getNonTransferRows(g).reduce((sum, tx) => sum + tx.amount, 0)
+}
+
+export function getAdjustedTotal(g: CSVGroup): number {
+  return getNetTotal(g) + g.priorBalance
+}
+
+export function getClosingReserve(g: CSVGroup): number | undefined {
+  const expected = getExpectedDeposit(g)
+  return expected !== undefined ? getAdjustedTotal(g) - expected : undefined
+}
+
+export function buildCSVGroups(rows: Transaction[], platform: string): CSVGroup[] {
+  // 1. Group rows by csv_group_id
+  const map = new Map<string, Transaction[]>()
+  for (const tx of rows) {
+    if (!tx.csv_group_id) continue
+    const arr = map.get(tx.csv_group_id) ?? []
+    arr.push(tx)
+    map.set(tx.csv_group_id, arr)
+  }
+
+  // 2. Build groups; sort oldest-first so we can propagate the balance chain
+  const groups: CSVGroup[] = [...map.entries()].map(([groupId, transactions]) => ({
+    groupId, platform, transactions, priorBalance: 0,
+  }))
+  groups.sort((a, b) => {
+    const aDate = getTransferRow(a)?.date ?? a.transactions[0]?.date ?? ''
+    const bDate = getTransferRow(b)?.date ?? b.transactions[0]?.date ?? ''
+    return aDate.localeCompare(bDate)
+  })
+
+  // 3. Propagate closing reserve as priorBalance into the next group
+  let carry = 0
+  for (const g of groups) {
+    g.priorBalance = carry
+    carry = getClosingReserve(g) ?? 0
+  }
+
+  // 4. Return newest-first for display
+  return groups.reverse()
+}
+
+export function useCSVGroups(platform: string) {
+  return useQuery({
+    queryKey: ['csv-groups', platform],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from('transactions')
+        .select('*')
+        .eq('source', 'csv_import')
+        .eq('platform', platform)
+        .not('csv_group_id', 'is', null)
+        .order('date', { ascending: false })
+      if (error) throw error
+      return buildCSVGroups((data ?? []) as Transaction[], platform)
     },
   })
 }
