@@ -19,4 +19,7 @@ body { margin: 0; font-family: system-ui, 'Segoe UI', Roboto, sans-serif; }
   .pb-safe {
     padding-bottom: env(safe-area-inset-bottom, 0px);
   }
+  .pb-nav-safe {
+    padding-bottom: calc(4rem + env(safe-area-inset-bottom, 0px));
+  }
 }

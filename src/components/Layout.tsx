@@ -50,14 +50,14 @@ export default function Layout() {
       </aside>
 
       {/* Main content */}
-      <main className="flex-1 overflow-auto pb-16 md:pb-0">
+      <main className="flex-1 overflow-auto pb-nav-safe md:pb-0">
         <ErrorBoundary>
           <Outlet />
         </ErrorBoundary>
       </main>
 
       {/* Bottom tab bar — mobile only */}
-      <nav className="fixed bottom-0 inset-x-0 flex md:hidden bg-white border-t border-gray-200 pb-safe">
+      <nav aria-label="Main navigation" className="fixed bottom-0 inset-x-0 flex md:hidden bg-white border-t border-gray-200 pb-safe">
         {NAV.map(({ to, icon: Icon, label }) => (
           <NavLink
             key={to}
@@ -70,7 +70,7 @@ export default function Layout() {
           >
             {({ isActive }) => (
               <>
-                <Icon size={20} strokeWidth={isActive ? 2.5 : 1.75} />
+                <Icon size={20} strokeWidth={isActive ? 2.5 : 1.75} aria-hidden="true" />
                 <span className="mt-0.5">{label}</span>
               </>
             )}
