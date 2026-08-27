@@ -17,6 +17,7 @@ import type { CSVImportResult, CSVSaleSyncResult } from '../lib/types'
 import { useCSVGroups, isLinkedGroup, getExpectedDeposit } from '../lib/queries'
 import CSVGroupDetailSlideOver from '../components/CSVGroupDetailSlideOver'
 import type { CSVGroup } from '../lib/types'
+import ReturnReconciliationSection from '../components/ReturnReconciliationSection'
 
 type DuplicateInfo = Extract<PlaidExchangeResult, { status: 'duplicate_detected' }>
 
@@ -370,6 +371,9 @@ export default function SettingsPage() {
           </div>
         )}
       </section>
+
+      {/* ── Return Reconciliation ──────────────────────────────── */}
+      <ReturnReconciliationSection />
 
         </>
       )}

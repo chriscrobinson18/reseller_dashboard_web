@@ -164,3 +164,36 @@ Clicking a group opens `CSVGroupDetailSlideOver` which shows the group summary, 
    - Sets `record_type='settlement'`, `schedule_c_category='settlement'`, `platform=<platform>` on the Plaid row (`markTransactionAsSettlement`)
    - Sets `parent_settlement_id=<plaid_tx_id>` on all CSV rows in the group (`linkCSVGroupToSettlement`)
 3. "Remove Match" clears `parent_settlement_id` on all CSV rows in the group (`unlinkCSVGroup`)
+
+## Return Reconciliation
+
+_Added 2026-08-27 — see [`docs/superpowers/specs/2026-08-27-csv-return-reconciliation-design.md`](../superpowers/specs/2026-08-27-csv-return-reconciliation-design.md). **⚠️ Not deployed** — see the Deployment note in `docs/supabase-schema.md` before relying on this; the live edge function will double-deduct a refund if used before the migration + `record_return`/`reverse_return` v2 are deployed._
+
+A "Return Reconciliation" section (below Settlement Status) detects refund +
+return-shipping rows already sitting in imported `csv_import` transactions
+that belong to an **inventory-linked** sale (recorded via `RecordSaleModal`,
+not the unlinked synthetic sales `sync_csv_orders_to_sales` creates) but
+haven't been routed through `record_return` — so the lot was never restored
+and the refund isn't showing as a distinct Returns & Allowances line.
+
+- Same segmented eBay/Amazon toggle as Settlement Status. `useCSVReturnCandidates(platform)`
+  (`src/lib/csvReturns.ts`) groups unlinked `csv_import` rows by order ref
+  (`notes`), finds a negative `'payout'`-categorized row (the refund) plus a
+  best-guess `'shipping_postage'` row dated on/after it (the return label —
+  no platform reliably marks return vs. outbound labels in this app's import
+  categories), and matches to a sale by `external_order_id`.
+- Each row shows a status badge: **Review** (exactly one matching sale),
+  **N sales match** (ambiguous — the modal offers a picker), or **Unmatched**
+  (no inventory-linked sale found for that order — inert, nothing to apply to).
+- Clicking a row opens `ReconcileReturnModal` — same fields as the manual
+  `ProcessReturnModal` (quantity, refund amount, reason), plus a checkbox to
+  include/exclude the guessed return-shipping row. "Apply Return" calls
+  `recordReturn({ ..., refundTransactionId, returnShippingTransactionId, source: 'csv_import' })`
+  — `record_return` re-tags those existing rows (sets `related_sale_id` +,
+  for the refund row, `schedule_c_category: 'returns_allowances'`) instead of
+  inserting duplicates.
+- Purely a review queue — nothing mutates until "Apply Return" is clicked. No
+  auto-apply, no persistent per-candidate dismiss (re-categorizing the
+  underlying row in Expenses is the escape hatch for a false positive), no
+  manual sale picker for the unmatched case. See the design doc's "Deliberately
+  out of scope" section.

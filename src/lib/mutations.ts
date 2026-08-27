@@ -956,6 +956,16 @@ export async function recordReturn(params: {
   refundAmount: number
   returnShippingCost?: number | null
   reason?: string | null
+  /**
+   * CSV reconciliation only (see ReconcileReturnModal): an existing
+   * csv_import transaction to re-tag as this return's refund/return-shipping
+   * row instead of inserting a new one. Passing either flips `source` to
+   * `'csv_import'` server-side context, but callers still pass it explicitly
+   * below for clarity.
+   */
+  refundTransactionId?: string
+  returnShippingTransactionId?: string
+  source?: 'manual' | 'csv_import'
 }) {
   const { data, error } = await supabase.functions.invoke('record_return', {
     body: {
@@ -964,7 +974,9 @@ export async function recordReturn(params: {
       refund_amount: params.refundAmount,
       return_shipping_cost: params.returnShippingCost || undefined,
       reason: params.reason || undefined,
-      source: 'manual',
+      source: params.source ?? 'manual',
+      refund_transaction_id: params.refundTransactionId,
+      return_shipping_transaction_id: params.returnShippingTransactionId,
     },
   })
   if (error) throw error

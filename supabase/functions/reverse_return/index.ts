@@ -2,6 +2,16 @@
 // "edit a return" as delete-then-re-record (same pattern as this codebase's
 // trade-edit workaround; see TASKS.md "updateTrade mutation").
 //
+// v2 (2026-08-27): a return whose `source = 'csv_import'` re-tagged existing
+// bank/marketplace transaction rows rather than inserting new ones (see
+// record_return v2) — those rows are real imported financial history and must
+// never be deleted. For that source, step 4 below un-tags exactly
+// `returns.refund_transaction_id` / `return_shipping_transaction_id` (clears
+// `related_sale_id`, and for the refund row only, restores
+// `schedule_c_category` to `'payout'` — its pre-reconciliation category, per
+// the same convention `sync_csv_orders_to_sales` uses to detect refund rows)
+// instead of the manual path's delete-by-`type='refund'`.
+//
 // Behavior:
 //   1. Fetches the `returns` row and the parent `sales` row, verifying both
 //      belong to the caller.
@@ -171,12 +181,31 @@ serve(async (req) => {
       })
       .eq("id", sale.id);
 
-    /* Delete the refund + return-shipping transaction rows this return created. */
-    await supabase
-      .from("transactions")
-      .delete()
-      .eq("related_sale_id", sale.id)
-      .eq("type", "refund");
+    /* Undo the refund + return-shipping transaction rows this return touched.
+       CSV-sourced returns re-tagged real imported rows — un-tag them, don't
+       delete. Manual returns inserted fresh rows — delete them, as before. */
+    if (ret.source === "csv_import") {
+      if (ret.refund_transaction_id) {
+        await supabase
+          .from("transactions")
+          .update({ related_sale_id: null, schedule_c_category: "payout" })
+          .eq("id", ret.refund_transaction_id)
+          .eq("user_id", user.id);
+      }
+      if (ret.return_shipping_transaction_id) {
+        await supabase
+          .from("transactions")
+          .update({ related_sale_id: null })
+          .eq("id", ret.return_shipping_transaction_id)
+          .eq("user_id", user.id);
+      }
+    } else {
+      await supabase
+        .from("transactions")
+        .delete()
+        .eq("related_sale_id", sale.id)
+        .eq("type", "refund");
+    }
 
     /* Delete the return record itself. */
     await supabase.from("returns").delete().eq("id", return_id);
