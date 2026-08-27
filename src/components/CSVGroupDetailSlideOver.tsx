@@ -58,6 +58,14 @@ export default function CSVGroupDetailSlideOver({ group, platform, open, onClose
   const [isUnlinking, setIsUnlinking] = useState(false)
   const [showCandidates, setShowCandidates] = useState(false)
 
+  // Reset search state when group changes
+  useEffect(() => {
+    setCandidates([])
+    setIsNearMatch(false)
+    setShowCandidates(false)
+    setLinkError(null)
+  }, [group.groupId])
+
   const nonTransfer = getNonTransferRows(group)
   const transferRow = getTransferRow(group)
   const expectedDeposit = getExpectedDeposit(group)
@@ -73,7 +81,7 @@ export default function CSVGroupDetailSlideOver({ group, platform, open, onClose
   const dateMax = dates[dates.length - 1]
 
   async function findMatch() {
-    if (!expectedDeposit) return
+    if (expectedDeposit === undefined) return
     setIsSearching(true)
     setCandidates([])
     setLinkError(null)
@@ -225,7 +233,6 @@ export default function CSVGroupDetailSlideOver({ group, platform, open, onClose
                   ))}
                 </div>
               )}
-              {linkError && <p className="text-sm text-red-600">{linkError}</p>}
             </div>
           ) : (
             <p className="text-sm text-gray-500">
@@ -235,6 +242,8 @@ export default function CSVGroupDetailSlideOver({ group, platform, open, onClose
                 : ' No action needed.'}
             </p>
           )}
+          {/* Error display outside the conditional so it shows for both link and unlink errors */}
+          {linkError && <p className="mt-2 text-sm text-red-600">{linkError}</p>}
         </section>
 
         {/* Transactions */}
@@ -292,10 +301,18 @@ function LinkedState({ linkedId, onUnlink, isUnlinking }: {
   linkedId: string; onUnlink: () => void; isUnlinking: boolean
 }) {
   const [details, setDetails] = useState<Transaction | null>(null)
+  const [loadError, setLoadError] = useState(false)
 
   useEffect(() => {
+    let mounted = true
+    setLoadError(false)
     supabase.from('transactions').select('*').eq('id', linkedId).single()
-      .then(({ data }) => { if (data) setDetails(data as Transaction) })
+      .then(({ data, error }) => {
+        if (!mounted) return
+        if (error || !data) { setLoadError(true); return }
+        setDetails(data as Transaction)
+      })
+    return () => { mounted = false }
   }, [linkedId])
 
   return (
@@ -303,7 +320,9 @@ function LinkedState({ linkedId, onUnlink, isUnlinking }: {
       <div className="flex items-center gap-2 p-3 bg-green-50 border border-green-200 rounded-lg text-sm">
         <span className="text-green-600">✓</span>
         <div className="flex-1">
-          {details ? (
+          {loadError ? (
+            <span className="text-gray-500">Unable to load deposit details</span>
+          ) : details ? (
             <span className="text-gray-900">
               {details.account_display ?? details.merchant ?? 'Bank deposit'} · {fmtDate(details.date)} · {fmtUSD(details.amount)}
             </span>
