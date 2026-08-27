@@ -14,6 +14,9 @@ import ShortcutsSettingsCard from '../components/ShortcutsSettingsCard'
 import DuplicateConnectionModal from '../components/modals/DuplicateConnectionModal'
 import { importMarketplaceCSV, syncCSVOrders } from '../lib/mutations'
 import type { CSVImportResult, CSVSaleSyncResult } from '../lib/types'
+import { useCSVGroups, isLinkedGroup, getExpectedDeposit } from '../lib/queries'
+import CSVGroupDetailSlideOver from '../components/CSVGroupDetailSlideOver'
+import type { CSVGroup } from '../lib/types'
 
 type DuplicateInfo = Extract<PlaidExchangeResult, { status: 'duplicate_detected' }>
 
@@ -35,6 +38,10 @@ export default function SettingsPage() {
   const [pendingMetadata, setPendingMetadata] = useState<PlaidLinkOnSuccessMetadata | null>(null)
   const [duplicateInfo, setDuplicateInfo] = useState<DuplicateInfo | null>(null)
   const plaidEnv = import.meta.env.VITE_PLAID_ENV as string | undefined
+
+  const [settlementPlatform, setSettlementPlatform] = useState<'ebay' | 'amazon'>('ebay')
+  const { data: csvGroups = [], isLoading: groupsLoading } = useCSVGroups(settlementPlatform)
+  const [selectedGroup, setSelectedGroup] = useState<CSVGroup | null>(null)
 
   const [ebayState, setEbayState] = useState<ImportState>({ phase: 'idle' })
   const [amazonState, setAmazonState] = useState<ImportState>({ phase: 'idle' })
@@ -245,6 +252,111 @@ export default function SettingsPage() {
           />
         </div>
       </section>
+
+      {/* ── Settlement Status ──────────────────────────────────── */}
+      <section className="space-y-3">
+        <div className="flex items-center justify-between">
+          <h2 className="text-lg font-semibold text-gray-900">Settlement Status</h2>
+          {csvGroups.length > 0 && (
+            <span className={`text-sm font-medium ${
+              csvGroups.filter(isLinkedGroup).length === csvGroups.length
+                ? 'text-green-600' : 'text-amber-600'
+            }`}>
+              {csvGroups.filter(isLinkedGroup).length} of {csvGroups.length} matched
+            </span>
+          )}
+        </div>
+
+        {/* Platform toggle */}
+        <div className="flex rounded-lg border border-gray-200 overflow-hidden w-fit">
+          {(['ebay', 'amazon'] as const).map(p => (
+            <button
+              key={p}
+              type="button"
+              onClick={() => setSettlementPlatform(p)}
+              className={`px-4 py-1.5 text-sm font-medium ${
+                settlementPlatform === p
+                  ? 'bg-gray-900 text-white'
+                  : 'bg-white text-gray-600 hover:bg-gray-50'
+              }`}
+            >
+              {p === 'ebay' ? 'eBay' : 'Amazon'}
+            </button>
+          ))}
+        </div>
+
+        {groupsLoading ? (
+          <div className="text-sm text-gray-500 py-4 text-center">Loading...</div>
+        ) : csvGroups.length === 0 ? (
+          <div className="text-sm text-gray-500 py-4 text-center border border-gray-200 rounded-lg bg-white">
+            No {settlementPlatform === 'ebay' ? 'eBay' : 'Amazon'} CSV imports found. Import a Transaction Report above.
+          </div>
+        ) : (
+          <div className="border border-gray-200 rounded-lg bg-white divide-y divide-gray-100">
+            {csvGroups.map(g => {
+              const expected = getExpectedDeposit(g)
+              const linked = isLinkedGroup(g)
+              const dates = g.transactions.map(t => t.date).sort()
+              const dateMin = dates[0]
+              const dateMax = dates[dates.length - 1]
+
+              return (
+                <button
+                  key={g.groupId}
+                  type="button"
+                  onClick={() => setSelectedGroup(g)}
+                  className="w-full flex items-center gap-3 p-4 hover:bg-gray-50 text-left"
+                >
+                  {/* Status dot */}
+                  <div className={`w-2.5 h-2.5 rounded-full flex-shrink-0 ${
+                    linked ? 'bg-green-500' : expected !== undefined ? 'bg-amber-400' : 'bg-gray-300'
+                  }`} />
+                  <div className="flex-1 min-w-0">
+                    <div className="text-sm font-medium text-gray-900">
+                      {settlementPlatform === 'ebay' ? 'eBay' : 'Amazon'} Payout
+                      {dateMin && dateMax && (
+                        <span className="font-normal text-gray-500 ml-1">
+                          — {new Date(dateMin + 'T00:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
+                          –{new Date(dateMax + 'T00:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}
+                        </span>
+                      )}
+                    </div>
+                    <div className="text-xs text-gray-500 mt-0.5">
+                      {expected !== undefined
+                        ? `Expected deposit: $${expected.toLocaleString('en-US', { minimumFractionDigits: 2 })}`
+                        : 'Held in reserve'}
+                      {' · '}{g.transactions.length} transactions
+                    </div>
+                  </div>
+                  <span className={`text-xs font-medium px-2 py-0.5 rounded-full ${
+                    linked
+                      ? 'bg-green-100 text-green-700'
+                      : expected !== undefined
+                        ? 'bg-amber-100 text-amber-700'
+                        : 'bg-gray-100 text-gray-500'
+                  }`}>
+                    {linked ? '✓ Matched' : expected !== undefined ? 'Needs Match' : 'On Hold'}
+                  </span>
+                </button>
+              )
+            })}
+          </div>
+        )}
+      </section>
+
+      {/* Settlement group detail slide-over */}
+      {selectedGroup && (
+        <CSVGroupDetailSlideOver
+          group={selectedGroup}
+          platform={settlementPlatform}
+          open={selectedGroup !== null}
+          onClose={() => setSelectedGroup(null)}
+          onLinked={() => {
+            qc.invalidateQueries({ queryKey: ['csv-groups', settlementPlatform] })
+            setSelectedGroup(null)
+          }}
+        />
+      )}
 
       {plaidEnv && plaidEnv !== 'production' && (
         <div className="text-xs text-gray-400 text-center pt-6">
