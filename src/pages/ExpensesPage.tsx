@@ -437,6 +437,10 @@ function TransactionDetail({ tx, onClose, onOpenTrade, onManage }: { tx: Transac
 
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
+// Stable fallback so useMemo([transactions]) doesn't recompute every render
+// while the query is loading (data=undefined → [] creates a new ref each render).
+const EMPTY_TRANSACTIONS: Transaction[] = []
+
 export default function ExpensesPage() {
   const [period, setPeriod] = useState<PeriodPreset>('ytd')
   const [search, setSearch] = useState('')
@@ -477,7 +481,7 @@ export default function ExpensesPage() {
 
   const range = getPeriodRange(period)
 
-  const { data: transactions = [], isLoading } = useQuery({
+  const { data: transactions = EMPTY_TRANSACTIONS, isLoading } = useQuery({
     queryKey: ['transactions', range.start, range.end],
     queryFn: () => fetchTransactions(range.start, range.end),
   })

@@ -142,8 +142,8 @@ export default function DashboardPage() {
   // Note: scheduleC values are SIGNED. For Part I, positive = income (display as is).
   // For Part II/III (expenses/COGS), values are negative; we display the absolute value
   // and let the section total show as a positive expense magnitude.
-  // TODO(p1-returns): when record_return UI ships, returns_allowances entries below should
-  // visually appear as a subtraction from Gross Receipts (Line 1), not silently net into payout.
+  // returns_allowances rows are sale-linked so bucketTransaction excludes them from scheduleC;
+  // the Line 1 / Line 2 (Returns & Allowances) split is handled in the Summary CSV export.
   const allCategories = useMemo<CategoryDef[]>(() => {
     const customsResolved = customs
       .map((c: CustomCategory) => resolveCategory(c.value, customs))
