@@ -128,7 +128,7 @@ export default function DashboardPage() {
   })
 
   const { data: sales = [], isLoading: loadingSales } = useQuery({
-    queryKey: ['sales', range.start, range.end],
+    queryKey: ['sales', 'dashboard', range.start, range.end],
     queryFn: () => fetchSales(range.start, range.end),
   })
 
