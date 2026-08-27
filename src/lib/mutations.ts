@@ -674,6 +674,55 @@ export async function deleteTransaction(id: string) {
   if (error) throw error
 }
 
+// ─── Receipts ─────────────────────────────────────────────────────────────────
+// `receipts` is a private, user-scoped Supabase Storage bucket (already
+// created for mobile — see docs/supabase-schema.md). `transactions.receipt_url`
+// stores the storage *path*, not a public URL — `plaid_sync_transactions`
+// already relies on this to `.remove()` receipts for deleted rows, so viewing
+// one requires a signed URL (see `getReceiptSignedUrl`).
+
+const RECEIPTS_BUCKET = 'receipts'
+
+function receiptExt(filename: string): string {
+  const dot = filename.lastIndexOf('.')
+  return dot >= 0 ? filename.slice(dot + 1).toLowerCase() : 'bin'
+}
+
+/** Uploads a receipt file for a transaction that has none yet, and stores its path on the row. */
+export async function uploadReceipt(transactionId: string, file: File): Promise<string> {
+  const user_id = await getUserId()
+  const path = `${user_id}/${transactionId}-${Date.now()}.${receiptExt(file.name)}`
+  const { error: uploadErr } = await supabase.storage.from(RECEIPTS_BUCKET).upload(path, file)
+  if (uploadErr) throw uploadErr
+  const { error } = await supabase.from('transactions').update({ receipt_url: path }).eq('id', transactionId)
+  if (error) {
+    await supabase.storage.from(RECEIPTS_BUCKET).remove([path])
+    throw error
+  }
+  return path
+}
+
+/** Uploads a new receipt in place of an existing one, then best-effort removes the old file. */
+export async function replaceReceipt(transactionId: string, oldPath: string, file: File): Promise<string> {
+  const newPath = await uploadReceipt(transactionId, file)
+  await supabase.storage.from(RECEIPTS_BUCKET).remove([oldPath])
+  return newPath
+}
+
+/** Clears the transaction's receipt and deletes the underlying storage object. */
+export async function deleteReceipt(transactionId: string, path: string): Promise<void> {
+  const { error } = await supabase.from('transactions').update({ receipt_url: null }).eq('id', transactionId)
+  if (error) throw error
+  await supabase.storage.from(RECEIPTS_BUCKET).remove([path])
+}
+
+/** Short-lived signed URL for viewing a receipt (bucket is private, no public URLs). */
+export async function getReceiptSignedUrl(path: string): Promise<string> {
+  const { data, error } = await supabase.storage.from(RECEIPTS_BUCKET).createSignedUrl(path, 300)
+  if (error) throw error
+  return data.signedUrl
+}
+
 /** Net-zero pairs two transactions by giving them a shared pair UUID. */
 export async function pairTransactions(id1: string, id2: string) {
   const pairId = crypto.randomUUID()

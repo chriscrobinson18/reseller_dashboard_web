@@ -265,7 +265,7 @@ The `box_openings` migration (`supabase/migrations/20260803120000_box_openings.s
 
 ## Storage
 
-- `receipts` bucket — private, user-scoped RLS, already created for mobile. No upload UI in web yet (`receipt_url` column exists on `transactions` but is unused).
+- `receipts` bucket — private, user-scoped RLS, already created for mobile. Web upload UI shipped 2026-08-27 (`ReceiptSection` in the transaction detail slide-over — see [`docs/features/expenses.md`](features/expenses.md#receipt-attachment)). `transactions.receipt_url` stores the storage **path** (`{user_id}/{transaction_id}-{timestamp}.{ext}`), not a public URL — the bucket is private, so viewing requires a signed URL (`getReceiptSignedUrl`, 5 min TTL). This assumes the bucket's RLS policy keys off the first path segment matching `auth.uid()`, the standard Supabase private-bucket pattern; not verified against the actual policy in this pass (no CLI/dashboard access from this session) — confirm before relying on it if uploads start failing with a permission error. `plaid_sync_transactions` already reads `receipt_url` as a path when it `.remove()`s receipts for deleted rows, which is what this assumption is based on.
 
 ## Open schema gaps (from TASKS.md, carried over from mobile's architectural review)
 

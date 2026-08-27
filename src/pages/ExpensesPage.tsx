@@ -14,6 +14,7 @@ import ConfirmDialog from '../components/ConfirmDialog'
 import AddTransactionModal from '../components/modals/AddTransactionModal'
 import ManageCategoriesModal from '../components/modals/ManageCategoriesModal'
 import TransactionInventorySection from '../components/TransactionInventorySection'
+import ReceiptSection from '../components/ReceiptSection'
 import { Field, inputCls } from '../components/Modal'
 import TradeDetailSlideOver from '../components/TradeDetailSlideOver'
 import MerchantAvatar from '../components/MerchantAvatar'
@@ -349,6 +350,9 @@ function TransactionDetail({ tx, onClose, onOpenTrade, onManage }: { tx: Transac
         />
         {notesMutation.isPending && <div className="text-xs text-gray-400 mt-0.5">Saving…</div>}
       </div>
+
+      {/* Receipt */}
+      <ReceiptSection transactionId={tx.id} receiptPath={tx.receipt_url} />
 
       {/* Details (Plaid metadata) */}
       {(() => {

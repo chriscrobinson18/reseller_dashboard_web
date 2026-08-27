@@ -68,9 +68,22 @@ The same dropdown is also used by [`AddTransactionModal`](../../src/components/m
 
 `AddTransactionModal` → `insertTransaction` in `mutations.ts`. Always `source: 'manual'`. No sale-linking, no inventory-linking from this modal — pure standalone transaction entry.
 
+## Receipt attachment
+
+[`ReceiptSection`](../../src/components/ReceiptSection.tsx), rendered in every `TransactionDetail` slide-over (Plaid rows included — receipts are metadata, not one of the fields Plaid rows lock). One file per transaction, image or PDF, 10MB max.
+
+- **Attach**: file picker → `uploadReceipt` uploads to the private `receipts` Storage bucket at `{user_id}/{transaction_id}-{timestamp}.{ext}`, then sets `transactions.receipt_url` to that path.
+- **View**: `getReceiptSignedUrl` mints a 5-minute signed URL (bucket is private — no public URLs) and opens it in a new tab.
+- **Replace**: uploads the new file first, updates `receipt_url`, then best-effort deletes the old storage object — never leaves the row pointing at nothing if the upload succeeds but cleanup doesn't.
+- **Delete**: clears `receipt_url` then removes the storage object.
+
+All four mutations live in `src/lib/mutations.ts`. `receipt_url` stores the storage **path**, not a public URL — same convention `plaid_sync_transactions` already relies on to clean up receipts for Plaid rows removed by a resync.
+
+Not done: no thumbnail/inline preview (view always opens a new tab), no drag-and-drop, no bulk attach. `plaid_exchange_token`'s "Start Fresh" reconnect path doesn't clean up receipt storage blobs when deleting transaction rows (see TASKS.md P1) — this UI doesn't fix that gap, it just makes receipts common enough that it now matters more.
+
 ## Gaps vs. mobile (see TASKS.md P1 for the authoritative list)
 
-No sort (date/amount/merchant asc/desc), no account filter beyond the period preset, no receipt attachment UI despite `receipt_url` existing on the type. (Bulk categorize shipped 2026-07-10.)
+No sort (date/amount/merchant asc/desc), no account filter beyond the period preset. (Bulk categorize shipped 2026-07-10; receipt attachment shipped 2026-08-27, see above.)
 
 ## Plaid metadata in the detail slide-over (added 2026-06-26)
 
