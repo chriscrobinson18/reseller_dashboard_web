@@ -1,6 +1,7 @@
 import { Outlet, NavLink } from 'react-router-dom'
 import { LayoutDashboard, ShoppingCart, Package, Receipt, Settings, LogOut } from 'lucide-react'
 import { supabase } from '../lib/supabase'
+import ErrorBoundary from './ErrorBoundary'
 
 const NAV = [
   { to: '/dashboard', icon: LayoutDashboard, label: 'Dashboard' },
@@ -50,7 +51,9 @@ export default function Layout() {
 
       {/* Main */}
       <main className="flex-1 overflow-auto">
-        <Outlet />
+        <ErrorBoundary>
+          <Outlet />
+        </ErrorBoundary>
       </main>
     </div>
   )
