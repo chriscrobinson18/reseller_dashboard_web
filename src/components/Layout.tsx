@@ -14,8 +14,8 @@ const NAV = [
 export default function Layout() {
   return (
     <div className="flex h-screen bg-gray-50 overflow-hidden">
-      {/* Sidebar */}
-      <aside className="w-52 shrink-0 bg-gray-900 flex flex-col">
+      {/* Sidebar — desktop only */}
+      <aside className="hidden md:flex w-52 shrink-0 bg-gray-900 flex-col">
         <div className="px-4 py-4 border-b border-gray-800">
           <div className="text-white font-semibold text-sm leading-tight">Reseller</div>
           <div className="text-gray-400 text-xs">Dashboard</div>
@@ -49,12 +49,34 @@ export default function Layout() {
         </div>
       </aside>
 
-      {/* Main */}
-      <main className="flex-1 overflow-auto">
+      {/* Main content */}
+      <main className="flex-1 overflow-auto pb-16 md:pb-0">
         <ErrorBoundary>
           <Outlet />
         </ErrorBoundary>
       </main>
+
+      {/* Bottom tab bar — mobile only */}
+      <nav className="fixed bottom-0 inset-x-0 flex md:hidden bg-white border-t border-gray-200 pb-safe">
+        {NAV.map(({ to, icon: Icon, label }) => (
+          <NavLink
+            key={to}
+            to={to}
+            className={({ isActive }) =>
+              `flex-1 flex flex-col items-center justify-center pt-2 pb-1 text-xs transition-colors ${
+                isActive ? 'text-blue-600' : 'text-gray-400'
+              }`
+            }
+          >
+            {({ isActive }) => (
+              <>
+                <Icon size={20} strokeWidth={isActive ? 2.5 : 1.75} />
+                <span className="mt-0.5">{label}</span>
+              </>
+            )}
+          </NavLink>
+        ))}
+      </nav>
     </div>
   )
 }
