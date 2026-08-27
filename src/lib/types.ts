@@ -19,6 +19,7 @@ export interface Transaction {
   /** Set on the payout/fee/shipping transactions auto-created by a bundle sale — see SaleBundle. */
   related_bundle_id?: string
   parent_settlement_id?: string
+  csv_group_id?: string | null
   csv_transaction_id?: string
   receipt_url?: string
   plaid_category?: string
@@ -69,7 +70,7 @@ export interface Sale {
   allocated_fees?: number
   allocated_shipping?: number
   inventory_status: 'ok' | 'oversold' | 'reconciled'
-  return_status: 'none' | 'partial' | 'full'
+  return_status: null | 'none' | 'partial' | 'full'
   refunded_quantity: number
   refunded_amount?: number
   trade_id?: string
@@ -255,4 +256,26 @@ export interface PlaidAccount {
   display_name: string | null
   sync_enabled: boolean
   created_at: string | null
+}
+
+export type CSVImportResult = {
+  platform: string
+  rows_parsed: number
+  rows_skipped: number
+  skipped_breakdown?: Record<string, number>
+  amazon_format?: string  // 'transaction_view' | 'settlement_report'
+}
+
+export type CSVSaleSyncResult = {
+  created: number
+  updated: number
+  removed: number
+}
+
+export interface CSVGroup {
+  groupId: string
+  platform: string
+  transactions: Transaction[]
+  /** Closing reserve carried forward from the previous group. Computed by buildCSVGroups. */
+  priorBalance: number
 }

@@ -113,17 +113,17 @@ function PlatformBadge({ platform }: { platform?: string | null }) {
   )
 }
 
-function StatusBadge({ status, type }: { status: string; type: 'inventory' | 'return' }) {
+function StatusBadge({ status, type }: { status: string | null; type: 'inventory' | 'return' }) {
   if (type === 'inventory') {
     const map: Record<string, [string, string]> = {
       ok: ['bg-green-100 text-green-700', 'OK'],
       oversold: ['bg-red-100 text-red-700', 'Oversold'],
       reconciled: ['bg-gray-100 text-gray-600', 'Reconciled'],
     }
-    const [cls, label] = map[status] ?? ['bg-gray-100 text-gray-600', status]
+    const [cls, label] = map[status ?? ''] ?? ['bg-gray-100 text-gray-600', status]
     return <span className={`px-1.5 py-0.5 rounded text-xs font-medium ${cls}`}>{label}</span>
   }
-  if (status === 'none') return null
+  if (status === 'none' || status === null) return null
   const map: Record<string, [string, string]> = {
     partial: ['bg-amber-100 text-amber-700', 'Partial Return'],
     full: ['bg-red-100 text-red-700', 'Returned'],
