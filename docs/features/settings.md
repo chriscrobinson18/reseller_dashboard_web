@@ -18,6 +18,11 @@ institution from `plaid_accounts`.
   **Keep existing transactions** (existing connection preserved, a sync is triggered)
   or **Start fresh** (old transactions deleted, new item created). Implemented in
   `plaid_exchange_token` v17. See `docs/superpowers/specs/2026-08-25-plaid-dedup-design.md`.
+  **Start fresh** now also cleans up any `receipts` storage objects attached to the
+  deleted transactions (v18, 2026-08-27) — previously only the `transactions` rows were
+  removed, orphaning receipt files in the bucket. Mirrors the same cleanup
+  `plaid_sync_transactions` already does for its removed-transaction path. **Not yet
+  deployed** — see the Deployment note in `docs/supabase-schema.md`.
 - **Sync Now** — per-item button calling `plaid_sync_transactions`. On success, surfaces
   an inline count of newly-added transactions (`transactions_added` — the response has
   never actually had an `inserted` field; that was a client-side type bug, fixed

@@ -1,4 +1,9 @@
-// plaid_exchange_token v17
+// plaid_exchange_token v18
+// v18: Fresh-path cleanup now also removes `receipts` storage objects for the
+// transactions it deletes, matching plaid_sync_transactions' removal path.
+// Previously only the `transactions` rows were deleted, leaving any attached
+// receipt files orphaned in the bucket (see TASKS.md P1 "Start Fresh" item).
+//
 // v17: Plaid best-practices duplicate prevention (see docs/superpowers/specs/2026-08-25-plaid-dedup-design.md).
 //
 // CREATE MODE (default): Before exchanging, check if any incoming account_ids from the
@@ -126,6 +131,22 @@ serve(async (req) => {
 
       // Hard-delete — consistent with plaid_sync_transactions removal behavior (no soft-delete).
       if (oldAccountIds.length > 0) {
+        // Clean up receipt storage objects before dropping the rows that reference
+        // them, same as plaid_sync_transactions' removed-transaction path — otherwise
+        // the files are orphaned in the bucket with nothing left pointing at them.
+        const { data: withReceipts } = await supabase
+          .from('transactions')
+          .select('receipt_url')
+          .in('plaid_account_id', oldAccountIds)
+          .eq('user_id', user.id)
+          .not('receipt_url', 'is', null)
+        if (withReceipts?.length) {
+          const { error: removeErr } = await supabase.storage
+            .from('receipts')
+            .remove(withReceipts.map((r: any) => r.receipt_url))
+          if (removeErr) console.warn('Receipt storage cleanup error (non-fatal):', removeErr.message)
+        }
+
         const { error: delErr } = await supabase
           .from('transactions')
           .delete()
