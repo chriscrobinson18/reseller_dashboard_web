@@ -1,7 +1,7 @@
 import { supabase } from './supabase'
 import { splitLotCost, basisFromAdjustments, type LotBasis } from './lotCost'
 import { ADJUSTMENT_LABELS } from './lotAdjustments'
-import type { Item, InventoryLot, LotAdjustmentType } from './types'
+import type { Item, InventoryLot, LotAdjustmentType, CSVImportResult, CSVSaleSyncResult } from './types'
 import { CATEGORIES } from './categories'
 import { isColorKey, type ColorKey } from './categoryPalette'
 
@@ -1860,5 +1860,62 @@ export async function updatePlaidAccount(
   patch: { display_name?: string | null; sync_enabled?: boolean }
 ): Promise<void> {
   const { error } = await supabase.from('plaid_accounts').update(patch).eq('id', id)
+  if (error) throw error
+}
+
+// ─── CSV Import / Settlement ──────────────────────────────────────────────────
+
+export async function importMarketplaceCSV(
+  platform: string,
+  file: File,
+): Promise<CSVImportResult> {
+  const csvText = await file.text()
+  const { data, error } = await supabase.functions.invoke('import_marketplace_csv', {
+    body: { platform, csv_text: csvText },
+  })
+  if (error) throw error
+  return data as CSVImportResult
+}
+
+export async function syncCSVOrders(platform: string): Promise<CSVSaleSyncResult> {
+  const { data, error } = await supabase.functions.invoke('sync_csv_orders_to_sales', {
+    body: { platform },
+  })
+  if (error) throw error
+  return data as CSVSaleSyncResult
+}
+
+export async function markTransactionAsSettlement(
+  id: string,
+  platform: string,
+): Promise<void> {
+  const { error } = await supabase
+    .from('transactions')
+    .update({ record_type: 'settlement', schedule_c_category: 'settlement', platform })
+    .eq('id', id)
+  if (error) throw error
+}
+
+export async function linkCSVGroupToSettlement(
+  groupId: string,
+  settlementId: string,
+  platform: string,
+): Promise<void> {
+  const { error } = await supabase
+    .from('transactions')
+    .update({ parent_settlement_id: settlementId })
+    .eq('source', 'csv_import')
+    .eq('platform', platform)
+    .eq('csv_group_id', groupId)
+  if (error) throw error
+}
+
+export async function unlinkCSVGroup(groupId: string, platform: string): Promise<void> {
+  const { error } = await supabase
+    .from('transactions')
+    .update({ parent_settlement_id: null })
+    .eq('source', 'csv_import')
+    .eq('platform', platform)
+    .eq('csv_group_id', groupId)
   if (error) throw error
 }
