@@ -14,3 +14,9 @@ body { margin: 0; font-family: system-ui, 'Segoe UI', Roboto, sans-serif; }
 .data-row { transition: background-color 0.1s; }
 .data-row:hover { background-color: #f9fafb; cursor: pointer; }
 .data-row.selected { background-color: #eff6ff !important; }
+
+@layer utilities {
+  .pb-safe {
+    padding-bottom: env(safe-area-inset-bottom, 0px);
+  }
+}
