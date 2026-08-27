@@ -131,3 +131,31 @@ that used to be listed as pending are now shipped:
    item instead of replacing it and created a **duplicate connection** pulling the same
    accounts (this actually happened once, to a real user, before the fix). Now matches on
    `institution_id` OR `institution_name` and sweeps every match, not just one.
+
+## Marketplace CSV Import
+
+A "Marketplace CSV Import" section (after Custom Categories) has three platform cards — eBay, Amazon, Mercari — each with an "Import CSV" button. Selecting a `.csv` file triggers a two-step flow:
+
+1. **`import_marketplace_csv` edge function (v16)** — parses the CSV and upserts rows into `transactions` with `source='csv_import'`, `platform=<platform>`, and `csv_group_id` linking rows that belong to the same settlement period
+2. **`sync_csv_orders_to_sales` edge function (v1)** — groups those transactions by order ref (`notes` field) and upserts `sales` rows with `source='ebay'|'amazon'|'csv_import'`, `external_order_id=<orderRef>`, `item_id=null` (unlinked)
+
+A result banner shows rows imported and sales created/updated.
+
+## Settlement Status
+
+A "Settlement Status" section (after CSV Import) shows eBay and Amazon settlement groups only (Mercari has no disbursement structure). Each group is a `csv_group_id` bucket containing one settlement period's transactions. Groups display:
+
+- **✓ Matched** — linked to a Plaid bank deposit via `parent_settlement_id`
+- **Needs Match** — has an expected bank deposit amount (`transfer` row present); tap "Find Plaid Match" in the detail view to search and link
+- **On Hold** — eBay/Amazon held funds in reserve; balance carries forward; no action needed
+
+Clicking a group opens `CSVGroupDetailSlideOver` which shows the group summary, bank match UI, transaction list, and payout row.
+
+### Settlement linking flow
+
+1. "Find Plaid Match" searches `transactions` where `source='plaid'` and `amount = expectedDeposit` within the group date range + 14 days. Falls back to ±$5.00 near-match.
+2. Selecting a candidate:
+   - If near-match: inserts a manual `commissions_fees` transaction for the gap amount
+   - Sets `record_type='settlement'`, `schedule_c_category='settlement'`, `platform=<platform>` on the Plaid row (`markTransactionAsSettlement`)
+   - Sets `parent_settlement_id=<plaid_tx_id>` on all CSV rows in the group (`linkCSVGroupToSettlement`)
+3. "Remove Match" clears `parent_settlement_id` on all CSV rows in the group (`unlinkCSVGroup`)
