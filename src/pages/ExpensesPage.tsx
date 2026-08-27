@@ -1,6 +1,6 @@
 import { useState, useMemo } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { Search, Filter, ChevronDown, Plus, Pencil, Trash2, Tag, X, ExternalLink } from 'lucide-react'
+import { Search, Filter, ChevronDown, Plus, Pencil, Trash2, Tag, X, ExternalLink, ArrowUp, ArrowDown } from 'lucide-react'
 import { supabase } from '../lib/supabase'
 import { getPeriodRange, type PeriodPreset } from '../lib/periods'
 import { resolveCategory } from '../lib/categories'
@@ -61,6 +61,33 @@ async function bulkUpdateCategory(ids: string[], category: string | null) {
     .update({ schedule_c_category: category })
     .in('id', ids)
   if (error) throw error
+}
+
+// ─── Sortable column header ──────────────────────────────────────────────────
+
+function SortableTh({ field, label, width, align, sortField, sortDir, onSort }: {
+  field: 'date' | 'amount' | 'merchant'
+  label: string
+  width?: string
+  align?: 'left' | 'right'
+  sortField: 'date' | 'amount' | 'merchant'
+  sortDir: 'asc' | 'desc'
+  onSort: (field: 'date' | 'amount' | 'merchant') => void
+}) {
+  const active = sortField === field
+  const Icon = sortDir === 'asc' ? ArrowUp : ArrowDown
+  return (
+    <th className={`px-4 py-2.5 text-xs font-medium text-gray-500 ${width ?? ''} ${align === 'right' ? 'text-right' : 'text-left'}`}>
+      <button
+        type="button"
+        onClick={() => onSort(field)}
+        className={`inline-flex items-center gap-1 hover:text-gray-900 transition-colors ${active ? 'text-gray-900' : ''} ${align === 'right' ? 'flex-row-reverse' : ''}`}
+      >
+        {label}
+        {active && <Icon size={11} />}
+      </button>
+    </th>
+  )
 }
 
 // ─── Transaction detail slide-over ───────────────────────────────────────────
@@ -465,6 +492,8 @@ export default function ExpensesPage() {
   const [showCatFilter, setShowCatFilter] = useState(false)
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
   const [showBulkCat, setShowBulkCat] = useState(false)
+  const [sortField, setSortField] = useState<'date' | 'amount' | 'merchant'>('date')
+  const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc')
 
   const qc = useQueryClient()
   const { data: customsAll = [] } = useCustomCategories()
@@ -524,6 +553,30 @@ export default function ExpensesPage() {
       return matchesSearch(t, terms, customsAll)
     })
   }, [transactions, showSaleLinked, catFilter, dirFilter, sourceFilter, accountFilter, search, customsAll])
+
+  // Sorted view of the filtered set. Default (date, desc) matches the
+  // server's own `.order('date', { ascending: false })`, so leaving sort
+  // untouched looks identical to before this existed.
+  const sorted = useMemo(() => {
+    const dir = sortDir === 'asc' ? 1 : -1
+    const withKey = filtered.map((t, i) => ({ t, i })) // stable tiebreak on original order
+    withKey.sort((a, b) => {
+      const cmp = sortField === 'date' ? (a.t.date < b.t.date ? -1 : a.t.date > b.t.date ? 1 : 0)
+        : sortField === 'amount' ? a.t.amount - b.t.amount
+        : (a.t.merchant ?? '').localeCompare(b.t.merchant ?? '')
+      return cmp !== 0 ? cmp * dir : a.i - b.i
+    })
+    return withKey.map(({ t }) => t)
+  }, [filtered, sortField, sortDir])
+
+  function toggleSort(field: 'date' | 'amount' | 'merchant') {
+    if (field === sortField) {
+      setSortDir(d => (d === 'asc' ? 'desc' : 'asc'))
+    } else {
+      setSortField(field)
+      setSortDir(field === 'merchant' ? 'asc' : 'desc')
+    }
+  }
 
   // Trade-linked transactions have locked categories (edited via the trade),
   // so they're excluded from bulk selection.
@@ -706,15 +759,15 @@ export default function ExpensesPage() {
                       className="align-middle accent-gray-900 disabled:opacity-40"
                     />
                   </th>
-                  <th className="text-left px-4 py-2.5 text-xs font-medium text-gray-500 w-24">Date</th>
-                  <th className="text-left px-4 py-2.5 text-xs font-medium text-gray-500">Merchant / Notes</th>
+                  <SortableTh field="date" label="Date" width="w-24" sortField={sortField} sortDir={sortDir} onSort={toggleSort} />
+                  <SortableTh field="merchant" label="Merchant / Notes" sortField={sortField} sortDir={sortDir} onSort={toggleSort} />
                   <th className="text-left px-4 py-2.5 text-xs font-medium text-gray-500 w-44">Category</th>
                   <th className="text-left px-4 py-2.5 text-xs font-medium text-gray-500 w-28">Account</th>
-                  <th className="text-right px-4 py-2.5 text-xs font-medium text-gray-500 w-28">Amount</th>
+                  <SortableTh field="amount" label="Amount" width="w-28" align="right" sortField={sortField} sortDir={sortDir} onSort={toggleSort} />
                 </tr>
               </thead>
               <tbody>
-                {filtered.map(tx => {
+                {sorted.map(tx => {
                   const isExpense = tx.amount < 0
                   const isSettlement = tx.record_type === 'settlement'
                   return (

@@ -5,7 +5,8 @@ Transaction list + editing surface. The only page where `transactions` rows are 
 ## List view
 
 - Fetches via local `fetchTransactions(start, end)` (same shape as Dashboard's copy, separately defined — see [architecture.md](../architecture.md)).
-- Client-side filters (all `useMemo`'d together): text search over `transactionHaystack(t, customs)` (see below), category dropdown filter (exact match on `schedule_c_category`), and a "Sale rows" toggle (`showSaleLinked`) that by default **hides** rows where `related_sale_id` is set or `source === 'csv_import'` — these are the auto-created payout/fee/shipping rows from `recordSale` (see [data-flows.md](../data-flows.md)).
+- Client-side filters (all `useMemo`'d together): text search over `transactionHaystack(t, customs)` (see below), category dropdown filter (exact match on `schedule_c_category`), direction filter (income/expense), source filter (Plaid/manual), a per-account `<select>` (options derived from `plaid_account_id`/`account_display` pairs seen in the current period; auto-cleared if the selected account has no rows left after a period change), and a "Sale rows" toggle (`showSaleLinked`) that by default **hides** rows where `related_sale_id` is set or `source === 'csv_import'` — these are the auto-created payout/fee/shipping rows from `recordSale` (see [data-flows.md](../data-flows.md)).
+- **Sort** (added 2026-08-27): Date / Merchant / Amount column headers are clickable — click toggles direction, clicking a different column switches to it (default desc for Date/Amount, asc for Merchant). Purely a client-side re-order of the already-filtered rows (`sorted`, a separate `useMemo` from `filtered`) — it doesn't affect the server query, the header/uncategorized counts, or bulk-selection reset (sort isn't part of `filterSig`, since re-ordering the same rows doesn't need to clear a selection). Amount sorts by the raw signed value, not magnitude, so ascending runs from the largest expense to the largest income.
 - Header shows live `income`/`expenses` totals for the *filtered* set (not the exclusion-filtered "business" total Dashboard uses — these are simpler: any positive amount vs. any negative amount in the visible rows) plus an uncategorized-count badge computed from the *unfiltered* period set.
 - Inline category change: clicking the `CategoryBadge` in a row opens the shared [`CategoryDropdown`](../../src/components/CategoryDropdown.tsx), a fixed-position popover positioned via CSS vars (`--dd-top`/`--dd-left`) set from the clicked element's bounding rect — not a `<select>`. Mutates via local `updateCategory`, invalidates `['transactions']`.
 
@@ -83,7 +84,7 @@ Not done: no thumbnail/inline preview (view always opens a new tab), no drag-and
 
 ## Gaps vs. mobile (see TASKS.md P1 for the authoritative list)
 
-No sort (date/amount/merchant asc/desc), no account filter beyond the period preset. (Bulk categorize shipped 2026-07-10; receipt attachment shipped 2026-08-27, see above.)
+None outstanding as of 2026-08-27: direction/source/account filters and the period chip picker (`PeriodPicker`, shared across every page) shipped earlier without this item being checked off; Date/Merchant/Amount sort shipped 2026-08-27 (see above). Bulk categorize shipped 2026-07-10; receipt attachment shipped 2026-08-27, see above.
 
 ## Plaid metadata in the detail slide-over (added 2026-06-26)
 
