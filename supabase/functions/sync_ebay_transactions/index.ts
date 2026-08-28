@@ -204,6 +204,58 @@ function mapTransaction(tx: any, userId: string): Record<string, unknown>[] {
   return rows
 }
 
+// Map one eBay SALE transaction to one or more `sales` table rows.
+// One row per orderLineItem — multi-item orders create multiple sales.
+function mapSaleRows(tx: any, userId: string): Record<string, unknown>[] {
+  if (tx.transactionType !== 'SALE') return []
+
+  const items: any[] = tx.orderLineItems ?? []
+  if (items.length === 0) return []
+
+  const orderId: string | null = tx.orderId ?? null
+  if (!orderId) return []
+
+  const totalAmount = parseFloat(tx.amount?.value ?? '0')
+  const soldAt = tx.transactionDate ?? new Date().toISOString()
+
+  return items.map((item: any) => {
+    const title: string = item.title?.slice(0, 200) ?? 'eBay Sale'
+    const lineItemId: string = item.lineItemId ?? '0'
+
+    // Per-item price: for single-item orders use the SALE total.
+    // For multi-item, use feeBasisAmount (per-item basis for fee calculation).
+    // Fallback: equal split across items.
+    let salePrice: number
+    if (items.length === 1) {
+      salePrice = totalAmount
+    } else {
+      const basis = parseFloat(item.feeBasisAmount?.value ?? '0')
+      salePrice = basis > 0 ? basis : totalAmount / items.length
+    }
+
+    // Sum marketplace fees for this line item (stored as negative; we want positive)
+    const fees = (item.marketplaceFees ?? []).reduce((sum: number, f: any) => {
+      return sum + Math.abs(parseFloat(f.amount?.value ?? '0'))
+    }, 0)
+
+    return {
+      user_id: userId,
+      item_name: title,
+      platform: 'ebay',
+      source: 'ebay_api',
+      quantity: 1,
+      sale_price: salePrice,
+      fees,
+      net_payout: salePrice - fees,
+      external_order_id: `${orderId}_${lineItemId}`,
+      sold_at: soldAt,
+      inventory_status: 'ok',
+      return_status: 'none',
+      refunded_quantity: 0,
+    }
+  })
+}
+
 // Auto-link a REFUND to its matching SALE transaction by orderId.
 // Tags the refund as 'returns_allowances' and copies related_sale_id from the SALE row.
 // If no matching SALE found, leaves the refund as 'payout' for manual reconciliation
@@ -244,7 +296,7 @@ async function syncForUser(
   supabase: ReturnType<typeof createClient>,
   userId: string,
   fullBackfill: boolean,
-): Promise<{ windows: number; imported: number }> {
+): Promise<{ windows: number; imported: number; salesCreated: number }> {
   const { data: tokenRow, error: tokenErr } = await supabase
     .from('ebay_tokens')
     .select('*')
@@ -290,6 +342,7 @@ async function syncForUser(
 
   let totalImported = 0
   const refundTxs: any[] = []
+  const allSaleRows: Record<string, unknown>[] = []
 
   for (const w of windows) {
     console.log(`Fetching ${w.from.toISOString().slice(0,10)} → ${w.to.toISOString().slice(0,10)}`)
@@ -299,6 +352,7 @@ async function syncForUser(
     for (const tx of txs) {
       rows.push(...mapTransaction(tx, userId))
       if (tx.transactionType === 'REFUND' && tx.orderId) refundTxs.push(tx)
+      allSaleRows.push(...mapSaleRows(tx, userId))
     }
 
     for (let i = 0; i < rows.length; i += BATCH) {
@@ -310,6 +364,21 @@ async function syncForUser(
     totalImported += rows.length
   }
 
+  // Upsert eBay API sales rows (per-item)
+  let totalSalesCreated = 0
+  for (let i = 0; i < allSaleRows.length; i += BATCH) {
+    const { error, count } = await supabase
+      .from('sales')
+      .upsert(allSaleRows.slice(i, i + BATCH), {
+        onConflict: 'user_id,external_order_id',
+        ignoreDuplicates: true,
+        count: 'exact',
+      })
+    if (error) console.error('Sales upsert error:', error)
+    else totalSalesCreated += count ?? 0
+  }
+  console.log(`Sales rows created: ${totalSalesCreated}`)
+
   // Auto-link all collected refunds after all windows upserted (so SALE rows exist)
   for (const tx of refundTxs) {
     await autoLinkRefund(supabase, userId, tx)
@@ -317,7 +386,7 @@ async function syncForUser(
 
   await supabase.from('ebay_tokens').update({ last_sync_at: now.toISOString() }).eq('user_id', userId)
   console.log(`Done: ${totalImported} rows, ${windows.length} windows`)
-  return { windows: windows.length, imported: totalImported }
+  return { windows: windows.length, imported: totalImported, salesCreated: totalSalesCreated }
 }
 
 serve(async (req) => {
