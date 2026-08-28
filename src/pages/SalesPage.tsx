@@ -44,12 +44,19 @@ async function fetchSales(start: string | null, end: string | null): Promise<{
   const saleIds = sales.map(s => s.id)
   let netPayoutBySale: Record<string, number> = {}
   if (saleIds.length > 0) {
-    const { data: txns, error: txErr } = await supabase
-      .from('transactions')
-      .select('related_sale_id, amount')
-      .in('related_sale_id', saleIds)
-    if (txErr) throw txErr
-    netPayoutBySale = (txns ?? []).reduce((acc, t) => {
+    // Batch .in() calls to avoid exceeding URL length limits (~8KB).
+    // Each UUID is 36 chars; 200 per batch keeps URLs well under the limit.
+    const BATCH = 200
+    const allTxns: { related_sale_id: string | null; amount: number }[] = []
+    for (let i = 0; i < saleIds.length; i += BATCH) {
+      const { data: txns, error: txErr } = await supabase
+        .from('transactions')
+        .select('related_sale_id, amount')
+        .in('related_sale_id', saleIds.slice(i, i + BATCH))
+      if (txErr) throw txErr
+      allTxns.push(...(txns ?? []))
+    }
+    netPayoutBySale = allTxns.reduce((acc, t) => {
       acc[t.related_sale_id!] = (acc[t.related_sale_id!] ?? 0) + t.amount
       return acc
     }, {} as Record<string, number>)
