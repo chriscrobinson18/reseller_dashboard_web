@@ -42,8 +42,7 @@ export default function SettingsPage() {
   const [duplicateInfo, setDuplicateInfo] = useState<DuplicateInfo | null>(null)
   const plaidEnv = import.meta.env.VITE_PLAID_ENV as string | undefined
 
-  const [settlementPlatform, setSettlementPlatform] = useState<'ebay' | 'amazon'>('ebay')
-  const { data: csvGroups = [], isLoading: groupsLoading } = useCSVGroups(settlementPlatform)
+  const { data: csvGroups = [], isLoading: groupsLoading } = useCSVGroups('amazon')
   const [selectedGroup, setSelectedGroup] = useState<CSVGroup | null>(null)
 
   const [activeTab, setActiveTab] = useState<'banks' | 'imports' | 'categories'>('banks')
@@ -299,29 +298,12 @@ export default function SettingsPage() {
           )}
         </div>
 
-        {/* Platform toggle */}
-        <div className="flex rounded-lg border border-gray-200 overflow-hidden w-fit">
-          {(['ebay', 'amazon'] as const).map(p => (
-            <button
-              key={p}
-              type="button"
-              onClick={() => setSettlementPlatform(p)}
-              className={`px-4 py-1.5 text-sm font-medium ${
-                settlementPlatform === p
-                  ? 'bg-gray-900 text-white'
-                  : 'bg-white text-gray-600 hover:bg-gray-50'
-              }`}
-            >
-              {p === 'ebay' ? 'eBay' : 'Amazon'}
-            </button>
-          ))}
-        </div>
 
         {groupsLoading ? (
           <div className="text-sm text-gray-500 py-4 text-center">Loading...</div>
         ) : csvGroups.length === 0 ? (
           <div className="text-sm text-gray-500 py-4 text-center border border-gray-200 rounded-lg bg-white">
-            No {settlementPlatform === 'ebay' ? 'eBay' : 'Amazon'} CSV imports found. Import a Transaction Report above.
+            No {'Amazon'} CSV imports found. Import a Transaction Report above.
           </div>
         ) : (
           <div className="border border-gray-200 rounded-lg bg-white divide-y divide-gray-100">
@@ -345,7 +327,7 @@ export default function SettingsPage() {
                   }`} />
                   <div className="flex-1 min-w-0">
                     <div className="text-sm font-medium text-gray-900">
-                      {settlementPlatform === 'ebay' ? 'eBay' : 'Amazon'} Payout
+                      {'Amazon'} Payout
                       {dateMin && dateMax && (
                         <span className="font-normal text-gray-500 ml-1">
                           — {new Date(dateMin + 'T00:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
@@ -386,11 +368,11 @@ export default function SettingsPage() {
       {selectedGroup && (
         <CSVGroupDetailSlideOver
           group={selectedGroup}
-          platform={settlementPlatform}
+          platform="amazon"
           open={selectedGroup !== null}
           onClose={() => setSelectedGroup(null)}
           onLinked={() => {
-            qc.invalidateQueries({ queryKey: ['csv-groups', settlementPlatform] })
+            qc.invalidateQueries({ queryKey: ['csv-groups', 'amazon'] })
             setSelectedGroup(null)
           }}
         />
