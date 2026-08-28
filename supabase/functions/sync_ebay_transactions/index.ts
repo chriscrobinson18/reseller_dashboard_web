@@ -1,4 +1,4 @@
-// sync_ebay_transactions v1
+// sync_ebay_transactions v17
 // Fetches eBay Finances API transactions and upserts into `transactions`.
 //
 // Invocation modes (from request body):
@@ -34,16 +34,20 @@ function json(status: number, body: unknown) {
 
 const EBAY_CLIENT_ID = Deno.env.get('EBAY_CLIENT_ID')!
 const EBAY_CLIENT_SECRET = Deno.env.get('EBAY_CLIENT_SECRET')!
-const EBAY_SCOPE = 'https://api.ebay.com/oauth/api_scope/sell.finances'
+const EBAY_SCOPE = 'https://api.ebay.com/oauth/api_scope/sell.finances https://api.ebay.com/oauth/api_scope/sell.fulfillment.readonly'
 const BATCH = 500
 
 const isSandbox = Deno.env.get('EBAY_ENV') === 'sandbox'
 const EBAY_TOKEN_URL = isSandbox
   ? 'https://api.sandbox.ebay.com/identity/v1/oauth2/token'
   : 'https://api.ebay.com/identity/v1/oauth2/token'
-const EBAY_API_BASE = isSandbox
+// Finances API uses apiz.ebay.com; Fulfillment API uses api.ebay.com
+const EBAY_FINANCES_BASE = isSandbox
   ? 'https://apiz.sandbox.ebay.com'
   : 'https://apiz.ebay.com'
+const EBAY_FULFILLMENT_BASE = isSandbox
+  ? 'https://api.sandbox.ebay.com'
+  : 'https://api.ebay.com'
 
 async function refreshAccessToken(
   refreshToken: string
@@ -73,7 +77,7 @@ async function fetchWindow(accessToken: string, from: Date, to: Date): Promise<a
   const limit = 1000
 
   while (true) {
-    const url = new URL(`${EBAY_API_BASE}/sell/finances/v1/transaction`)
+    const url = new URL(`${EBAY_FINANCES_BASE}/sell/finances/v1/transaction`)
     url.searchParams.set('filter', filter)
     url.searchParams.set('limit', String(limit))
     url.searchParams.set('offset', String(offset))
@@ -101,41 +105,42 @@ async function fetchWindow(accessToken: string, from: Date, to: Date): Promise<a
 }
 
 // Fetch order details from Fulfillment API to get item titles and prices.
-// Batches up to 50 orderIds per request (API supports comma-separated IDs).
+// Calls GET /order/{orderId} individually (legacy order IDs from Finances API
+// are not reliably handled by the batch orderIds query param on GET /order).
 async function fetchOrderDetails(
   accessToken: string,
   orderIds: string[],
 ): Promise<Map<string, Map<string, { title?: string; price?: number }>>> {
   // Map<orderId, Map<lineItemId, { title?, price? }>>
   const details = new Map<string, Map<string, { title?: string; price?: number }>>()
-  const BATCH = 50
 
-  for (let i = 0; i < orderIds.length; i += BATCH) {
-    const batch = orderIds.slice(i, i + BATCH)
-    const url = new URL(`${EBAY_API_BASE}/sell/fulfillment/v1/order`)
-    url.searchParams.set('orderIds', batch.join(','))
-    url.searchParams.set('limit', String(BATCH))
+  console.log(`fetchOrderDetails: fetching ${orderIds.length} orders individually`)
 
-    const resp = await fetch(url.toString(), {
+  for (const orderId of orderIds) {
+    const url = `${EBAY_FULFILLMENT_BASE}/sell/fulfillment/v1/order/${encodeURIComponent(orderId)}`
+
+    const resp = await fetch(url, {
       headers: { 'Authorization': `Bearer ${accessToken}` },
     })
     if (!resp.ok) {
-      console.error(`Fulfillment API ${resp.status}: ${await resp.text()}`)
-      continue // non-fatal — titles and prices are best-effort
+      const body = await resp.text()
+      console.error(`Fulfillment API ${resp.status} for order ${orderId}: ${body.slice(0, 300)}`)
+      continue // non-fatal — titles are best-effort
     }
 
-    const data = await resp.json()
-    for (const order of (data.orders ?? [])) {
-      const lineItems = new Map<string, { title?: string; price?: number }>()
-      for (const li of (order.lineItems ?? [])) {
-        const price = li.lineItemCost?.value != null
-          ? parseFloat(li.lineItemCost.value)
-          : undefined
-        lineItems.set(li.lineItemId, { title: li.title ?? undefined, price })
-      }
-      if (lineItems.size > 0) details.set(order.orderId, lineItems)
+    const order = await resp.json()
+    const lineItems = new Map<string, { title?: string; price?: number }>()
+    for (const li of (order.lineItems ?? [])) {
+      const price = li.lineItemCost?.value != null
+        ? parseFloat(li.lineItemCost.value)
+        : undefined
+      lineItems.set(li.lineItemId, { title: li.title ?? undefined, price })
     }
+    if (lineItems.size > 0) details.set(orderId, lineItems)
+    else console.warn(`Fulfillment order ${orderId}: no lineItems in response`)
   }
+
+  console.log(`fetchOrderDetails done: ${details.size}/${orderIds.length} orders with line items`)
   return details
 }
 
@@ -147,7 +152,7 @@ async function fetchPayouts(accessToken: string, from: Date, to: Date): Promise<
   const limit = 200
 
   while (true) {
-    const url = new URL(`${EBAY_API_BASE}/sell/finances/v1/payout`)
+    const url = new URL(`${EBAY_FINANCES_BASE}/sell/finances/v1/payout`)
     url.searchParams.set('filter', filter)
     url.searchParams.set('limit', String(limit))
     url.searchParams.set('offset', String(offset))
