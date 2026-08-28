@@ -1,4 +1,4 @@
-// sync_ebay_transactions v18
+// sync_ebay_transactions v19
 // Fetches eBay Finances API transactions and upserts into `transactions`.
 //
 // Invocation modes (from request body):
@@ -287,10 +287,12 @@ function mapTransaction(tx: any, userId: string): Record<string, unknown>[] {
     case 'NON_SALE_CHARGE': {
       const memo: string = tx.transactionMemo ?? ''
       const isAd = memo.toLowerCase().includes('promoted')
-      // Temporary: log references to understand what the API returns for ad fees
-      if (isAd) console.log(`NON_SALE_CHARGE refs: orderId=${tx.orderId ?? 'null'} references=${JSON.stringify(tx.references ?? null)}`)
+      // Ad fees have no top-level orderId; extract it from references[] instead
+      const refOrderId: string | null =
+        (tx.references ?? []).find((r: any) => r.referenceType === 'ORDER_ID')?.referenceId ?? null
       rows.push({
         ...base,
+        notes: refOrderId ?? orderId, // override base.notes with the referenced order ID
         amount: -amount, // expense — negate positive eBay amount
         merchant: memo.slice(0, 100) || 'eBay Charge',
         schedule_c_category: isAd ? 'advertising' : 'commissions_fees',
