@@ -415,13 +415,14 @@ function EbayApiCard() {
     window.location.href = getEbayAuthUrl(session.access_token)
   }
 
-  async function handleSync() {
+  async function handleSync(opts?: { fullBackfill?: boolean }) {
     setSyncing(true)
     setSyncError(null)
     try {
-      await ebaySync()
+      await ebaySync(opts)
       await refetch()
       qc.invalidateQueries({ queryKey: ['transactions'] })
+      qc.invalidateQueries({ queryKey: ['sales'] })
     } catch (e: unknown) {
       setSyncError(e instanceof Error ? e.message : 'Sync failed')
     } finally {
@@ -479,21 +480,31 @@ function EbayApiCard() {
       </div>
 
       {connected ? (
-        <div className="flex gap-2 flex-shrink-0">
+        <div className="flex flex-col items-end gap-1 flex-shrink-0">
+          <div className="flex gap-2">
+            <button
+              type="button"
+              onClick={() => handleSync()}
+              disabled={syncing}
+              className="text-xs px-3 py-1.5 rounded border border-gray-300 text-gray-700 hover:bg-gray-50 disabled:opacity-50"
+            >
+              {syncing ? 'Syncing…' : 'Sync Now'}
+            </button>
+            <button
+              type="button"
+              onClick={handleDisconnect}
+              className="text-xs px-3 py-1.5 rounded border border-gray-300 text-gray-700 hover:bg-gray-50"
+            >
+              Disconnect
+            </button>
+          </div>
           <button
             type="button"
-            onClick={handleSync}
+            onClick={() => handleSync({ fullBackfill: true })}
             disabled={syncing}
-            className="text-xs px-3 py-1.5 rounded border border-gray-300 text-gray-700 hover:bg-gray-50 disabled:opacity-50"
+            className="text-xs text-gray-500 hover:text-gray-700 underline disabled:opacity-50"
           >
-            {syncing ? 'Syncing…' : 'Sync Now'}
-          </button>
-          <button
-            type="button"
-            onClick={handleDisconnect}
-            className="text-xs px-3 py-1.5 rounded border border-gray-300 text-gray-700 hover:bg-gray-50"
-          >
-            Disconnect
+            Re-sync all history
           </button>
         </div>
       ) : (
