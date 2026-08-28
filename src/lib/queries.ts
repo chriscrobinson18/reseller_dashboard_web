@@ -432,3 +432,17 @@ export function useCSVGroups(platform: string) {
     },
   })
 }
+
+export function useEbayToken() {
+  return useQuery({
+    queryKey: ['ebay_token'],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from('ebay_tokens')
+        .select('user_id, last_sync_at, connected_at')
+        .maybeSingle()
+      if (error) throw error
+      return data // null = not connected
+    },
+  })
+}

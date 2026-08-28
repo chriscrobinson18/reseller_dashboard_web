@@ -1980,3 +1980,31 @@ export async function unlinkCSVGroup(groupId: string, platform: string): Promise
     .eq('csv_group_id', groupId)
   if (error) throw error
 }
+
+// ─── eBay ─────────────────────────────────────────────────────────────────────
+
+export function getEbayAuthUrl(accessToken: string): string {
+  const isSandbox = (import.meta.env.VITE_EBAY_ENV as string) === 'sandbox'
+  const authBase = isSandbox ? 'https://auth.sandbox.ebay.com' : 'https://auth.ebay.com'
+  const params = new URLSearchParams({
+    client_id: import.meta.env.VITE_EBAY_CLIENT_ID as string,
+    redirect_uri: import.meta.env.VITE_EBAY_RUNAME as string,
+    response_type: 'code',
+    scope: 'https://api.ebay.com/oauth/api_scope/sell.finances',
+    state: accessToken,
+  })
+  return `${authBase}/oauth2/authorize?${params.toString()}`
+}
+
+export async function ebaySync(): Promise<{ imported: number; windows: number }> {
+  const resp = await supabase.functions.invoke('sync_ebay_transactions', { body: {} })
+  if (resp.error) throw new Error(resp.error.message)
+  return resp.data
+}
+
+export async function ebayDisconnect(): Promise<void> {
+  const { data: { user } } = await supabase.auth.getUser()
+  if (!user) throw new Error('Not authenticated')
+  const { error } = await supabase.from('ebay_tokens').delete().eq('user_id', user.id)
+  if (error) throw error
+}
