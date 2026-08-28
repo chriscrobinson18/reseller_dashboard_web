@@ -425,6 +425,7 @@ function EbayApiCard() {
   const qc = useQueryClient()
   const [syncing, setSyncing] = useState(false)
   const [syncError, setSyncError] = useState<string | null>(null)
+  const [disconnectError, setDisconnectError] = useState<string | null>(null)
 
   async function handleConnect() {
     const { data: { session } } = await supabase.auth.getSession()
@@ -452,7 +453,7 @@ function EbayApiCard() {
       await ebayDisconnect()
       await refetch()
     } catch (e: unknown) {
-      console.error('Disconnect error:', e)
+      setDisconnectError(e instanceof Error ? e.message : 'Disconnect failed')
     }
   }
 
@@ -486,6 +487,11 @@ function EbayApiCard() {
         {syncError && (
           <div className="mt-2 p-2 bg-red-50 border border-red-200 rounded text-xs text-red-700">
             {syncError}
+          </div>
+        )}
+        {disconnectError && (
+          <div className="mt-2 p-2 bg-red-50 border border-red-200 rounded text-xs text-red-700">
+            {disconnectError}
           </div>
         )}
       </div>
