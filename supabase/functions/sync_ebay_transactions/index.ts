@@ -1,4 +1,4 @@
-// sync_ebay_transactions v19
+// sync_ebay_transactions v20
 // Fetches eBay Finances API transactions and upserts into `transactions`.
 //
 // Invocation modes (from request body):
@@ -263,15 +263,20 @@ function mapTransaction(tx: any, userId: string): Record<string, unknown>[] {
       }
       break
     }
-    case 'SHIPPING_LABEL':
+    case 'SHIPPING_LABEL': {
+      // Shipping labels have no top-level orderId; extract it from references[] if present
+      const shipRefOrderId: string | null =
+        (tx.references ?? []).find((r: any) => r.referenceType === 'ORDER_ID')?.referenceId ?? null
       rows.push({
         ...base,
+        notes: shipRefOrderId ?? orderId, // override base.notes with the referenced order ID
         amount: -amount, // expense — negate positive eBay amount
         merchant: 'eBay Shipping Label',
         schedule_c_category: 'shipping_postage',
         csv_transaction_id: `ebay_api_${tx.transactionId}`,
       })
       break
+    }
     case 'REFUND': {
       const title: string = tx.orderLineItems?.[0]?.title ?? 'eBay Refund'
       rows.push({
