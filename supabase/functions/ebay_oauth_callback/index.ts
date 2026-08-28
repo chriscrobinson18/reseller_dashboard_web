@@ -32,7 +32,7 @@ serve(async (req) => {
   try {
     const url = new URL(req.url)
     const code = url.searchParams.get('code')
-    const state = url.searchParams.get('state') // user's JWT
+    const state = url.searchParams.get('state') // user's JWT (access token); validates identity. MVP approach — for production hardening, use a HMAC-signed nonce instead.
 
     if (!code || !state) {
       return redirect(`${EBAY_APP_URL}/settings?ebay=error&reason=missing_params`)
@@ -69,13 +69,17 @@ serve(async (req) => {
 
     const { access_token, refresh_token, expires_in } = await tokenResp.json()
 
+    if (!access_token || !refresh_token || typeof expires_in !== 'number') {
+      console.error('Unexpected token response shape', { has_access: !!access_token, has_refresh: !!refresh_token, expires_in })
+      return redirect(`${EBAY_APP_URL}/settings?ebay=error&reason=token_exchange_failed`)
+    }
+
     // Store tokens
     const { error: upsertError } = await supabase.from('ebay_tokens').upsert({
       user_id: user.id,
       access_token,
       refresh_token,
       token_expiry: new Date(Date.now() + expires_in * 1000).toISOString(),
-      last_sync_at: null,
       connected_at: new Date().toISOString(),
     }, { onConflict: 'user_id' })
 
