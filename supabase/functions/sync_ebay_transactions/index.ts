@@ -94,14 +94,14 @@ async function fetchWindow(accessToken: string, from: Date, to: Date): Promise<a
   return allTxs
 }
 
-// Fetch order details from Fulfillment API to get item titles.
+// Fetch order details from Fulfillment API to get item titles and prices.
 // Batches up to 50 orderIds per request (API supports comma-separated IDs).
-async function fetchOrderTitles(
+async function fetchOrderDetails(
   accessToken: string,
   orderIds: string[],
-): Promise<Map<string, Map<string, string>>> {
-  // Map<orderId, Map<lineItemId, title>>
-  const titles = new Map<string, Map<string, string>>()
+): Promise<Map<string, Map<string, { title?: string; price?: number }>>> {
+  // Map<orderId, Map<lineItemId, { title?, price? }>>
+  const details = new Map<string, Map<string, { title?: string; price?: number }>>()
   const BATCH = 50
 
   for (let i = 0; i < orderIds.length; i += BATCH) {
@@ -115,19 +115,22 @@ async function fetchOrderTitles(
     })
     if (!resp.ok) {
       console.error(`Fulfillment API ${resp.status}: ${await resp.text()}`)
-      continue // non-fatal — titles are best-effort
+      continue // non-fatal — titles and prices are best-effort
     }
 
     const data = await resp.json()
     for (const order of (data.orders ?? [])) {
-      const lineItems = new Map<string, string>()
+      const lineItems = new Map<string, { title?: string; price?: number }>()
       for (const li of (order.lineItems ?? [])) {
-        if (li.title) lineItems.set(li.lineItemId, li.title)
+        const price = li.lineItemCost?.value != null
+          ? parseFloat(li.lineItemCost.value)
+          : undefined
+        lineItems.set(li.lineItemId, { title: li.title ?? undefined, price })
       }
-      if (lineItems.size > 0) titles.set(order.orderId, lineItems)
+      if (lineItems.size > 0) details.set(order.orderId, lineItems)
     }
   }
-  return titles
+  return details
 }
 
 // Fetch all payouts in a date range.
@@ -303,18 +306,14 @@ function mapSaleRows(tx: any, userId: string): Record<string, unknown>[] {
       return sum + Math.abs(parseFloat(f.amount?.value ?? '0'))
     }, 0)
 
-    // Sale price = item subtotal (what the seller listed it for).
-    // For single-item: amount.value is net after fees, so adding fees
-    // back gives the item subtotal. This avoids feeBasisAmount which
-    // may include eBay-collected sales tax and delivery fees.
-    // For multi-item: use feeBasisAmount as relative weight to split
-    // the total, since we can't derive per-item amounts from the total.
+    // Initial price estimate; overridden later by Fulfillment API lineItemCost when available.
+    // For single-item: reconstruct from net payout + fees.
+    // For multi-item: divide evenly (Fulfillment API will correct per-item prices).
     let salePrice: number
     if (items.length === 1) {
       salePrice = totalAmount + totalFees
     } else {
-      const basis = parseFloat(item.feeBasisAmount?.value ?? '0')
-      salePrice = basis > 0 ? basis : (totalAmount + totalFees) / items.length
+      salePrice = (totalAmount + totalFees) / items.length
     }
 
     return {
@@ -505,23 +504,27 @@ async function syncForUser(
     totalImported += rows.length
   }
 
-  // Fetch item titles from Fulfillment API (best-effort)
+  // Fetch item titles and prices from Fulfillment API (best-effort)
   const orderIds = [...new Set(allSaleRows.map(r => {
     const ext = r.external_order_id as string
     return ext.split('_')[0] // strip lineItemId suffix
   }))]
   if (orderIds.length > 0) {
-    const titleMap = await fetchOrderTitles(accessToken, orderIds)
+    const detailMap = await fetchOrderDetails(accessToken, orderIds)
     for (const row of allSaleRows) {
       const ext = row.external_order_id as string
       const [oid, lid] = ext.split('_')
-      const orderTitles = titleMap.get(oid)
-      if (orderTitles) {
-        const title = orderTitles.get(lid) ?? orderTitles.values().next().value
-        if (title) row.item_name = title.slice(0, 200)
+      const orderDetails = detailMap.get(oid)
+      if (orderDetails) {
+        const li = orderDetails.get(lid) ?? orderDetails.values().next().value
+        if (li?.title) row.item_name = li.title.slice(0, 200)
+        if (li?.price != null) {
+          row.sale_price = li.price
+          row.net_payout = li.price - (row.fees as number)
+        }
       }
     }
-    console.log(`Fetched titles for ${titleMap.size}/${orderIds.length} orders`)
+    console.log(`Fetched details for ${detailMap.size}/${orderIds.length} orders`)
   }
 
   // Upsert eBay API sales rows (per-item).
