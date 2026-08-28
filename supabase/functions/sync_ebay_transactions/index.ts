@@ -34,7 +34,7 @@ function json(status: number, body: unknown) {
 
 const EBAY_CLIENT_ID = Deno.env.get('EBAY_CLIENT_ID')!
 const EBAY_CLIENT_SECRET = Deno.env.get('EBAY_CLIENT_SECRET')!
-const EBAY_SCOPE = 'https://api.ebay.com/oauth/api_scope/sell.finances https://api.ebay.com/oauth/api_scope/commerce.identity.readonly'
+const EBAY_SCOPE = 'https://api.ebay.com/oauth/api_scope/sell.finances https://api.ebay.com/oauth/api_scope/sell.fulfillment https://api.ebay.com/oauth/api_scope/commerce.identity.readonly'
 const BATCH = 500
 
 const isSandbox = Deno.env.get('EBAY_ENV') === 'sandbox'
@@ -92,6 +92,42 @@ async function fetchWindow(accessToken: string, from: Date, to: Date): Promise<a
     if (offset >= total || txs.length === 0) break
   }
   return allTxs
+}
+
+// Fetch order details from Fulfillment API to get item titles.
+// Batches up to 50 orderIds per request (API supports comma-separated IDs).
+async function fetchOrderTitles(
+  accessToken: string,
+  orderIds: string[],
+): Promise<Map<string, Map<string, string>>> {
+  // Map<orderId, Map<lineItemId, title>>
+  const titles = new Map<string, Map<string, string>>()
+  const BATCH = 50
+
+  for (let i = 0; i < orderIds.length; i += BATCH) {
+    const batch = orderIds.slice(i, i + BATCH)
+    const url = new URL(`${EBAY_API_BASE}/sell/fulfillment/v1/order`)
+    url.searchParams.set('orderIds', batch.join(','))
+    url.searchParams.set('limit', String(BATCH))
+
+    const resp = await fetch(url.toString(), {
+      headers: { 'Authorization': `Bearer ${accessToken}` },
+    })
+    if (!resp.ok) {
+      console.error(`Fulfillment API ${resp.status}: ${await resp.text()}`)
+      continue // non-fatal — titles are best-effort
+    }
+
+    const data = await resp.json()
+    for (const order of (data.orders ?? [])) {
+      const lineItems = new Map<string, string>()
+      for (const li of (order.lineItems ?? [])) {
+        if (li.title) lineItems.set(li.lineItemId, li.title)
+      }
+      if (lineItems.size > 0) titles.set(order.orderId, lineItems)
+    }
+  }
+  return titles
 }
 
 // Fetch all payouts in a date range.
@@ -158,12 +194,13 @@ function mapTransaction(tx: any, userId: string): Record<string, unknown>[] {
 
   switch (tx.transactionType) {
     case 'SALE': {
-      const title: string = tx.orderLineItems?.[0]?.title ?? 'eBay Sale'
+      // Finances API doesn't include item titles; merchant is updated
+      // later by Fulfillment API title lookup if available.
       rows.push({
         ...base,
         amount,
         gross_amount: amount,
-        merchant: title.slice(0, 200),
+        merchant: `eBay Order ${tx.orderId ?? tx.transactionId}`,
         schedule_c_category: 'payout',
         csv_transaction_id: `ebay_api_${tx.transactionId}`,
       })
@@ -254,16 +291,11 @@ function mapSaleRows(tx: any, userId: string): Record<string, unknown>[] {
     const title: string = item.title?.slice(0, 200) ?? 'eBay Sale'
     const lineItemId: string = item.lineItemId ?? '0'
 
-    // Per-item price: for single-item orders use the SALE total.
-    // For multi-item, use feeBasisAmount (per-item basis for fee calculation).
-    // Fallback: equal split across items.
-    let salePrice: number
-    if (items.length === 1) {
-      salePrice = totalAmount
-    } else {
-      const basis = parseFloat(item.feeBasisAmount?.value ?? '0')
-      salePrice = basis > 0 ? basis : totalAmount / items.length
-    }
+    // Use feeBasisAmount (the actual item price before fees/taxes).
+    // The SALE transaction's amount.value is net after eBay-collected taxes
+    // and fees — NOT the item price. Fallback: equal split of totalAmount.
+    const basis = parseFloat(item.feeBasisAmount?.value ?? '0')
+    const salePrice = basis > 0 ? basis : totalAmount / items.length
 
     // Sum marketplace fees for this line item (stored as negative; we want positive)
     const fees = (item.marketplaceFees ?? []).reduce((sum: number, f: any) => {
@@ -458,20 +490,40 @@ async function syncForUser(
     totalImported += rows.length
   }
 
-  // Upsert eBay API sales rows (per-item)
+  // Fetch item titles from Fulfillment API (best-effort)
+  const orderIds = [...new Set(allSaleRows.map(r => {
+    const ext = r.external_order_id as string
+    return ext.split('_')[0] // strip lineItemId suffix
+  }))]
+  if (orderIds.length > 0) {
+    const titleMap = await fetchOrderTitles(accessToken, orderIds)
+    for (const row of allSaleRows) {
+      const ext = row.external_order_id as string
+      const [oid, lid] = ext.split('_')
+      const orderTitles = titleMap.get(oid)
+      if (orderTitles) {
+        const title = orderTitles.get(lid) ?? orderTitles.values().next().value
+        if (title) row.item_name = title.slice(0, 200)
+      }
+    }
+    console.log(`Fetched titles for ${titleMap.size}/${orderIds.length} orders`)
+  }
+
+  // Upsert eBay API sales rows (per-item).
+  // Uses default merge (not ignoreDuplicates) so re-syncs update
+  // titles and corrected prices on existing rows.
   let totalSalesCreated = 0
   for (let i = 0; i < allSaleRows.length; i += BATCH) {
     const { error, count } = await supabase
       .from('sales')
       .upsert(allSaleRows.slice(i, i + BATCH), {
         onConflict: 'user_id,external_order_id',
-        ignoreDuplicates: true,
         count: 'exact',
       })
     if (error) console.error('Sales upsert error:', error)
     else totalSalesCreated += count ?? 0
   }
-  console.log(`Sales rows created: ${totalSalesCreated}`)
+  console.log(`Sales rows upserted: ${totalSalesCreated}`)
 
   // Auto-link all collected refunds after all windows upserted (so SALE rows exist)
   for (const tx of refundTxs) {
