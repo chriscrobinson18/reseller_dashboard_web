@@ -88,7 +88,10 @@ API rows use existing columns:
 ### `ebay_oauth_callback` edge function
 
 1. Validate `state` against the user's session token
-2. POST to eBay token endpoint to exchange `code` → `access_token` + `refresh_token`
+2. POST to `https://api.ebay.com/identity/v1/oauth2/token` to exchange `code` → `access_token` + `refresh_token`
+   - `Authorization: Basic <base64(EBAY_CLIENT_ID:EBAY_CLIENT_SECRET)>`
+   - `Content-Type: application/x-www-form-urlencoded`
+   - Body: `grant_type=authorization_code&code=<code>&redirect_uri=<EBAY_RUNAME>`
 3. Upsert into `ebay_tokens` for the user
 4. Hard-delete existing `transactions` rows where `source = 'csv_import' AND platform = 'ebay'` for this user
 5. Call `sync_ebay_transactions` with `full_backfill = true` (2-year window)
@@ -102,7 +105,7 @@ API rows use existing columns:
 
 | Mode | Trigger | Date range |
 |---|---|---|
-| Initial backfill | Called from `ebay_oauth_callback` with `full_backfill=true` | now - 2 years → now |
+| Initial backfill | Called from `ebay_oauth_callback` with `full_backfill=true` | now - 2 years → now (chunked into 90-day windows) |
 | Incremental | pg_cron daily at 4 AM UTC | `last_sync_at - 1 hour` → now |
 | Manual | "Sync Now" button in Settings | `last_sync_at - 1 hour` → now |
 
@@ -110,18 +113,26 @@ The 1-hour overlap handles eBay API eventual consistency. Duplicate rows are sil
 
 ### Token refresh
 
-Before fetching: if `token_expiry` is within 10 minutes, POST to eBay token endpoint with `refresh_token`, update `ebay_tokens`.
+Before fetching: if `token_expiry` is within 10 minutes, POST to `https://api.ebay.com/identity/v1/oauth2/token` with:
+- `Authorization: Basic <base64(EBAY_CLIENT_ID:EBAY_CLIENT_SECRET)>`
+- Body: `grant_type=refresh_token&refresh_token=<refresh_token>&scope=https://api.ebay.com/oauth/api_scope/sell.finances`
+
+Update `ebay_tokens` with new `access_token` and `token_expiry`. Access tokens expire in 7200 seconds (2h). Refresh tokens expire in ~18 months (47304000 seconds) — when expired, user must re-connect via OAuth.
 
 ### API endpoint
 
 ```
-GET https://api.ebay.com/sell/finances/v1/transaction
-  ?transactionDateRange.from=<ISO8601>
-  &transactionDateRange.to=<ISO8601>
-  &limit=200
+GET https://apiz.ebay.com/sell/finances/v1/transaction
+  ?filter=transactionDate:[{fromISO8601}..{toISO8601}]
+  &limit=1000
+  &offset=0
 ```
 
-Paginate via `next` cursor until exhausted.
+Paginate by incrementing `offset` by `limit` until `total` is reached (offset-based, max `limit=1000`).
+
+**90-day window constraint:** Each request's date range must be ≤ 90 days. Whether eBay also enforces a hard historical lookback limit (no data older than 90 days from today) is **unverified** — test against the real API during implementation. Either way, the backfill is chunked into 90-day windows.
+
+**2-year backfill chunking:** Fire ~8 sequential requests, each covering a 90-day window, stepping back from today to 2 years ago. With offset pagination, each window may itself need multiple pages if `total > 1000`.
 
 ### Transaction mapping
 
