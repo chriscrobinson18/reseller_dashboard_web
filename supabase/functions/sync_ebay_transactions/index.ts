@@ -83,7 +83,13 @@ async function fetchWindow(accessToken: string, from: Date, to: Date): Promise<a
     })
     if (!resp.ok) throw new Error(`eBay API ${resp.status}: ${await resp.text()}`)
 
-    const data = await resp.json()
+    let data: any
+    try {
+      data = await resp.json()
+    } catch {
+      console.error(`fetchWindow: empty/invalid JSON at offset=${offset}, stopping pagination`)
+      break
+    }
     const txs: any[] = data.transactions ?? []
     allTxs.push(...txs)
 
