@@ -8,6 +8,8 @@
 
 **Tech Stack:** Deno + Supabase Edge Functions, Supabase JS client v2, pg_cron + pg_net, React 19 + TanStack Query, eBay Finances API v1 (`apiz.ebay.com`), eBay OAuth 2.0.
 
+> **Sandbox mode active.** Secrets are set with `EBAY_ENV=sandbox` and `VITE_EBAY_ENV=sandbox`. All edge functions and the client must derive API base URLs from this env var rather than hardcoding production domains. Sandbox domains: `api.sandbox.ebay.com` (token), `apiz.sandbox.ebay.com` (Finances API), `auth.sandbox.ebay.com` (OAuth consent).
+
 ---
 
 ## File Map
@@ -167,11 +169,19 @@ Write this before `ebay_oauth_callback` because the callback calls it.
   const EBAY_SCOPE = 'https://api.ebay.com/oauth/api_scope/sell.finances'
   const BATCH = 500
 
+  const isSandbox = Deno.env.get('EBAY_ENV') === 'sandbox'
+  const EBAY_TOKEN_URL = isSandbox
+    ? 'https://api.sandbox.ebay.com/identity/v1/oauth2/token'
+    : 'https://api.ebay.com/identity/v1/oauth2/token'
+  const EBAY_API_BASE = isSandbox
+    ? 'https://apiz.sandbox.ebay.com'
+    : 'https://apiz.ebay.com'
+
   async function refreshAccessToken(
     refreshToken: string
   ): Promise<{ access_token: string; expires_in: number }> {
     const creds = btoa(`${EBAY_CLIENT_ID}:${EBAY_CLIENT_SECRET}`)
-    const resp = await fetch('https://api.ebay.com/identity/v1/oauth2/token', {
+    const resp = await fetch(EBAY_TOKEN_URL, {
       method: 'POST',
       headers: {
         'Authorization': `Basic ${creds}`,
@@ -195,7 +205,7 @@ Write this before `ebay_oauth_callback` because the callback calls it.
     const limit = 1000
 
     while (true) {
-      const url = new URL('https://apiz.ebay.com/sell/finances/v1/transaction')
+      const url = new URL(`${EBAY_API_BASE}/sell/finances/v1/transaction`)
       url.searchParams.set('filter', filter)
       url.searchParams.set('limit', String(limit))
       url.searchParams.set('offset', String(offset))
@@ -535,6 +545,11 @@ Write this before `ebay_oauth_callback` because the callback calls it.
   const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!
   const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
 
+  const isSandbox = Deno.env.get('EBAY_ENV') === 'sandbox'
+  const EBAY_TOKEN_URL = isSandbox
+    ? 'https://api.sandbox.ebay.com/identity/v1/oauth2/token'
+    : 'https://api.ebay.com/identity/v1/oauth2/token'
+
   function redirect(url: string) {
     return new Response(null, { status: 302, headers: { Location: url } })
   }
@@ -560,7 +575,7 @@ Write this before `ebay_oauth_callback` because the callback calls it.
 
       // Exchange code for tokens
       const creds = btoa(`${EBAY_CLIENT_ID}:${EBAY_CLIENT_SECRET}`)
-      const tokenResp = await fetch('https://api.ebay.com/identity/v1/oauth2/token', {
+      const tokenResp = await fetch(EBAY_TOKEN_URL, {
         method: 'POST',
         headers: {
           'Authorization': `Basic ${creds}`,
@@ -677,6 +692,8 @@ Write this before `ebay_oauth_callback` because the callback calls it.
 
   ```typescript
   export function getEbayAuthUrl(accessToken: string): string {
+    const isSandbox = (import.meta.env.VITE_EBAY_ENV as string) === 'sandbox'
+    const authBase = isSandbox ? 'https://auth.sandbox.ebay.com' : 'https://auth.ebay.com'
     const params = new URLSearchParams({
       client_id: import.meta.env.VITE_EBAY_CLIENT_ID as string,
       redirect_uri: import.meta.env.VITE_EBAY_RUNAME as string,
@@ -684,7 +701,7 @@ Write this before `ebay_oauth_callback` because the callback calls it.
       scope: 'https://api.ebay.com/oauth/api_scope/sell.finances',
       state: accessToken,
     })
-    return `https://auth.ebay.com/oauth2/authorize?${params.toString()}`
+    return `${authBase}/oauth2/authorize?${params.toString()}`
   }
 
   export async function ebaySync(): Promise<{ imported: number; windows: number }> {
