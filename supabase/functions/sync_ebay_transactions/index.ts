@@ -1,4 +1,4 @@
-// sync_ebay_transactions v17
+// sync_ebay_transactions v18
 // Fetches eBay Finances API transactions and upserts into `transactions`.
 //
 // Invocation modes (from request body):
@@ -82,7 +82,7 @@ async function fetchWindow(accessToken: string, from: Date, to: Date): Promise<a
     url.searchParams.set('limit', String(limit))
     url.searchParams.set('offset', String(offset))
 
-    const resp = await fetch(url.toString(), {
+    const resp = await fetchWithTimeout(url.toString(), {
       headers: { 'Authorization': `Bearer ${accessToken}` },
     })
     if (!resp.ok) throw new Error(`eBay API ${resp.status}: ${await resp.text()}`)
@@ -104,9 +104,21 @@ async function fetchWindow(accessToken: string, from: Date, to: Date): Promise<a
   return allTxs
 }
 
+// Wraps fetch with an AbortController timeout. Prevents a hanging eBay API
+// connection from blocking the edge function until the 150s hard limit.
+async function fetchWithTimeout(url: string, init: RequestInit, timeoutMs = 10000): Promise<Response> {
+  const controller = new AbortController()
+  const timer = setTimeout(() => controller.abort(), timeoutMs)
+  try {
+    return await fetch(url, { ...init, signal: controller.signal })
+  } finally {
+    clearTimeout(timer)
+  }
+}
+
 // Fetch order details from Fulfillment API to get item titles and prices.
-// Calls GET /order/{orderId} individually (legacy order IDs from Finances API
-// are not reliably handled by the batch orderIds query param on GET /order).
+// Fetches all orders in parallel with a per-request timeout so a slow/hanging
+// eBay response can't stall the whole sync.
 async function fetchOrderDetails(
   accessToken: string,
   orderIds: string[],
@@ -114,21 +126,31 @@ async function fetchOrderDetails(
   // Map<orderId, Map<lineItemId, { title?, price? }>>
   const details = new Map<string, Map<string, { title?: string; price?: number }>>()
 
-  console.log(`fetchOrderDetails: fetching ${orderIds.length} orders individually`)
+  console.log(`fetchOrderDetails: fetching ${orderIds.length} orders in parallel`)
 
-  for (const orderId of orderIds) {
-    const url = `${EBAY_FULFILLMENT_BASE}/sell/fulfillment/v1/order/${encodeURIComponent(orderId)}`
-
-    const resp = await fetch(url, {
-      headers: { 'Authorization': `Bearer ${accessToken}` },
+  const results = await Promise.allSettled(
+    orderIds.map(async (orderId) => {
+      const url = `${EBAY_FULFILLMENT_BASE}/sell/fulfillment/v1/order/${encodeURIComponent(orderId)}`
+      const resp = await fetchWithTimeout(url, {
+        headers: { 'Authorization': `Bearer ${accessToken}` },
+      })
+      if (!resp.ok) {
+        const body = await resp.text()
+        console.error(`Fulfillment API ${resp.status} for order ${orderId}: ${body.slice(0, 200)}`)
+        return null
+      }
+      const order = await resp.json()
+      return { orderId, order }
     })
-    if (!resp.ok) {
-      const body = await resp.text()
-      console.error(`Fulfillment API ${resp.status} for order ${orderId}: ${body.slice(0, 300)}`)
-      continue // non-fatal — titles are best-effort
-    }
+  )
 
-    const order = await resp.json()
+  for (const result of results) {
+    if (result.status === 'rejected') {
+      console.error('Fulfillment fetch error:', result.reason?.message ?? result.reason)
+      continue
+    }
+    if (!result.value) continue
+    const { orderId, order } = result.value
     const lineItems = new Map<string, { title?: string; price?: number }>()
     for (const li of (order.lineItems ?? [])) {
       const price = li.lineItemCost?.value != null
@@ -157,7 +179,7 @@ async function fetchPayouts(accessToken: string, from: Date, to: Date): Promise<
     url.searchParams.set('limit', String(limit))
     url.searchParams.set('offset', String(offset))
 
-    const resp = await fetch(url.toString(), {
+    const resp = await fetchWithTimeout(url.toString(), {
       headers: { 'Authorization': `Bearer ${accessToken}` },
     })
     if (!resp.ok) {

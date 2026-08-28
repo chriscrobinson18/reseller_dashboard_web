@@ -2000,7 +2000,11 @@ export async function ebaySync(opts?: { fullBackfill?: boolean }): Promise<{ imp
   const resp = await supabase.functions.invoke('sync_ebay_transactions', {
     body: { full_backfill: opts?.fullBackfill ?? false },
   })
-  if (resp.error) throw resp.error
+  if (resp.error) {
+    // Surface the actual error message from the edge function body, not the generic HTTP wrapper
+    const detail = (resp.data as any)?.error
+    throw new Error(detail ?? resp.error.message)
+  }
   return resp.data as { imported: number; windows: number; salesCreated?: number }
 }
 
