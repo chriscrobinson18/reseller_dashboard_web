@@ -1990,16 +1990,18 @@ export function getEbayAuthUrl(accessToken: string): string {
     client_id: import.meta.env.VITE_EBAY_CLIENT_ID as string,
     redirect_uri: import.meta.env.VITE_EBAY_RUNAME as string,
     response_type: 'code',
-    scope: 'https://api.ebay.com/oauth/api_scope/sell.finances https://api.ebay.com/oauth/api_scope/commerce.identity.readonly',
+    scope: 'https://api.ebay.com/oauth/api_scope/sell.finances',
     state: accessToken, // user's access token — MVP CSRF approach; replace with HMAC nonce for production hardening
   })
   return `${authBase}/oauth2/authorize?${params.toString()}`
 }
 
-export async function ebaySync(): Promise<{ imported: number; windows: number }> {
-  const resp = await supabase.functions.invoke('sync_ebay_transactions', { body: {} })
+export async function ebaySync(opts?: { fullBackfill?: boolean }): Promise<{ imported: number; windows: number; salesCreated?: number }> {
+  const resp = await supabase.functions.invoke('sync_ebay_transactions', {
+    body: { full_backfill: opts?.fullBackfill ?? false },
+  })
   if (resp.error) throw resp.error
-  return resp.data as { imported: number; windows: number }
+  return resp.data as { imported: number; windows: number; salesCreated?: number }
 }
 
 export async function ebayDisconnect(): Promise<void> {

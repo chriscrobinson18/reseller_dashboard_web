@@ -394,7 +394,7 @@ export default function SalesPage() {
       if (!search) return true
       const q = search.toLowerCase()
       return (
-        (s.items?.name ?? '').toLowerCase().includes(q) ||
+        (s.items?.name ?? s.item_name ?? '').toLowerCase().includes(q) ||
         (s.external_order_id ?? '').toLowerCase().includes(q) ||
         (s.platform ?? '').toLowerCase().includes(q) ||
         (s.payment_method ?? '').toLowerCase().includes(q) ||

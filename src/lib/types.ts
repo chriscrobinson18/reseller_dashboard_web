@@ -49,7 +49,7 @@ export interface Sale {
   item_id?: string
   item_name?: string | null
   platform?: string
-  source: 'manual' | 'csv_import' | 'plaid' | 'trade'
+  source: 'manual' | 'csv_import' | 'plaid' | 'trade' | 'ebay_api'
   quantity: number
   sale_price: number
   fees: number
