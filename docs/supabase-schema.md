@@ -63,7 +63,7 @@ The relational centerpiece — one row per sale event, FIFO-depletes inventory v
 | `id`, `user_id`, `created_at`, `deleted_at` | soft-deleted |
 | `item_id` | nullable — sales can arrive unlinked (e.g. from CSV import) and get linked later via `linkSaleToItem` |
 | `item_name` | text | Nullable. Free-text item description from Shortcuts quick-sale. Preserved after `item_id` is linked. |
-| `platform`, `source`, `external_order_id` | `source` values gated by the `sales_source_check` CHECK constraint (DB-side): `'manual' \| 'amazon' \| 'ebay' \| 'tcgplayer' \| 'csv_import' \| 'trade'`. **Adding a new value requires a migration to extend the constraint** — the TS `Sale.source` union is not authoritative for the DB. Trade-leg sales set `source = 'trade'`. (Note: the TS union also lists `'plaid'`, but the DB constraint does not — pre-existing drift; plaid sales aren't yet written from the web client.) |
+| `platform`, `source`, `external_order_id` | `source` values gated by the `sales_source_check` CHECK constraint (DB-side): `'manual' \| 'amazon' \| 'ebay' \| 'tcgplayer' \| 'csv_import' \| 'trade' \| 'ebay_api'`. **Adding a new value requires a migration to extend the constraint** — the TS `Sale.source` union is not authoritative for the DB. Trade-leg sales set `source = 'trade'`. (Note: the TS union also lists `'plaid'`, but the DB constraint does not — pre-existing drift; plaid sales aren't yet written from the web client.) |
 | `quantity`, `sale_price` | `sale_price` is the **gross** unsigned sale amount |
 | `fees`, `shipping_cost` | unsigned magnitudes, stored separately from `sale_price` |
 | `net_payout` | computed client-side as `sale_price - fees - shipping_cost` and written back (see `recordSale`/`updateSale` in mutations.ts) — **not** server-computed |
@@ -287,6 +287,30 @@ The `box_openings` migration (`supabase/migrations/20260803120000_box_openings.s
 - **`shortcut_record_breakdown`** ([source](../supabase/functions/shortcut_record_breakdown/index.ts)) — token-authenticated (service role, no JWT). Looks up `user_id` from `profiles.shortcut_token`, inserts a `box_openings` row with `box_name: item_name`, `quantity`, `opened_at: today UTC`, `source_lot_id: null`, `box_cost: null`, `allocation_method: null`. Returns `{ success: true, box_opening_id }`. Incomplete breakdowns (source_lot_id IS NULL) surface the ⚠️ banner on the Inventory page. Deployed (2026-08-23).
 - **`ebay_oauth_callback`** ([source](../supabase/functions/ebay_oauth_callback/index.ts)) — JWT verification disabled (handles browser redirect). Validates `?state` as user JWT, exchanges `?code` for eBay tokens, upserts `ebay_tokens`, hard-deletes `source='csv_import' AND platform='ebay'` transactions, then fires `sync_ebay_transactions` with `full_backfill=true` in the background. Redirects to `/settings?ebay=connected` on success. Deployed 2026-08-27.
 - **`sync_ebay_transactions`** ([source](../supabase/functions/sync_ebay_transactions/index.ts)) — fetches eBay Finances API transactions and upserts into `transactions`. Three invocation modes: `{ user_id, full_backfill: true }` (2-year backfill in 90-day chunks, called by `ebay_oauth_callback`), `{ user_id }` (incremental from `last_sync_at - 1h`, called by pg_cron), `{}` (reads user from Bearer JWT, called by Settings "Sync Now"). Auto-links REFUND transactions to matching SALE rows by `orderId`. Updates `ebay_tokens.last_sync_at` on completion. Deployed 2026-08-27.
+
+### Sales row creation (v2)
+
+For each SALE transaction, creates one `sales` row per `orderLineItem`:
+- `source = 'ebay_api'`, `platform = 'ebay'`
+- `item_name` = eBay item title (from `orderLineItems[].title`)
+- `sale_price` = item price (`feeBasisAmount` for multi-item, SALE amount for single-item)
+- `fees` = sum of that item's `marketplaceFees[]` (absolute values)
+- `external_order_id` = `{orderId}_{lineItemId}` (dedup key)
+- `item_id = NULL` — user can link to inventory later via Sales page
+
+Dedup: partial unique index on `(user_id, external_order_id) WHERE source = 'ebay_api'`.
+
+### Payout auto-transfer tagging
+
+After syncing transactions, fetches payouts via `GET /sell/finances/v1/payout`.
+For each `SUCCEEDED`/`SENT` payout, finds a Plaid transaction matching:
+- `|amount| within $0.01` of payout amount
+- `date` within +/- 2 days of payout date
+- Not already tagged as `transfer`
+
+Matched Plaid transactions are re-tagged `schedule_c_category = 'transfer'`
+to prevent double-counting revenue (eBay API SALE already counts as income).
+
 - **`import_marketplace_csv`** — referenced in TASKS.md as already shared/working server-side (v16); no web UI calls it yet. Not committed in-repo.
 - **`plaid_exchange_token`** ([source](../supabase/functions/plaid_exchange_token/index.ts)) — v17 deployed; **v18 local-only, not yet deployed — see Deployment note below**. Called from Settings' Connect Bank / Reconnect flows (see [`docs/features/settings.md`](features/settings.md#bank-connections)). Handles create mode, update mode (reconnect), and the duplicate-connection Keep/Fresh choice.
 - **`plaid_sync_transactions`** ([source](../supabase/functions/plaid_sync_transactions/index.ts)) — v33 deployed. Called by Settings' Sync Now / Force Full Resync.
