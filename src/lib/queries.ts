@@ -436,6 +436,7 @@ export function useCSVGroups(platform: string) {
 export function useEbayToken() {
   return useQuery({
     queryKey: ['ebay_token'],
+    staleTime: 60_000,
     queryFn: async () => {
       const { data, error } = await supabase
         .from('ebay_tokens')
