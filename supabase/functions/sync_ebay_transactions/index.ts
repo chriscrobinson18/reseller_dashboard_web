@@ -287,20 +287,35 @@ function mapSaleRows(tx: any, userId: string): Record<string, unknown>[] {
   const totalAmount = parseFloat(tx.amount?.value ?? '0')
   const soldAt = tx.transactionDate ?? new Date().toISOString()
 
+  // Total fees across all line items (for single-item shortcut)
+  const totalFees = items.reduce((sum: number, item: any) => {
+    return sum + (item.marketplaceFees ?? []).reduce((s: number, f: any) => {
+      return s + Math.abs(parseFloat(f.amount?.value ?? '0'))
+    }, 0)
+  }, 0)
+
   return items.map((item: any) => {
     const title: string = item.title?.slice(0, 200) ?? 'eBay Sale'
     const lineItemId: string = item.lineItemId ?? '0'
 
-    // Use feeBasisAmount (the actual item price before fees/taxes).
-    // The SALE transaction's amount.value is net after eBay-collected taxes
-    // and fees — NOT the item price. Fallback: equal split of totalAmount.
-    const basis = parseFloat(item.feeBasisAmount?.value ?? '0')
-    const salePrice = basis > 0 ? basis : totalAmount / items.length
-
-    // Sum marketplace fees for this line item (stored as negative; we want positive)
+    // Per-item fees (stored as negative; we want positive)
     const fees = (item.marketplaceFees ?? []).reduce((sum: number, f: any) => {
       return sum + Math.abs(parseFloat(f.amount?.value ?? '0'))
     }, 0)
+
+    // Sale price = item subtotal (what the seller listed it for).
+    // For single-item: amount.value is net after fees, so adding fees
+    // back gives the item subtotal. This avoids feeBasisAmount which
+    // may include eBay-collected sales tax and delivery fees.
+    // For multi-item: use feeBasisAmount as relative weight to split
+    // the total, since we can't derive per-item amounts from the total.
+    let salePrice: number
+    if (items.length === 1) {
+      salePrice = totalAmount + totalFees
+    } else {
+      const basis = parseFloat(item.feeBasisAmount?.value ?? '0')
+      salePrice = basis > 0 ? basis : (totalAmount + totalFees) / items.length
+    }
 
     return {
       user_id: userId,
