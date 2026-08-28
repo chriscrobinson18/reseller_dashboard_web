@@ -94,6 +94,38 @@ async function fetchWindow(accessToken: string, from: Date, to: Date): Promise<a
   return allTxs
 }
 
+// Fetch all payouts in a date range.
+async function fetchPayouts(accessToken: string, from: Date, to: Date): Promise<any[]> {
+  const filter = `payoutDate:[${from.toISOString()}..${to.toISOString()}]`
+  const allPayouts: any[] = []
+  let offset = 0
+  const limit = 200
+
+  while (true) {
+    const url = new URL(`${EBAY_API_BASE}/sell/finances/v1/payout`)
+    url.searchParams.set('filter', filter)
+    url.searchParams.set('limit', String(limit))
+    url.searchParams.set('offset', String(offset))
+
+    const resp = await fetch(url.toString(), {
+      headers: { 'Authorization': `Bearer ${accessToken}` },
+    })
+    if (!resp.ok) {
+      console.error(`Payouts API ${resp.status}: ${await resp.text()}`)
+      break // non-fatal — payout matching is best-effort
+    }
+
+    const data = await resp.json()
+    const payouts: any[] = data.payouts ?? []
+    allPayouts.push(...payouts)
+
+    const total: number = data.total ?? 0
+    offset += limit
+    if (offset >= total || payouts.length === 0) break
+  }
+  return allPayouts
+}
+
 function feeTypeToMerchant(feeType: string): string {
   if (feeType.startsWith('FINAL_VALUE_FEE')) return 'eBay Final Value Fee'
   if (feeType.includes('PROMOTED') || feeType.includes('AD_FEE')) return 'eBay Promoted Listing Fee'
@@ -292,11 +324,73 @@ async function autoLinkRefund(
     .eq('csv_transaction_id', `ebay_api_${tx.transactionId}`)
 }
 
+// Match eBay payouts against Plaid bank deposits and tag as 'transfer'.
+// Prevents double-counting revenue when both eBay API and Plaid import the same money.
+async function autoTagPlaidDeposits(
+  supabase: ReturnType<typeof createClient>,
+  userId: string,
+  payouts: any[],
+): Promise<number> {
+  let tagged = 0
+  for (const p of payouts) {
+    if (p.payoutStatus !== 'SUCCEEDED' && p.payoutStatus !== 'SENT') continue
+
+    const payoutAmount = parseFloat(p.amount?.value ?? '0')
+    if (payoutAmount <= 0) continue
+
+    const payoutDate = p.payoutDate?.slice(0, 10)
+    if (!payoutDate) continue
+
+    // Find Plaid transactions matching this payout: same amount (to the cent),
+    // within +/- 2 days, not already tagged as transfer.
+    const dateFrom = new Date(new Date(payoutDate).getTime() - 2 * 86400000)
+      .toISOString().slice(0, 10)
+    const dateTo = new Date(new Date(payoutDate).getTime() + 2 * 86400000)
+      .toISOString().slice(0, 10)
+
+    const { data: matches, error } = await supabase
+      .from('transactions')
+      .select('id, amount')
+      .eq('user_id', userId)
+      .eq('source', 'plaid')
+      .gte('date', dateFrom)
+      .lte('date', dateTo)
+      .neq('schedule_c_category', 'transfer')
+
+    if (error) {
+      console.error('Plaid match query error:', error)
+      continue
+    }
+
+    // Find exact amount match (within 1 cent)
+    const match = (matches ?? []).find(
+      m => Math.abs(Math.abs(m.amount) - payoutAmount) < 0.01
+    )
+    if (!match) continue
+
+    const { error: updateErr } = await supabase
+      .from('transactions')
+      .update({
+        schedule_c_category: 'transfer',
+        notes: `eBay Payout ${p.payoutId}`,
+      })
+      .eq('id', match.id)
+
+    if (updateErr) {
+      console.error('Plaid tag update error:', updateErr)
+    } else {
+      tagged++
+      console.log(`Tagged Plaid tx ${match.id} as transfer (eBay Payout ${p.payoutId}, $${payoutAmount})`)
+    }
+  }
+  return tagged
+}
+
 async function syncForUser(
   supabase: ReturnType<typeof createClient>,
   userId: string,
   fullBackfill: boolean,
-): Promise<{ windows: number; imported: number; salesCreated: number }> {
+): Promise<{ windows: number; imported: number; salesCreated: number; plaidTagged: number }> {
   const { data: tokenRow, error: tokenErr } = await supabase
     .from('ebay_tokens')
     .select('*')
@@ -384,9 +478,16 @@ async function syncForUser(
     await autoLinkRefund(supabase, userId, tx)
   }
 
+  // Auto-tag Plaid deposits matching eBay payouts
+  const syncFrom = windows[0]?.from ?? new Date()
+  const syncTo = windows[windows.length - 1]?.to ?? new Date()
+  const payouts = await fetchPayouts(accessToken, syncFrom, syncTo)
+  const plaidTagged = await autoTagPlaidDeposits(supabase, userId, payouts)
+  if (plaidTagged > 0) console.log(`Auto-tagged ${plaidTagged} Plaid deposits as transfer`)
+
   await supabase.from('ebay_tokens').update({ last_sync_at: now.toISOString() }).eq('user_id', userId)
   console.log(`Done: ${totalImported} rows, ${windows.length} windows`)
-  return { windows: windows.length, imported: totalImported, salesCreated: totalSalesCreated }
+  return { windows: windows.length, imported: totalImported, salesCreated: totalSalesCreated, plaidTagged }
 }
 
 serve(async (req) => {
