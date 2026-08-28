@@ -135,6 +135,7 @@ function mapTransaction(tx: any, userId: string): Record<string, unknown>[] {
         schedule_c_category: 'payout',
         csv_transaction_id: `ebay_api_${tx.transactionId}`,
       })
+      let feeIdx = 0
       for (const item of (tx.orderLineItems ?? []) as any[]) {
         for (const fee of (item.marketplaceFees ?? []) as any[]) {
           const feeAmt = parseFloat(fee.amount?.value ?? '0')
@@ -145,7 +146,7 @@ function mapTransaction(tx: any, userId: string): Record<string, unknown>[] {
             amount: feeAmt,
             merchant: feeTypeToMerchant(fee.feeType ?? ''),
             schedule_c_category: isAd ? 'advertising' : 'commissions_fees',
-            csv_transaction_id: `ebay_api_${tx.transactionId}_fee_${fee.feeType}`,
+            csv_transaction_id: `ebay_api_${tx.transactionId}_fee_${feeIdx++}_${fee.feeType}`,
           })
         }
       }
@@ -205,8 +206,8 @@ function mapTransaction(tx: any, userId: string): Record<string, unknown>[] {
 
 // Auto-link a REFUND to its matching SALE transaction by orderId.
 // Tags the refund as 'returns_allowances' and copies related_sale_id from the SALE row.
-// If no matching SALE found, still tags as 'returns_allowances' with null related_sale_id
-// so it appears in ReconcileReturnModal for manual completion.
+// If no matching SALE found, leaves the refund as 'payout' for manual reconciliation
+// via ReconcileReturnModal.
 async function autoLinkRefund(
   supabase: ReturnType<typeof createClient>,
   userId: string,
@@ -214,7 +215,7 @@ async function autoLinkRefund(
 ): Promise<void> {
   if (!tx.orderId) return
 
-  const { data: saleTx } = await supabase
+  const { data: saleTx, error: queryErr } = await supabase
     .from('transactions')
     .select('related_sale_id')
     .eq('user_id', userId)
@@ -223,11 +224,17 @@ async function autoLinkRefund(
     .eq('source', 'ebay_api')
     .maybeSingle()
 
+  if (queryErr) {
+    console.error(`autoLinkRefund query error for order ${tx.orderId}:`, queryErr)
+    return
+  }
+  if (!saleTx) return // no matching sale; leave refund as 'payout' for manual reconciliation
+
   await supabase
     .from('transactions')
     .update({
       schedule_c_category: 'returns_allowances',
-      related_sale_id: saleTx?.related_sale_id ?? null,
+      related_sale_id: saleTx.related_sale_id,
     })
     .eq('user_id', userId)
     .eq('csv_transaction_id', `ebay_api_${tx.transactionId}`)
@@ -327,7 +334,12 @@ serve(async (req) => {
 
     let targetUserId: string
     if (user_id) {
-      // Called from cron or ebay_oauth_callback with service-role key
+      // Called from cron or ebay_oauth_callback — must use service-role key
+      const authHeader = req.headers.get('Authorization') ?? ''
+      const serviceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
+      if (!authHeader.includes(serviceKey)) {
+        return json(401, { error: 'Service-role key required when passing user_id' })
+      }
       targetUserId = user_id
     } else {
       // Called from UI with user's JWT
