@@ -34,7 +34,7 @@ function json(status: number, body: unknown) {
 
 const EBAY_CLIENT_ID = Deno.env.get('EBAY_CLIENT_ID')!
 const EBAY_CLIENT_SECRET = Deno.env.get('EBAY_CLIENT_SECRET')!
-const EBAY_SCOPE = 'https://api.ebay.com/oauth/api_scope/sell.finances https://api.ebay.com/oauth/api_scope/sell.fulfillment https://api.ebay.com/oauth/api_scope/commerce.identity.readonly'
+const EBAY_SCOPE = 'https://api.ebay.com/oauth/api_scope/sell.finances'
 const BATCH = 500
 
 const isSandbox = Deno.env.get('EBAY_ENV') === 'sandbox'
@@ -248,6 +248,8 @@ function mapTransaction(tx: any, userId: string): Record<string, unknown>[] {
     case 'NON_SALE_CHARGE': {
       const memo: string = tx.transactionMemo ?? ''
       const isAd = memo.toLowerCase().includes('promoted')
+      // Temporary: log references to understand what the API returns for ad fees
+      if (isAd) console.log(`NON_SALE_CHARGE refs: orderId=${tx.orderId ?? 'null'} references=${JSON.stringify(tx.references ?? null)}`)
       rows.push({
         ...base,
         amount,
