@@ -1990,7 +1990,7 @@ export function getEbayAuthUrl(accessToken: string): string {
     client_id: import.meta.env.VITE_EBAY_CLIENT_ID as string,
     redirect_uri: import.meta.env.VITE_EBAY_RUNAME as string,
     response_type: 'code',
-    scope: 'https://api.ebay.com/oauth/api_scope/sell.finances',
+    scope: 'https://api.ebay.com/oauth/api_scope/sell.finances https://api.ebay.com/oauth/api_scope/sell.fulfillment.readonly',
     state: accessToken, // user's access token — MVP CSRF approach; replace with HMAC nonce for production hardening
   })
   return `${authBase}/oauth2/authorize?${params.toString()}`
@@ -2005,8 +2005,10 @@ export async function ebaySync(opts?: { fullBackfill?: boolean }): Promise<{ imp
 }
 
 export async function ebayDisconnect(): Promise<void> {
-  const { data: { user } } = await supabase.auth.getUser()
-  if (!user) throw new Error('Not authenticated')
-  const { error } = await supabase.from('ebay_tokens').delete().eq('user_id', user.id)
-  if (error) throw error
+  const { data: { session } } = await supabase.auth.getSession()
+  if (!session) throw new Error('Not authenticated')
+  const resp = await supabase.functions.invoke('ebay_disconnect', {
+    headers: { Authorization: `Bearer ${session.access_token}` },
+  })
+  if (resp.error) throw resp.error
 }
