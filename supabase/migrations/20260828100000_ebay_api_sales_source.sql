@@ -5,7 +5,9 @@ ALTER TABLE sales ADD CONSTRAINT sales_source_check
     'manual','amazon','ebay','tcgplayer','csv_import','trade','ebay_api'
   ]));
 
--- Dedup index: one sales row per eBay order line item per user
+-- Dedup index: one sales row per order line item per user.
+-- Non-partial so PostgREST ON CONFLICT can target it (partial indexes
+-- with WHERE clauses are invisible to PostgREST's upsert).
+-- NULL external_order_id values (manual/unlinked sales) don't conflict.
 CREATE UNIQUE INDEX IF NOT EXISTS sales_ebay_api_order_dedup
-  ON sales (user_id, external_order_id)
-  WHERE source = 'ebay_api' AND deleted_at IS NULL;
+  ON sales (user_id, external_order_id);
