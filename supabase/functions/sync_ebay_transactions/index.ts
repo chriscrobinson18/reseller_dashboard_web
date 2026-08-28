@@ -34,7 +34,7 @@ function json(status: number, body: unknown) {
 
 const EBAY_CLIENT_ID = Deno.env.get('EBAY_CLIENT_ID')!
 const EBAY_CLIENT_SECRET = Deno.env.get('EBAY_CLIENT_SECRET')!
-const EBAY_SCOPE = 'https://api.ebay.com/oauth/api_scope/sell.finances'
+const EBAY_SCOPE = 'https://api.ebay.com/oauth/api_scope/sell.finances https://api.ebay.com/oauth/api_scope/commerce.identity.readonly'
 const BATCH = 500
 
 const isSandbox = Deno.env.get('EBAY_ENV') === 'sandbox'

@@ -1,13 +1,14 @@
-// ebay_oauth_callback v1
+// ebay_oauth_callback v2
 // Handles the eBay OAuth 2.0 authorization code redirect.
 //
 // Flow:
 //   1. Validates ?state param as user JWT → identifies user
 //   2. Exchanges ?code for access_token + refresh_token
-//   3. Upserts into ebay_tokens
-//   4. Hard-deletes all source='csv_import' + platform='ebay' rows for this user
-//   5. Fires sync_ebay_transactions with full_backfill=true (background, non-blocking)
-//   6. Redirects browser to <EBAY_APP_URL>/settings?ebay=connected
+//   3. Fetches eBay userId via Identity API → stores in ebay_tokens.ebay_user_id
+//   4. Upserts into ebay_tokens
+//   5. Hard-deletes all source='csv_import' + platform='ebay' rows for this user
+//   6. Fires sync_ebay_transactions with full_backfill=true (background, non-blocking)
+//   7. Redirects browser to <EBAY_APP_URL>/settings?ebay=connected
 
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts"
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2"
@@ -23,6 +24,9 @@ const isSandbox = Deno.env.get('EBAY_ENV') === 'sandbox'
 const EBAY_TOKEN_URL = isSandbox
   ? 'https://api.sandbox.ebay.com/identity/v1/oauth2/token'
   : 'https://api.ebay.com/identity/v1/oauth2/token'
+const EBAY_IDENTITY_URL = isSandbox
+  ? 'https://apiz.sandbox.ebay.com/commerce/identity/v1/user/'
+  : 'https://apiz.ebay.com/commerce/identity/v1/user/'
 
 function redirect(url: string) {
   return new Response(null, { status: 302, headers: { Location: url } })
@@ -74,6 +78,23 @@ serve(async (req) => {
       return redirect(`${EBAY_APP_URL}/settings?ebay=error&reason=token_exchange_failed`)
     }
 
+    // Fetch eBay userId for account deletion mapping (non-fatal if fails)
+    let ebayUserId: string | null = null
+    try {
+      const idResp = await fetch(EBAY_IDENTITY_URL, {
+        headers: { 'Authorization': `Bearer ${access_token}` },
+      })
+      if (idResp.ok) {
+        const idData = await idResp.json()
+        ebayUserId = idData.userId ?? null
+        console.log('eBay userId:', ebayUserId)
+      } else {
+        console.error('Identity API failed (non-fatal):', idResp.status, await idResp.text())
+      }
+    } catch (e) {
+      console.error('Identity API error (non-fatal):', e)
+    }
+
     // Store tokens
     const { error: upsertError } = await supabase.from('ebay_tokens').upsert({
       user_id: user.id,
@@ -81,6 +102,7 @@ serve(async (req) => {
       refresh_token,
       token_expiry: new Date(Date.now() + expires_in * 1000).toISOString(),
       connected_at: new Date().toISOString(),
+      ...(ebayUserId ? { ebay_user_id: ebayUserId } : {}),
     }, { onConflict: 'user_id' })
 
     if (upsertError) {
