@@ -227,7 +227,7 @@ function mapTransaction(tx: any, userId: string): Record<string, unknown>[] {
           const isAd = (fee.feeType as string)?.includes('PROMOTED') || (fee.feeType as string)?.includes('AD_FEE')
           rows.push({
             ...base,
-            amount: feeAmt,
+            amount: -feeAmt, // expense — negate positive eBay fee amount
             merchant: feeTypeToMerchant(fee.feeType ?? ''),
             schedule_c_category: isAd ? 'advertising' : 'commissions_fees',
             csv_transaction_id: `ebay_api_${tx.transactionId}_fee_${feeIdx++}_${fee.feeType}`,
@@ -239,7 +239,7 @@ function mapTransaction(tx: any, userId: string): Record<string, unknown>[] {
     case 'SHIPPING_LABEL':
       rows.push({
         ...base,
-        amount,
+        amount: -amount, // expense — negate positive eBay amount
         merchant: 'eBay Shipping Label',
         schedule_c_category: 'shipping_postage',
         csv_transaction_id: `ebay_api_${tx.transactionId}`,
@@ -249,7 +249,7 @@ function mapTransaction(tx: any, userId: string): Record<string, unknown>[] {
       const title: string = tx.orderLineItems?.[0]?.title ?? 'eBay Refund'
       rows.push({
         ...base,
-        amount,
+        amount: -amount, // debit — money back to buyer, negate positive eBay amount
         merchant: title.slice(0, 200),
         // starts as 'payout'; autoLinkRefund re-tags to 'returns_allowances' after upsert
         schedule_c_category: 'payout',
@@ -264,7 +264,7 @@ function mapTransaction(tx: any, userId: string): Record<string, unknown>[] {
       if (isAd) console.log(`NON_SALE_CHARGE refs: orderId=${tx.orderId ?? 'null'} references=${JSON.stringify(tx.references ?? null)}`)
       rows.push({
         ...base,
-        amount,
+        amount: -amount, // expense — negate positive eBay amount
         merchant: memo.slice(0, 100) || 'eBay Charge',
         schedule_c_category: isAd ? 'advertising' : 'commissions_fees',
         csv_transaction_id: `ebay_api_${tx.transactionId}`,
@@ -276,7 +276,7 @@ function mapTransaction(tx: any, userId: string): Record<string, unknown>[] {
       const isShipping = /shipping|label/i.test(memo)
       rows.push({
         ...base,
-        amount,
+        amount: -amount, // expense — negate positive eBay amount
         merchant: memo.slice(0, 100) || 'eBay Adjustment',
         schedule_c_category: isShipping ? 'shipping_postage' : 'other_expense',
         csv_transaction_id: `ebay_api_${tx.transactionId}`,
