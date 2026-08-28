@@ -160,7 +160,13 @@ async function fetchPayouts(accessToken: string, from: Date, to: Date): Promise<
       break // non-fatal — payout matching is best-effort
     }
 
-    const data = await resp.json()
+    let data: any
+    try {
+      data = await resp.json()
+    } catch {
+      console.error(`fetchPayouts: empty/invalid JSON at offset=${offset}, stopping pagination`)
+      break
+    }
     const payouts: any[] = data.payouts ?? []
     allPayouts.push(...payouts)
 
@@ -482,10 +488,7 @@ async function syncForUser(
       windowEnd = new Date(windowEnd.getTime() - 90 * 24 * 60 * 60 * 1000)
     }
   } else {
-    const lastSync = tokenRow.last_sync_at
-      ? new Date(new Date(tokenRow.last_sync_at).getTime() - 60 * 60 * 1000)
-      : new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000)
-    windows.push({ from: lastSync, to: now })
+    windows.push({ from: new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000), to: now })
   }
 
   let totalImported = 0
