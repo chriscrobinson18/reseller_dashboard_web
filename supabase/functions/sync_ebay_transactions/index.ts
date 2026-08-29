@@ -1,4 +1,4 @@
-// sync_ebay_transactions v21
+// sync_ebay_transactions v22
 // Fetches eBay Finances API transactions and upserts into `transactions`.
 //
 // Invocation modes (from request body):
@@ -267,6 +267,7 @@ function mapTransaction(tx: any, userId: string): Record<string, unknown>[] {
       // Shipping labels have no top-level orderId; extract it from references[] if present
       const shipRefOrderId: string | null =
         (tx.references ?? []).find((r: any) => r.referenceType === 'ORDER_ID')?.referenceId ?? null
+      console.log(`SHIPPING_LABEL txId=${tx.transactionId} amount=${amount} orderId=${orderId ?? 'null'} refOrderId=${shipRefOrderId ?? 'null'} references=${JSON.stringify(tx.references ?? null)}`)
       rows.push({
         ...base,
         notes: shipRefOrderId ?? orderId, // override base.notes with the referenced order ID
@@ -400,6 +401,8 @@ async function autoLinkRefund(
     .eq('notes', tx.orderId)
     .eq('schedule_c_category', 'payout')
     .eq('source', 'ebay_api')
+    .gt('amount', 0) // exclude REFUND rows (negative) — only match the SALE payout
+    .limit(1)
     .maybeSingle()
 
   if (queryErr) {
