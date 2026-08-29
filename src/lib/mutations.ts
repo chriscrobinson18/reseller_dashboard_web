@@ -1992,6 +1992,7 @@ export function getEbayAuthUrl(accessToken: string): string {
     response_type: 'code',
     scope: 'https://api.ebay.com/oauth/api_scope/sell.finances https://api.ebay.com/oauth/api_scope/sell.fulfillment.readonly',
     state: accessToken, // user's access token — MVP CSRF approach; replace with HMAC nonce for production hardening
+    prompt: 'login', // force eBay to show auth screen instead of silently reconnecting
   })
   return `${authBase}/oauth2/authorize?${params.toString()}`
 }
