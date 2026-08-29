@@ -1,4 +1,4 @@
-// sync_ebay_transactions v20
+// sync_ebay_transactions v21
 // Fetches eBay Finances API transactions and upserts into `transactions`.
 //
 // Invocation modes (from request body):
@@ -522,7 +522,7 @@ async function syncForUser(
       windowEnd = new Date(windowEnd.getTime() - 90 * 24 * 60 * 60 * 1000)
     }
   } else {
-    windows.push({ from: new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000), to: now })
+    windows.push({ from: new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000), to: now })
   }
 
   let totalImported = 0
