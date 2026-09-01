@@ -14,4 +14,6 @@ Knowledge base for the Reseller Dashboard web app, meant to be read by humans an
   - [settings.md](features/settings.md)
 - [`../supabase/functions/README.md`](../supabase/functions/README.md) — local-stack workflow for the committed edge functions and Deno tests
 
+⚠️ **Pending model change.** [`superpowers/specs/2026-09-01-golden-path-data-model-design.md`](superpowers/specs/2026-09-01-golden-path-data-model-design.md) specs a `transactions.role` column that replaces the read-time exclusion rules described in [categories.md](categories.md) and [data-flows.md](data-flows.md), plus an `order_id` column that unblocks per-SKU profitability. Not yet implemented — those two docs still describe current (divergent) behavior. Read the spec before changing `bucketTransaction` or either Schedule C path.
+
 Related: [`/TASKS.md`](../TASKS.md) tracks open work and known bugs (P0 tax-correctness items especially). Docs here describe *current* behavior, including known-buggy behavior — check TASKS.md to see if something documented here is slated to change.
