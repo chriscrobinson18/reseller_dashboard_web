@@ -21,7 +21,7 @@ Bank/manual/CSV-sourced money movements — the Schedule C source of truth for i
 | `amount` | **signed** numeric; negative = expense, positive = income |
 | `gross_amount` | optional, present on some rows (e.g. settlements) |
 | `merchant`, `type`, `notes`, `account_display` | |
-| `source` | `'plaid' \| 'manual' \| 'csv_import' \| 'ebay_api'` — gated by `transactions_source_check` CHECK constraint; adding a new value requires a migration |
+| `source` | `'plaid' \| 'manual' \| 'csv_import'` |
 | `platform` | marketplace name, when relevant |
 | `record_type` | `'transaction' \| 'settlement'` |
 | `schedule_c_category` | FK-ish string into `CATEGORIES` (see categories.md); nullable = uncategorized |
@@ -63,7 +63,7 @@ The relational centerpiece — one row per sale event, FIFO-depletes inventory v
 | `id`, `user_id`, `created_at`, `deleted_at` | soft-deleted |
 | `item_id` | nullable — sales can arrive unlinked (e.g. from CSV import) and get linked later via `linkSaleToItem` |
 | `item_name` | text | Nullable. Free-text item description from Shortcuts quick-sale. Preserved after `item_id` is linked. |
-| `platform`, `source`, `external_order_id` | `source` values gated by the `sales_source_check` CHECK constraint (DB-side): `'manual' \| 'amazon' \| 'ebay' \| 'tcgplayer' \| 'csv_import' \| 'trade' \| 'ebay_api'`. **Adding a new value requires a migration to extend the constraint** — the TS `Sale.source` union is not authoritative for the DB. Trade-leg sales set `source = 'trade'`. (Note: the TS union also lists `'plaid'`, but the DB constraint does not — pre-existing drift; plaid sales aren't yet written from the web client.) |
+| `platform`, `source`, `external_order_id` | `source` values gated by the `sales_source_check` CHECK constraint (DB-side): `'manual' \| 'amazon' \| 'ebay' \| 'tcgplayer' \| 'csv_import' \| 'trade'`. **Adding a new value requires a migration to extend the constraint** — the TS `Sale.source` union is not authoritative for the DB. Trade-leg sales set `source = 'trade'`. (Note: the TS union also lists `'plaid'`, but the DB constraint does not — pre-existing drift; plaid sales aren't yet written from the web client.) |
 | `quantity`, `sale_price` | `sale_price` is the **gross** unsigned sale amount |
 | `fees`, `shipping_cost` | unsigned magnitudes, stored separately from `sale_price` |
 | `net_payout` | computed client-side as `sale_price - fees - shipping_cost` and written back (see `recordSale`/`updateSale` in mutations.ts) — **not** server-computed |
@@ -234,32 +234,11 @@ One row per linked Plaid Item (institution). `plaid_accounts` is the per-account
 | `status` (`'active' \| 'login_required' \| 'error'`) | Health of the Plaid connection. Defaults to `'active'`. Written by `plaid_sync_transactions` on `ITEM_LOGIN_REQUIRED` and reset by `plaid_exchange_token` on update-mode success. Web client reads this to drive the "Reconnect needed" badge in Settings; treats the column as `'active'` if missing. |
 | `error_message` | Optional human-readable Plaid error string, shown as a tooltip on the status badge. |
 
-### `ebay_tokens`
-
-Stores eBay Finances API OAuth tokens per user (one row per user). Written by `ebay_oauth_callback` on first connect; read and refreshed by `sync_ebay_transactions`.
-
-| Column | Type | Notes |
-|---|---|---|
-| `id` | uuid PK | |
-| `user_id` | uuid FK → auth.users | unique; one eBay connection per user |
-| `access_token` | text | Expires in 2h; auto-refreshed within 10 min of expiry by `sync_ebay_transactions` |
-| `refresh_token` | text | Expires in ~18 months; re-OAuth required when expired |
-| `token_expiry` | timestamptz | Expiry of current access_token |
-| `last_sync_at` | timestamptz | Null until first sync completes; used as `from` boundary (minus 1h overlap) for incremental syncs |
-| `connected_at` | timestamptz | Timestamp of first OAuth connect (preserved across reconnects) |
-
-**RLS:** users read/write own row via `auth.uid() = user_id`. Edge functions use service-role key to bypass RLS.
-
-**pg_cron:** `sync-ebay-daily` job fires at 4 AM UTC, one `net.http_post` per connected user row → calls `sync_ebay_transactions` with `{ user_id }`.
-
-**Related edge functions:** `ebay_oauth_callback` (writes on OAuth connect), `sync_ebay_transactions` (reads/writes on every sync).
-
-**Transactions from eBay API:** written with `source = 'ebay_api'`, `platform = 'ebay'`, `csv_group_id = payoutId`, `notes = orderId`. Dedup key in `csv_transaction_id` (`ebay_api_{transactionId}`). See `sync_ebay_transactions` source for mapping details.
-
 ## Tables referenced but not yet built on (per TASKS.md)
 - `category_rules` (planned — merchant auto-categorization)
 - `inventory_valuations` (planned — Beginning/Ending inventory for Part III, must NOT be period-scoped)
 - `tax_profiles` (planned — Schedule C header fields, home office sqft, vehicle method)
+- `marketplace_connections` (exists per TASKS.md note "verify RLS on access_token/refresh_token is service-role-only" — unconfirmed)
 
 ## Edge functions
 
@@ -274,43 +253,17 @@ Three are now committed in [`supabase/functions/`](../supabase/functions/) (the 
 
 `record_return`'s `return_shipping_cost` param and `reverse_return` itself were deployed 2026-08-25 (see TASKS.md "Deploy return edge functions") — the note that used to live here calling them undeployed was stale as of this pass and has been removed. Run the Deno e2e tests (`supabase/functions/record_return/index.test.ts`, `supabase/functions/reverse_return/index.test.ts`) against a local stack before relying on any *new* change to either function in production — see the still-open items below.
 
-**2026-08-27: eBay Finances API integration — deployed.** Migration `20260827130000_ebay_tokens.sql` applied; `20260827140000_add_ebay_api_source.sql` extends `transactions_source_check` to include `'ebay_api'`. Edge functions `ebay_oauth_callback` (v2) and `sync_ebay_transactions` (v2) deployed. pg_cron job `sync-ebay-daily` registered (4 AM UTC). eBay CSV card in Settings replaced with Connect/Sync Now/Disconnect UI.
+**2026-08-27: CSV return reconciliation — migration + both return functions need deploying, and this one is a live-data risk, not just a no-op.** The `csv_return_reconciliation` migration (`supabase/migrations/20260827120000_csv_return_reconciliation.sql`, adds `returns.refund_transaction_id`/`return_shipping_transaction_id`) and the corresponding `record_return`/`reverse_return` v2 changes (re-tag-vs-insert, un-tag-vs-delete — see the function notes above and [`docs/superpowers/specs/2026-08-27-csv-return-reconciliation-design.md`](superpowers/specs/2026-08-27-csv-return-reconciliation-design.md)) exist only as source in this repo — **none of it deployable from this session** (no Supabase CLI/credentials here).
 
-**2026-08-27: CSV return reconciliation — deployed.** Migration (`returns.refund_transaction_id`/`return_shipping_transaction_id`) applied and `record_return`/`reverse_return` v2 deployed 2026-08-27. Return Reconciliation UI is safe to use.
+**Do not let anyone click "Apply Return" in the new Return Reconciliation UI (`docs/features/settings.md#return-reconciliation`) before both the migration and functions are deployed.** The live (pre-v2) `record_return` silently ignores unrecognized body fields, so it doesn't error on `refund_transaction_id`/`return_shipping_transaction_id` — it falls through to the manual path and **inserts a brand-new `returns_allowances` transaction** while leaving the original CSV refund row untouched (still categorized `'payout'`, still unlinked). Net effect: the same real-world refund gets deducted **twice** (once as the untouched CSV payout-negative row, once as the newly-inserted `returns_allowances` row), and the CSV row keeps reappearing as a candidate since it was never re-tagged. Deploy the migration + `supabase functions deploy record_return reverse_return` first.
 
 The `box_openings` migration (`supabase/migrations/20260803120000_box_openings.sql`) and its follow-up `box_openings_source_lot` migration (`supabase/migrations/20260803130000_box_openings_source_lot.sql`, adding `source_lot_id`/`quantity`) have both been applied to the live Supabase project (confirmed live — `shortcut_record_breakdown` writes `source_lot_id = null` successfully as of 2026-08-23).
 
-**2026-08-27: `plaid_exchange_token` v18 — deployed.** Fresh-path receipt-blob cleanup is live as of 2026-08-27.
+**2026-08-27: `plaid_exchange_token` v18 needs deploying.** The Fresh-path cleanup now also removes `receipts` storage objects for the transactions it deletes (previously only the rows were deleted, orphaning any attached receipt files in the bucket — see TASKS.md P1 "Start Fresh" item). Fixed in source but **not deployable from this session** (no Supabase CLI/credentials here) — run `supabase functions deploy plaid_exchange_token` before this fix takes effect. Until deployed, a Fresh reconnect on an account with receipts attached still leaves those files in the bucket.
 
 **2026-08-02 `record_sale`/`reverse_return` `deleted_at is null` fix — deployed 2026-08-25.** (Was flagged undeployed in earlier revisions of this note; TASKS.md confirms both functions are live with the fix — see "record_sale/reverse_return need redeploying" there.)
 - **`shortcut_record_sale`** ([source](../supabase/functions/shortcut_record_sale/index.ts)) — token-authenticated (service role, no JWT). Looks up `user_id` from `profiles.shortcut_token`, inserts a `sales` row with `source: 'manual'`, `platform: 'manual'`, `item_id: null`, and the provided `item_name`, `quantity`, `sale_price`, `payment_method`, `sold_at: today UTC`, `fees: 0`, `shipping_cost: 0`, `net_payout: sale_price`, `inventory_status: 'ok'`, `return_status: 'none'`. Returns `{ success: true, sale_id }`. Deployed (2026-08-23).
 - **`shortcut_record_breakdown`** ([source](../supabase/functions/shortcut_record_breakdown/index.ts)) — token-authenticated (service role, no JWT). Looks up `user_id` from `profiles.shortcut_token`, inserts a `box_openings` row with `box_name: item_name`, `quantity`, `opened_at: today UTC`, `source_lot_id: null`, `box_cost: null`, `allocation_method: null`. Returns `{ success: true, box_opening_id }`. Incomplete breakdowns (source_lot_id IS NULL) surface the ⚠️ banner on the Inventory page. Deployed (2026-08-23).
-- **`ebay_oauth_callback`** ([source](../supabase/functions/ebay_oauth_callback/index.ts)) — JWT verification disabled (handles browser redirect). Validates `?state` as user JWT, exchanges `?code` for eBay tokens, upserts `ebay_tokens`, hard-deletes `source='csv_import' AND platform='ebay'` transactions, then fires `sync_ebay_transactions` with `full_backfill=true` in the background. Redirects to `/settings?ebay=connected` on success. Deployed 2026-08-27.
-- **`sync_ebay_transactions`** ([source](../supabase/functions/sync_ebay_transactions/index.ts)) — fetches eBay Finances API transactions and upserts into `transactions`. Three invocation modes: `{ user_id, full_backfill: true }` (2-year backfill in 90-day chunks, called by `ebay_oauth_callback`), `{ user_id }` (incremental from `last_sync_at - 1h`, called by pg_cron), `{}` (reads user from Bearer JWT, called by Settings "Sync Now"). Auto-links REFUND transactions to matching SALE rows by `orderId`. Updates `ebay_tokens.last_sync_at` on completion. Deployed 2026-08-27.
-
-### Sales row creation (v2)
-
-For each SALE transaction, creates one `sales` row per `orderLineItem`:
-- `source = 'ebay_api'`, `platform = 'ebay'`
-- `item_name` = eBay item title (from `orderLineItems[].title`)
-- `sale_price` = item price (`feeBasisAmount` for multi-item, SALE amount for single-item)
-- `fees` = sum of that item's `marketplaceFees[]` (absolute values)
-- `external_order_id` = `{orderId}_{lineItemId}` (dedup key)
-- `item_id = NULL` — user can link to inventory later via Sales page
-
-Dedup: partial unique index on `(user_id, external_order_id) WHERE source = 'ebay_api'`.
-
-### Payout auto-transfer tagging
-
-After syncing transactions, fetches payouts via `GET /sell/finances/v1/payout`.
-For each `SUCCEEDED`/`SENT` payout, finds a Plaid transaction matching:
-- `|amount| within $0.01` of payout amount
-- `date` within +/- 2 days of payout date
-- Not already tagged as `transfer`
-
-Matched Plaid transactions are re-tagged `schedule_c_category = 'transfer'`
-to prevent double-counting revenue (eBay API SALE already counts as income).
-
 - **`import_marketplace_csv`** — referenced in TASKS.md as already shared/working server-side (v16); no web UI calls it yet. Not committed in-repo.
 - **`plaid_exchange_token`** ([source](../supabase/functions/plaid_exchange_token/index.ts)) — v17 deployed; **v18 local-only, not yet deployed — see Deployment note below**. Called from Settings' Connect Bank / Reconnect flows (see [`docs/features/settings.md`](features/settings.md#bank-connections)). Handles create mode, update mode (reconnect), and the duplicate-connection Keep/Fresh choice.
 - **`plaid_sync_transactions`** ([source](../supabase/functions/plaid_sync_transactions/index.ts)) — v33 deployed. Called by Settings' Sync Now / Force Full Resync.

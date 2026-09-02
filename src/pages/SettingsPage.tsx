@@ -12,9 +12,7 @@ import BankConnectionsSection from './settings/BankConnectionsSection'
 import CustomCategoriesList from '../components/CustomCategoriesList'
 import ShortcutsSettingsCard from '../components/ShortcutsSettingsCard'
 import DuplicateConnectionModal from '../components/modals/DuplicateConnectionModal'
-import { supabase } from '../lib/supabase'
-import { useEbayToken } from '../lib/queries'
-import { importMarketplaceCSV, syncCSVOrders, getEbayAuthUrl, ebaySync, ebayDisconnect } from '../lib/mutations'
+import { importMarketplaceCSV, syncCSVOrders } from '../lib/mutations'
 import type { CSVImportResult, CSVSaleSyncResult } from '../lib/types'
 import { useCSVGroups, isLinkedGroup, getExpectedDeposit } from '../lib/queries'
 import CSVGroupDetailSlideOver from '../components/CSVGroupDetailSlideOver'
@@ -42,14 +40,15 @@ export default function SettingsPage() {
   const [duplicateInfo, setDuplicateInfo] = useState<DuplicateInfo | null>(null)
   const plaidEnv = import.meta.env.VITE_PLAID_ENV as string | undefined
 
-  const { data: csvGroups = [], isLoading: groupsLoading } = useCSVGroups('amazon')
+  const [settlementPlatform, setSettlementPlatform] = useState<'ebay' | 'amazon'>('ebay')
+  const { data: csvGroups = [], isLoading: groupsLoading } = useCSVGroups(settlementPlatform)
   const [selectedGroup, setSelectedGroup] = useState<CSVGroup | null>(null)
 
-  const [activeTab, setActiveTab] = useState<'banks' | 'imports' | 'categories'>('banks')
-
+  const [ebayState, setEbayState] = useState<ImportState>({ phase: 'idle' })
   const [amazonState, setAmazonState] = useState<ImportState>({ phase: 'idle' })
   const [mercariState, setMercariState] = useState<ImportState>({ phase: 'idle' })
 
+  const ebayRef = useRef<HTMLInputElement>(null)
   const amazonRef = useRef<HTMLInputElement>(null)
   const mercariRef = useRef<HTMLInputElement>(null)
 
@@ -169,19 +168,6 @@ export default function SettingsPage() {
   })
 
   useEffect(() => {
-    const params = new URLSearchParams(window.location.search)
-    const ebayStatus = params.get('ebay')
-    if (ebayStatus === 'connected' || ebayStatus === 'error') {
-      window.history.replaceState({}, '', window.location.pathname)
-      setActiveTab('imports')
-      if (ebayStatus === 'error') {
-        const reason = params.get('reason') ?? 'unknown'
-        console.error('eBay OAuth error:', reason)
-      }
-    }
-  }, [])
-
-  useEffect(() => {
     if (linkToken && ready) open()
   }, [linkToken, ready, open])
 
@@ -202,9 +188,11 @@ export default function SettingsPage() {
     exchangeTokenMutation.isPending ||
     choiceMutation.isPending
 
+  const [activeTab, setActiveTab] = useState<'banks' | 'imports' | 'categories'>('banks')
+
   const TABS = [
     { id: 'banks', label: 'Banks' },
-    { id: 'imports', label: 'Marketplace' },
+    { id: 'imports', label: 'Imports' },
     { id: 'categories', label: 'Categories' },
   ] as const
 
@@ -257,10 +245,19 @@ export default function SettingsPage() {
       {/* ── CSV Import ─────────────────────────────────────────── */}
       <section className="space-y-3">
         <div className="flex items-center justify-between">
-          <h2 className="text-lg font-semibold text-gray-900">Marketplace</h2>
+          <h2 className="text-lg font-semibold text-gray-900">Marketplace CSV Import</h2>
         </div>
         <div className="border border-gray-200 rounded-lg bg-white divide-y divide-gray-100">
-          <EbayApiCard />
+          <CSVImportCard
+            platform="ebay"
+            label="eBay"
+            description="Seller Hub → Payments → Transaction Report"
+            state={ebayState}
+            inputRef={ebayRef}
+            onPick={() => ebayRef.current?.click()}
+            onFile={file => handleImport('ebay', file, setEbayState)}
+            onReset={() => setEbayState({ phase: 'idle' })}
+          />
           <CSVImportCard
             platform="amazon"
             label="Amazon"
@@ -298,12 +295,29 @@ export default function SettingsPage() {
           )}
         </div>
 
+        {/* Platform toggle */}
+        <div className="flex rounded-lg border border-gray-200 overflow-hidden w-fit">
+          {(['ebay', 'amazon'] as const).map(p => (
+            <button
+              key={p}
+              type="button"
+              onClick={() => setSettlementPlatform(p)}
+              className={`px-4 py-1.5 text-sm font-medium ${
+                settlementPlatform === p
+                  ? 'bg-gray-900 text-white'
+                  : 'bg-white text-gray-600 hover:bg-gray-50'
+              }`}
+            >
+              {p === 'ebay' ? 'eBay' : 'Amazon'}
+            </button>
+          ))}
+        </div>
 
         {groupsLoading ? (
           <div className="text-sm text-gray-500 py-4 text-center">Loading...</div>
         ) : csvGroups.length === 0 ? (
           <div className="text-sm text-gray-500 py-4 text-center border border-gray-200 rounded-lg bg-white">
-            No {'Amazon'} CSV imports found. Import a Transaction Report above.
+            No {settlementPlatform === 'ebay' ? 'eBay' : 'Amazon'} CSV imports found. Import a Transaction Report above.
           </div>
         ) : (
           <div className="border border-gray-200 rounded-lg bg-white divide-y divide-gray-100">
@@ -327,7 +341,7 @@ export default function SettingsPage() {
                   }`} />
                   <div className="flex-1 min-w-0">
                     <div className="text-sm font-medium text-gray-900">
-                      {'Amazon'} Payout
+                      {settlementPlatform === 'ebay' ? 'eBay' : 'Amazon'} Payout
                       {dateMin && dateMax && (
                         <span className="font-normal text-gray-500 ml-1">
                           — {new Date(dateMin + 'T00:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
@@ -368,11 +382,11 @@ export default function SettingsPage() {
       {selectedGroup && (
         <CSVGroupDetailSlideOver
           group={selectedGroup}
-          platform="amazon"
+          platform={settlementPlatform}
           open={selectedGroup !== null}
           onClose={() => setSelectedGroup(null)}
           onLinked={() => {
-            qc.invalidateQueries({ queryKey: ['csv-groups', 'amazon'] })
+            qc.invalidateQueries({ queryKey: ['csv-groups', settlementPlatform] })
             setSelectedGroup(null)
           }}
         />
@@ -396,126 +410,6 @@ export default function SettingsPage() {
         }}
         isPending={choiceMutation.isPending}
       />
-    </div>
-  )
-}
-
-// ── EbayApiCard ───────────────────────────────────────────────────────────────
-
-function EbayApiCard() {
-  const { data: token, isLoading, refetch } = useEbayToken()
-  const qc = useQueryClient()
-  const [syncing, setSyncing] = useState(false)
-  const [syncError, setSyncError] = useState<string | null>(null)
-  const [disconnectError, setDisconnectError] = useState<string | null>(null)
-
-  async function handleConnect() {
-    const { data: { session } } = await supabase.auth.getSession()
-    if (!session) return
-    window.location.href = getEbayAuthUrl(session.access_token)
-  }
-
-  async function handleSync(opts?: { fullBackfill?: boolean }) {
-    setSyncing(true)
-    setSyncError(null)
-    try {
-      await ebaySync(opts)
-      await refetch()
-      qc.invalidateQueries({ queryKey: ['transactions'] })
-      qc.invalidateQueries({ queryKey: ['sales'] })
-    } catch (e: unknown) {
-      setSyncError(e instanceof Error ? e.message : 'Sync failed')
-    } finally {
-      setSyncing(false)
-    }
-  }
-
-  async function handleDisconnect() {
-    if (!confirm('Disconnect eBay? Your synced transactions will be kept.')) return
-    try {
-      await ebayDisconnect()
-      await refetch()
-    } catch (e: unknown) {
-      setDisconnectError(e instanceof Error ? e.message : 'Disconnect failed')
-    }
-  }
-
-  if (isLoading) return (
-    <div className="p-4 text-sm text-gray-500">Loading eBay connection...</div>
-  )
-
-  const connected = token != null
-
-  return (
-    <div className="p-4 flex items-start gap-4">
-      <div className="flex-1 min-w-0">
-        <div className="flex items-center gap-2">
-          <span className="font-medium text-gray-900 text-sm">eBay</span>
-          {connected && (
-            <span className="text-xs font-medium text-green-700 bg-green-50 border border-green-200 rounded-full px-2 py-0.5">
-              ✓ Connected
-            </span>
-          )}
-        </div>
-        <div className="text-xs text-gray-500 mt-0.5">
-          {connected && token
-            ? token.last_sync_at
-              ? `Last synced ${new Date(token.last_sync_at).toLocaleString('en-US', {
-                  month: 'short', day: 'numeric', year: 'numeric',
-                  hour: 'numeric', minute: '2-digit',
-                })}`
-              : 'Initial sync in progress…'
-            : 'Sync sales, fees, and payouts automatically via eBay Finances API'}
-        </div>
-        {syncError && (
-          <div className="mt-2 p-2 bg-red-50 border border-red-200 rounded text-xs text-red-700">
-            {syncError}
-          </div>
-        )}
-        {disconnectError && (
-          <div className="mt-2 p-2 bg-red-50 border border-red-200 rounded text-xs text-red-700">
-            {disconnectError}
-          </div>
-        )}
-      </div>
-
-      {connected ? (
-        <div className="flex flex-col items-end gap-1 flex-shrink-0">
-          <div className="flex gap-2">
-            <button
-              type="button"
-              onClick={() => handleSync()}
-              disabled={syncing}
-              className="text-xs px-3 py-1.5 rounded border border-gray-300 text-gray-700 hover:bg-gray-50 disabled:opacity-50"
-            >
-              {syncing ? 'Syncing…' : 'Sync Now'}
-            </button>
-            <button
-              type="button"
-              onClick={handleDisconnect}
-              className="text-xs px-3 py-1.5 rounded border border-gray-300 text-gray-700 hover:bg-gray-50"
-            >
-              Disconnect
-            </button>
-          </div>
-          <button
-            type="button"
-            onClick={() => handleSync({ fullBackfill: true })}
-            disabled={syncing}
-            className="text-xs text-gray-500 hover:text-gray-700 underline disabled:opacity-50"
-          >
-            Re-sync all history
-          </button>
-        </div>
-      ) : (
-        <button
-          type="button"
-          onClick={handleConnect}
-          className="flex-shrink-0 text-xs px-3 py-1.5 rounded bg-gray-900 text-white hover:bg-gray-700"
-        >
-          Connect eBay →
-        </button>
-      )}
     </div>
   )
 }
