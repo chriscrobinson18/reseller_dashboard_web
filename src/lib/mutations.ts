@@ -1,7 +1,7 @@
 import { supabase } from './supabase'
 import { splitLotCost, basisFromAdjustments, type LotBasis } from './lotCost'
 import { ADJUSTMENT_LABELS } from './lotAdjustments'
-import type { Item, InventoryLot, LotAdjustmentType, CSVImportResult, CSVSaleSyncResult } from './types'
+import type { Item, InventoryLot, LotAdjustmentType, CSVImportResult, CSVSaleSyncResult, FindOrphansResult } from './types'
 import { CATEGORIES } from './categories'
 import { isColorKey, type ColorKey } from './categoryPalette'
 
@@ -1978,5 +1978,21 @@ export async function unlinkCSVGroup(groupId: string, platform: string): Promise
     .eq('source', 'csv_import')
     .eq('platform', platform)
     .eq('csv_group_id', groupId)
+  if (error) throw error
+}
+
+// ── Plaid Dedup ──────────────────────────────────────────────────────────────
+
+export async function findPlaidOrphans(): Promise<FindOrphansResult> {
+  const { data, error } = await supabase.functions.invoke('find_plaid_orphans')
+  if (error) throw error
+  return data as FindOrphansResult
+}
+
+export async function deleteDuplicateTransactions(ids: string[]): Promise<void> {
+  const { error } = await supabase
+    .from('transactions')
+    .delete()
+    .in('id', ids)
   if (error) throw error
 }

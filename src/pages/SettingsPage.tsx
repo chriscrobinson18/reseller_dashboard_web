@@ -6,6 +6,8 @@ import {
   plaidCreateLinkToken,
   plaidExchangeToken,
   plaidSyncTransactions,
+  findPlaidOrphans,
+  deleteDuplicateTransactions,
 } from '../lib/mutations'
 import type { PlaidExchangeResult } from '../lib/mutations'
 import BankConnectionsSection from './settings/BankConnectionsSection'
@@ -13,7 +15,8 @@ import CustomCategoriesList from '../components/CustomCategoriesList'
 import ShortcutsSettingsCard from '../components/ShortcutsSettingsCard'
 import DuplicateConnectionModal from '../components/modals/DuplicateConnectionModal'
 import { importMarketplaceCSV, syncCSVOrders } from '../lib/mutations'
-import type { CSVImportResult, CSVSaleSyncResult } from '../lib/types'
+import type { CSVImportResult, CSVSaleSyncResult, FindOrphansResult } from '../lib/types'
+import ConfirmDialog from '../components/ConfirmDialog'
 import { useCSVGroups, isLinkedGroup, getExpectedDeposit } from '../lib/queries'
 import CSVGroupDetailSlideOver from '../components/CSVGroupDetailSlideOver'
 import type { CSVGroup } from '../lib/types'
@@ -51,6 +54,41 @@ export default function SettingsPage() {
   const ebayRef = useRef<HTMLInputElement>(null)
   const amazonRef = useRef<HTMLInputElement>(null)
   const mercariRef = useRef<HTMLInputElement>(null)
+
+  // ── Plaid dedup state ──
+  const [dedupState, setDedupState] = useState<
+    | { phase: 'idle' }
+    | { phase: 'scanning' }
+    | { phase: 'results'; data: FindOrphansResult }
+    | { phase: 'deleting'; data: FindOrphansResult }
+    | { phase: 'done'; deleted: number }
+    | { phase: 'error'; message: string }
+  >({ phase: 'idle' })
+  const [showDedupConfirm, setShowDedupConfirm] = useState(false)
+
+  async function handleScanDuplicates() {
+    setDedupState({ phase: 'scanning' })
+    try {
+      const data = await findPlaidOrphans()
+      setDedupState({ phase: 'results', data })
+    } catch (err: unknown) {
+      setDedupState({ phase: 'error', message: err instanceof Error ? err.message : 'Scan failed' })
+    }
+  }
+
+  async function handleDeleteOrphans() {
+    if (dedupState.phase !== 'results') return
+    const ids = dedupState.data.orphans.map(o => o.id)
+    setDedupState({ phase: 'deleting', data: dedupState.data })
+    setShowDedupConfirm(false)
+    try {
+      await deleteDuplicateTransactions(ids)
+      qc.invalidateQueries({ queryKey: ['transactions'] })
+      setDedupState({ phase: 'done', deleted: ids.length })
+    } catch (err: unknown) {
+      setDedupState({ phase: 'error', message: err instanceof Error ? err.message : 'Delete failed' })
+    }
+  }
 
   async function handleImport(
     platform: string,
@@ -229,6 +267,106 @@ export default function SettingsPage() {
             busy={busy}
           />
           <ShortcutsSettingsCard />
+
+          {/* ── Duplicate Transaction Scan ─────────────────────── */}
+          <section className="space-y-3">
+            <h2 className="text-lg font-semibold text-gray-900">Duplicate Transactions</h2>
+            <div className="border border-gray-200 rounded-lg bg-white p-4 space-y-4">
+              {dedupState.phase === 'idle' && (
+                <div className="flex items-center justify-between">
+                  <p className="text-sm text-gray-600">
+                    Scan for duplicate transactions from old Plaid connections.
+                  </p>
+                  <button
+                    onClick={handleScanDuplicates}
+                    className="px-4 py-2 text-sm font-medium text-white bg-gray-900 rounded-lg hover:bg-gray-800"
+                  >
+                    Find Duplicates
+                  </button>
+                </div>
+              )}
+
+              {dedupState.phase === 'scanning' && (
+                <div className="flex items-center gap-2 text-sm text-gray-500">
+                  <svg className="animate-spin h-4 w-4" viewBox="0 0 24 24">
+                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" />
+                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+                  </svg>
+                  Scanning Plaid accounts for orphaned transactions...
+                </div>
+              )}
+
+              {(dedupState.phase === 'results' || dedupState.phase === 'deleting') && (
+                <>
+                  {dedupState.data.warnings.length > 0 && (
+                    <div className="text-sm text-amber-700 bg-amber-50 border border-amber-200 rounded-lg p-3">
+                      {dedupState.data.warnings.map((w, i) => <p key={i}>{w}</p>)}
+                    </div>
+                  )}
+
+                  {dedupState.data.orphans.length === 0 ? (
+                    <p className="text-sm text-green-700">No duplicate transactions found.</p>
+                  ) : (
+                    <>
+                      <div className="flex items-center justify-between">
+                        <p className="text-sm text-gray-700">
+                          Found <span className="font-semibold text-red-600">{dedupState.data.orphans.length}</span> orphaned
+                          transactions (scanned {dedupState.data.total_plaid_transactions.toLocaleString()} Plaid records
+                          across {dedupState.data.scanned_accounts} accounts).
+                        </p>
+                        <button
+                          onClick={() => setShowDedupConfirm(true)}
+                          disabled={dedupState.phase === 'deleting'}
+                          className="shrink-0 ml-4 px-4 py-2 text-sm font-medium text-white bg-red-600 rounded-lg hover:bg-red-700 disabled:opacity-50"
+                        >
+                          {dedupState.phase === 'deleting' ? 'Deleting...' : `Delete All ${dedupState.data.orphans.length}`}
+                        </button>
+                      </div>
+
+                      <div className="max-h-64 overflow-y-auto divide-y divide-gray-100 border border-gray-100 rounded">
+                        {dedupState.data.orphans.map(o => (
+                          <div key={o.id} className="px-3 py-2 text-sm flex items-center justify-between">
+                            <div className="flex items-center gap-3">
+                              <span className="text-gray-500 w-24 shrink-0">{o.date}</span>
+                              <span className="font-medium text-gray-900 w-20 text-right shrink-0">
+                                ${Math.abs(o.amount).toFixed(2)}
+                              </span>
+                              <span className="text-gray-700 truncate">{o.merchant ?? 'Unknown'}</span>
+                            </div>
+                            <span className="text-gray-400 text-xs shrink-0">{o.account_display ?? ''}</span>
+                          </div>
+                        ))}
+                      </div>
+                    </>
+                  )}
+                </>
+              )}
+
+              {dedupState.phase === 'done' && (
+                <p className="text-sm text-green-700">
+                  Cleaned up {dedupState.deleted} duplicate transactions.
+                </p>
+              )}
+
+              {dedupState.phase === 'error' && (
+                <div className="text-sm text-red-700 bg-red-50 border border-red-200 rounded-lg p-3 flex items-center justify-between">
+                  <p>{dedupState.message}</p>
+                  <button onClick={() => setDedupState({ phase: 'idle' })} className="text-red-600 underline text-xs">
+                    Retry
+                  </button>
+                </div>
+              )}
+            </div>
+          </section>
+
+          <ConfirmDialog
+            open={showDedupConfirm}
+            title="Delete Duplicate Transactions"
+            message={`Permanently delete ${dedupState.phase === 'results' ? dedupState.data.orphans.length : 0} orphaned transactions? This cannot be undone.`}
+            confirmLabel="Delete All"
+            onConfirm={handleDeleteOrphans}
+            onCancel={() => setShowDedupConfirm(false)}
+          />
         </>
       )}
 

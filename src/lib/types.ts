@@ -279,3 +279,25 @@ export interface CSVGroup {
   /** Closing reserve carried forward from the previous group. Computed by buildCSVGroups. */
   priorBalance: number
 }
+
+// ── Plaid Dedup ──────────────────────────────────────────────────────────────
+
+export interface OrphanedTransaction {
+  id: string
+  date: string
+  amount: number
+  merchant: string | null
+  account_display: string | null
+  plaid_transaction_id: string
+  schedule_c_category: string | null
+  notes: string | null
+  receipt_url: string | null
+  plaid_account_id: string | null
+}
+
+export interface FindOrphansResult {
+  orphans: OrphanedTransaction[]
+  scanned_accounts: number
+  total_plaid_transactions: number
+  warnings: string[]
+}
