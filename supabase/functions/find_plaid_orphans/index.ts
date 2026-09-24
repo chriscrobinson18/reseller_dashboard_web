@@ -134,13 +134,8 @@ serve(async (req: Request) => {
     }
 
     // Find orphans: DB rows whose plaid_transaction_id is not in Plaid's canonical set.
-    // Only consider rows within the date range we actually queried Plaid for — transactions
-    // older than twoYearsAgo won't appear in Plaid's response regardless of whether they're
-    // real, so we must not flag them as orphans.
     const orphans = allDbRows.filter(
-      (row) =>
-        (row.date as string) >= twoYearsAgo &&
-        !canonicalIds.has(row.plaid_transaction_id as string),
+      (row) => !canonicalIds.has(row.plaid_transaction_id as string),
     )
 
     return new Response(
