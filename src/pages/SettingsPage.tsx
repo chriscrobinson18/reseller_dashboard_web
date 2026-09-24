@@ -21,6 +21,11 @@ import { useCSVGroups, isLinkedGroup, getExpectedDeposit } from '../lib/queries'
 import CSVGroupDetailSlideOver from '../components/CSVGroupDetailSlideOver'
 import type { CSVGroup } from '../lib/types'
 import ReturnReconciliationSection from '../components/ReturnReconciliationSection'
+import { Trash2 } from 'lucide-react'
+import { useCategoryRules } from '../lib/queries'
+import { deleteCategoryRule, applyAllCategoryRules } from '../lib/mutations'
+import CategoryBadge from '../components/CategoryBadge'
+import type { CategoryRule } from '../lib/types'
 
 type DuplicateInfo = Extract<PlaidExchangeResult, { status: 'duplicate_detected' }>
 
@@ -30,6 +35,68 @@ type ImportState =
   | { phase: 'syncing'; importResult: CSVImportResult }
   | { phase: 'done'; importResult: CSVImportResult; syncResult: CSVSaleSyncResult }
   | { phase: 'error'; message: string }
+
+function CategoryRulesSection() {
+  const qc = useQueryClient()
+  const { data: rules = [], isLoading } = useCategoryRules()
+  const [applyCount, setApplyCount] = useState<number | null>(null)
+
+  const deleteMutation = useMutation({
+    mutationFn: (id: string) => deleteCategoryRule(id),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['category_rules'] }),
+  })
+
+  const applyMutation = useMutation({
+    mutationFn: applyAllCategoryRules,
+    onSuccess: (count) => setApplyCount(count),
+  })
+
+  return (
+    <div>
+      <div className="flex items-center justify-between mb-3">
+        <h3 className="text-sm font-semibold text-gray-900">Auto-categorization Rules</h3>
+        <button
+          type="button"
+          onClick={() => { setApplyCount(null); applyMutation.mutate() }}
+          disabled={applyMutation.isPending}
+          className="text-xs px-3 py-1.5 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 transition-colors"
+        >
+          {applyMutation.isPending ? 'Applying…' : 'Apply Rules Now'}
+        </button>
+      </div>
+      {applyCount !== null && (
+        <p className="text-xs text-green-600 mb-2">
+          Applied rules to {applyCount} transaction{applyCount === 1 ? '' : 's'}.
+        </p>
+      )}
+      {isLoading ? (
+        <p className="text-xs text-gray-400">Loading…</p>
+      ) : rules.length === 0 ? (
+        <p className="text-xs text-gray-400">
+          No rules yet — open a transaction and set a category to create one.
+        </p>
+      ) : (
+        <div className="divide-y divide-gray-100">
+          {rules.map((rule: CategoryRule) => (
+            <div key={rule.id} className="flex items-center gap-2 py-2.5">
+              <span className="text-sm text-gray-800 flex-1 truncate">{rule.merchant_name}</span>
+              <CategoryBadge value={rule.schedule_c_category} />
+              <button
+                type="button"
+                onClick={() => deleteMutation.mutate(rule.id)}
+                disabled={deleteMutation.isPending}
+                className="ml-1 text-gray-400 hover:text-red-500 transition-colors disabled:opacity-50"
+                title="Remove rule"
+              >
+                <Trash2 size={14} />
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
 
 export default function SettingsPage() {
   const qc = useQueryClient()
@@ -380,6 +447,9 @@ export default function SettingsPage() {
         <section className="space-y-3">
           <div className="border border-gray-200 rounded-lg bg-white p-4">
             <CustomCategoriesList />
+          </div>
+          <div className="border border-gray-200 rounded-lg bg-white p-4">
+            <CategoryRulesSection />
           </div>
         </section>
       )}
