@@ -1990,9 +1990,13 @@ export async function findPlaidOrphans(): Promise<FindOrphansResult> {
 }
 
 export async function deleteDuplicateTransactions(ids: string[]): Promise<void> {
-  const { error } = await supabase
-    .from('transactions')
-    .delete()
-    .in('id', ids)
-  if (error) throw error
+  // Batch in chunks of 100 to avoid PostgREST URL length limits
+  const CHUNK = 100
+  for (let i = 0; i < ids.length; i += CHUNK) {
+    const { error } = await supabase
+      .from('transactions')
+      .delete()
+      .in('id', ids.slice(i, i + CHUNK))
+    if (error) throw error
+  }
 }
