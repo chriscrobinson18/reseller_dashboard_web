@@ -1,4 +1,8 @@
-// plaid_sync_transactions v34
+// plaid_sync_transactions v35
+// v35: apply user category_rules to freshly-inserted rows before the PFC
+// fallback. One SELECT per sync call fetches all rules that match the batch's
+// entity IDs; a per-rule UPDATE stamps only null schedule_c_category rows.
+// Rules run before PFC so user-defined mappings take precedence.
 // v34: populate plaid_account_id on all new rows (tx.account_id, stable across
 // item reconnects). Used by plaid_exchange_token v17's "Start fresh" deletion path
 // and by the future duplicate review UI. No behavior change to sync logic.
@@ -357,6 +361,34 @@ serve(async (req) => {
               .upsert(rows.slice(i, i + BATCH), { onConflict: 'plaid_transaction_id', ignoreDuplicates: true })
             if (error) console.error('Upsert added error:', error)
           }
+          // v35: apply user category rules (higher priority than PFC fallback below).
+          // One query fetches all matching rules for the batch; per-rule UPDATEs
+          // stamp only null schedule_c_category rows.
+          const entityIds = [...new Set(
+            freshAdds
+              .map((tx: any) => tx.merchant_entity_id as string | null | undefined)
+              .filter((id): id is string => !!id)
+          )]
+          if (entityIds.length > 0) {
+            const { data: ruleRows } = await supabase
+              .from('category_rules')
+              .select('merchant_entity_id, schedule_c_category')
+              .eq('user_id', user.id)
+              .in('merchant_entity_id', entityIds)
+            if (ruleRows && ruleRows.length > 0) {
+              console.log(`Item ${item.item_id}: applying ${ruleRows.length} category rule(s)`)
+              for (const rule of ruleRows) {
+                await supabase
+                  .from('transactions')
+                  .update({ schedule_c_category: rule.schedule_c_category })
+                  .eq('user_id', user.id)
+                  .eq('merchant_entity_id', rule.merchant_entity_id)
+                  .is('schedule_c_category', null)
+              }
+            }
+          }
+
+          // PFC fallback: categorize remaining null rows by Plaid's category signal.
           for (const [pfc, scheduleC] of Object.entries(PFC_TO_SCHEDULE_C)) {
             await supabase
               .from('transactions')
