@@ -10,8 +10,6 @@ create table public.category_rules (
   unique (user_id, merchant_entity_id)
 );
 
-create index on public.category_rules (user_id, merchant_entity_id);
-
 alter table public.category_rules enable row level security;
 
 create policy "Users can read own rules"
@@ -24,7 +22,8 @@ create policy "Users can insert own rules"
 
 create policy "Users can update own rules"
   on public.category_rules for update
-  using (user_id = auth.uid());
+  using (user_id = auth.uid())
+  with check (user_id = auth.uid());
 
 create policy "Users can delete own rules"
   on public.category_rules for delete
