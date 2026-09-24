@@ -86,7 +86,13 @@ export default function SettingsPage() {
       qc.invalidateQueries({ queryKey: ['transactions'] })
       setDedupState({ phase: 'done', deleted: ids.length })
     } catch (err: unknown) {
-      setDedupState({ phase: 'error', message: err instanceof Error ? err.message : 'Delete failed' })
+      const msg = err instanceof Error
+        ? err.message
+        : (typeof err === 'object' && err !== null && 'message' in err)
+          ? String((err as { message: unknown }).message)
+          : JSON.stringify(err)
+      console.error('deleteDuplicateTransactions failed:', err)
+      setDedupState({ phase: 'error', message: msg || 'Delete failed (check console)' })
     }
   }
 
