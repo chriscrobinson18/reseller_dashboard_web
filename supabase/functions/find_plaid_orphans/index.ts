@@ -112,20 +112,30 @@ serve(async (req: Request) => {
       }
     }
 
-    // Get all plaid-sourced DB transactions for this user
-    const { data: dbRows, error: dbErr } = await supabase
-      .from('transactions')
-      .select(
-        'id, date, amount, merchant, account_display, plaid_transaction_id, schedule_c_category, notes, receipt_url, plaid_account_id',
-      )
-      .eq('user_id', user.id)
-      .eq('source', 'plaid')
-      .not('plaid_transaction_id', 'is', null)
-    if (dbErr) throw dbErr
+    // Get all plaid-sourced DB transactions — paginate to avoid PostgREST 1000-row default cap
+    const DB_PAGE = 1000
+    let dbOffset = 0
+    const allDbRows: Record<string, unknown>[] = []
+    while (true) {
+      const { data: page, error: dbErr } = await supabase
+        .from('transactions')
+        .select(
+          'id, date, amount, merchant, account_display, plaid_transaction_id, schedule_c_category, notes, receipt_url, plaid_account_id',
+        )
+        .eq('user_id', user.id)
+        .eq('source', 'plaid')
+        .not('plaid_transaction_id', 'is', null)
+        .range(dbOffset, dbOffset + DB_PAGE - 1)
+      if (dbErr) throw dbErr
+      if (!page || page.length === 0) break
+      allDbRows.push(...page)
+      if (page.length < DB_PAGE) break
+      dbOffset += DB_PAGE
+    }
 
     // Find orphans: DB rows whose plaid_transaction_id is not in Plaid's canonical set
-    const orphans = (dbRows ?? []).filter(
-      (row: { plaid_transaction_id: string }) => !canonicalIds.has(row.plaid_transaction_id),
+    const orphans = allDbRows.filter(
+      (row) => !canonicalIds.has(row.plaid_transaction_id as string),
     )
 
     return new Response(
