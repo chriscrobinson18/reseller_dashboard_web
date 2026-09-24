@@ -1,6 +1,6 @@
 import { useQuery } from '@tanstack/react-query'
 import { supabase } from './supabase'
-import type { Item, InventoryLot, Trade, SaleBundle, PlaidItem, PlaidAccount, Transaction, BoxOpening, CSVGroup } from './types'
+import type { Item, InventoryLot, Trade, SaleBundle, PlaidItem, PlaidAccount, Transaction, BoxOpening, CSVGroup, CategoryRule } from './types'
 import type { CustomCategory } from './categories'
 import { customCategoryValue } from './categories'
 import type { ColorKey } from './categoryPalette'
@@ -429,6 +429,21 @@ export function useCSVGroups(platform: string) {
         .order('date', { ascending: false })
       if (error) throw error
       return buildCSVGroups((data ?? []) as Transaction[], platform)
+    },
+  })
+}
+
+/** All auto-categorization rules for the current user, ordered by merchant name. */
+export function useCategoryRules() {
+  return useQuery({
+    queryKey: ['category_rules'],
+    queryFn: async (): Promise<CategoryRule[]> => {
+      const { data, error } = await supabase
+        .from('category_rules')
+        .select('*')
+        .order('merchant_name')
+      if (error) throw error
+      return (data ?? []) as CategoryRule[]
     },
   })
 }

@@ -301,3 +301,12 @@ export interface FindOrphansResult {
   total_plaid_transactions: number
   warnings: string[]
 }
+
+export interface CategoryRule {
+  id: string
+  user_id: string
+  merchant_entity_id: string
+  merchant_name: string
+  schedule_c_category: string
+  created_at: string
+}
