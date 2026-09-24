@@ -235,7 +235,20 @@ One row per linked Plaid Item (institution). `plaid_accounts` is the per-account
 | `error_message` | Optional human-readable Plaid error string, shown as a tooltip on the status badge. |
 
 ## Tables referenced but not yet built on (per TASKS.md)
-- `category_rules` (planned — merchant auto-categorization)
+### `category_rules`
+
+| column | type | notes |
+|---|---|---|
+| `id` | uuid PK | |
+| `user_id` | uuid | FK → auth.users, ON DELETE CASCADE |
+| `merchant_entity_id` | text | Plaid's stable merchant identifier |
+| `merchant_name` | text | display label captured at rule creation |
+| `schedule_c_category` | text | category to stamp on matching transactions |
+| `created_at` | timestamptz | |
+
+Unique constraint on `(user_id, merchant_entity_id)`. RLS: all operations require `user_id = auth.uid()`.
+
+**`apply_category_rules(p_user_id uuid) RETURNS integer`** — SECURITY DEFINER function that stamps `schedule_c_category` on all of the user's uncategorized transactions (`schedule_c_category IS NULL`) whose `merchant_entity_id` matches a saved rule. Returns the count of updated rows. Called from the Settings "Apply Rules Now" button and from `plaid_sync_transactions` v35.
 - `inventory_valuations` (planned — Beginning/Ending inventory for Part III, must NOT be period-scoped)
 - `tax_profiles` (planned — Schedule C header fields, home office sqft, vehicle method)
 - `marketplace_connections` (exists per TASKS.md note "verify RLS on access_token/refresh_token is service-role-only" — unconfirmed)

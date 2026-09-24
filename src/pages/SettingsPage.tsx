@@ -48,7 +48,10 @@ function CategoryRulesSection() {
 
   const applyMutation = useMutation({
     mutationFn: applyAllCategoryRules,
-    onSuccess: (count) => setApplyCount(count),
+    onSuccess: (count) => {
+      setApplyCount(count)
+      qc.invalidateQueries({ queryKey: ['transactions'] })
+    },
   })
 
   return (

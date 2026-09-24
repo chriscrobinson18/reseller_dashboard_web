@@ -362,8 +362,12 @@ serve(async (req) => {
             if (error) console.error('Upsert added error:', error)
           }
           // v35: apply user category rules (higher priority than PFC fallback below).
-          // One query fetches all matching rules for the batch; per-rule UPDATEs
-          // stamp only null schedule_c_category rows.
+          // One query fetches all rules for the batch's entity IDs; per-rule UPDATEs
+          // stamp all of the user's uncategorized transactions matching that entity ID —
+          // intentionally user-wide, not scoped to this batch. This means creating a
+          // rule and then syncing one new transaction will also backfill all prior
+          // uncategorized transactions from the same merchant. Rows with an existing
+          // category are never touched (IS NULL guard).
           const entityIds = [...new Set(
             freshAdds
               .map((tx: any) => tx.merchant_entity_id as string | null | undefined)
