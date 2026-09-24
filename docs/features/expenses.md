@@ -82,6 +82,20 @@ All four mutations live in `src/lib/mutations.ts`. `receipt_url` stores the stor
 
 Not done: no thumbnail/inline preview (view always opens a new tab), no drag-and-drop, no bulk attach. `plaid_exchange_token`'s "Start Fresh" reconnect path doesn't clean up receipt storage blobs when deleting transaction rows (see TASKS.md P1) — this UI doesn't fix that gap, it just makes receipts common enough that it now matters more.
 
+## Auto-categorization Rules
+
+Rules map a Plaid merchant (`merchant_entity_id`) to a fixed Schedule C category. Once saved, every new transaction from that merchant lands pre-categorized.
+
+**Creating a rule:** Open any Plaid-sourced transaction with a category set. Below the category selector, a hint row appears: "Always use [Category] for [Merchant]? Save rule." One click saves the rule. The hint updates to "Rule active" with a Remove link.
+
+**Editing a rule:** Change the transaction's category via the dropdown. The hint shows "Update rule" — click it to re-save the rule to the new category.
+
+**Removing a rule:** Click "Remove" in the hint row, or use the trash icon in Settings → Categories → Auto-categorization Rules.
+
+**Backfill:** After creating rules, existing uncategorized transactions are not automatically updated. Use Settings → Categories → "Apply Rules Now" to stamp matching rules onto existing null-category rows. The button shows how many rows were updated.
+
+**Scope:** Rules only apply to Plaid-synced transactions (which carry `merchant_entity_id`). Manual and CSV transactions are not affected.
+
 ## Gaps vs. mobile (see TASKS.md P1 for the authoritative list)
 
 None outstanding as of 2026-08-27: direction/source/account filters and the period chip picker (`PeriodPicker`, shared across every page) shipped earlier without this item being checked off; Date/Merchant/Amount sort shipped 2026-08-27 (see above). Bulk categorize shipped 2026-07-10; receipt attachment shipped 2026-08-27, see above.

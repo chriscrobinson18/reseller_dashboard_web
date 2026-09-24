@@ -120,7 +120,7 @@ _Daily-workflow features mobile has that web doesn't yet. Ordered by how often t
 - [x] **Schedule C Summary export** — Shipped 2026-07-10. Dashboard "Summary CSV" button: one row per IRS line + net profit (`computeScheduleCSummary`/`buildScheduleCSummaryCSV`). Same all-business-row source as the transaction export (ties out); returns kept on Line 2 (not netted into Line 1); meals halved on Line 24b; COGS (Line 4) = `cost_of_goods` purchase transactions (cash-basis, stated in the CSV header) rather than FIFO cost-of-goods-sold; uncategorized rows reported separately. Unit-tested. See [`docs/features/dashboard.md`](docs/features/dashboard.md#summary-csv-buildschedulecsummarycsv--computeschedulecsummary).
 
 ### Settings / Misc
-- [ ] **Merchant auto-categorization rules** — `category_rules` table (mobile backlog item, not yet built on either client); ship on web first since the UI is simpler as a settings table
+- [x] **Merchant auto-categorization rules** — `category_rules` table, Plaid entity-ID-based rule matching, one-click rule creation from transaction detail panel, Settings management section + backfill button. _Shipped 2026-09-23. See [`docs/superpowers/specs/2026-09-23-merchant-auto-categorization-design.md`](docs/superpowers/specs/2026-09-23-merchant-auto-categorization-design.md)._
 
 ---
 
