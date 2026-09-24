@@ -2011,3 +2011,42 @@ export async function deleteDuplicateTransactions(ids: string[]): Promise<void> 
     if (error) throw error
   }
 }
+
+// ─── Category Rules ───────────────────────────────────────────────────────────
+
+/**
+ * Creates or updates a category rule for a Plaid merchant entity.
+ * Upsert on (user_id, merchant_entity_id) — safe to call repeatedly as the
+ * user changes the category assignment for the same merchant.
+ */
+export async function createOrUpdateCategoryRule(params: {
+  merchant_entity_id: string
+  merchant_name: string
+  schedule_c_category: string
+}): Promise<void> {
+  const user_id = await getUserId()
+  const { error } = await supabase
+    .from('category_rules')
+    .upsert({ user_id, ...params }, { onConflict: 'user_id,merchant_entity_id' })
+  if (error) throw error
+}
+
+/** Permanently deletes a category rule by id. RLS ensures the caller owns it. */
+export async function deleteCategoryRule(id: string): Promise<void> {
+  const { error } = await supabase
+    .from('category_rules')
+    .delete()
+    .eq('id', id)
+  if (error) throw error
+}
+
+/**
+ * Runs the apply_category_rules RPC: stamps schedule_c_category on the caller's
+ * uncategorized transactions that match a saved rule. Returns the count updated.
+ */
+export async function applyAllCategoryRules(): Promise<number> {
+  const user_id = await getUserId()
+  const { data, error } = await supabase.rpc('apply_category_rules', { p_user_id: user_id })
+  if (error) throw error
+  return (data as number) ?? 0
+}
