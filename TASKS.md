@@ -67,11 +67,11 @@ _These bugs exist in mobile's codebase (see mobile TASKS.md "P0 — June 2026 Au
 
 _Not ported from mobile. These are actual defects in the production dataset, found while debugging a stale Plaid connection. Both affect filed numbers._
 
-- [ ] **Duplicate transactions in the live dataset — overstates BOTH income and COGS** — _Partially remediated 2026-08-25. Three-step plan:_
-  - **Cleaned:** July 25 AmEx reconnect re-imports (bare nulls with older copies), July 22 ••6883 Chase reconnect re-imports (same criteria), 10 ••4979 AmEx bill-payment dupes. ~500+ rows removed total.
-  - **Step 1 — Prevention shipped (2026-08-25):** `plaid_exchange_token` v17 detects duplicate connections by `account_id` before exchanging a public token. Future reconnects cannot create new items for existing accounts — user gets Keep/Fresh choice instead. Content-level dedup was rejected (resellers routinely make 20+ identical purchases same-card same-day). See `docs/superpowers/specs/2026-08-25-plaid-dedup-design.md`.
-  - **Step 2 — Re-sync affected cards:** force-resync ••1000, ••1004, ••2003 from Settings → Force Full Resync. Same item → same `plaid_transaction_id`s → `ignoreDuplicates: true` skips existing rows and restores any accidentally deleted. New rows will have `plaid_account_id` populated (v34).
-  - **Step 3 — Dedupe review UI:** surface remaining ~441 groups / 734 ambiguous rows (mix of legitimate repeat purchases and real re-import dupes) side-by-side for manual keep/dismiss, after Step 2 fills any gaps. See P0 item below.
+- [x] **Duplicate transactions in the live dataset — overstates BOTH income and COGS** — _Closed 2026-09-23._ Three-step plan fully complete:
+  - **Cleaned:** July 25 AmEx reconnect re-imports (bare nulls with older copies), July 22 ••6883 Chase reconnect re-imports (same criteria), 10 ••4979 AmEx bill-payment dupes. ~500+ rows removed total (2026-08-25).
+  - **Step 1 — Prevention shipped (2026-08-25):** `plaid_exchange_token` v17 detects duplicate connections by `account_id` before exchanging a public token. See `docs/superpowers/specs/2026-08-25-plaid-dedup-design.md`.
+  - **Step 2 — Re-sync affected cards:** completed via Force Full Resync on ••1000, ••1004, ••2003.
+  - **Step 3 — Orphan scan shipped (2026-09-23):** `find_plaid_orphans` edge function compares DB rows against Plaid's canonical `/transactions/get` response; 554 orphaned rows from old/revoked Plaid connections deleted via Settings → Banks → Find Duplicates. See `docs/superpowers/specs/2026-09-23-dedupe-review-ui-design.md`.
 - [x] **22 uncategorized AmEx bill payments — latent double-deduction** — _Closed 2026-08-25._ Found 33 null rows total (more than the original 22 count). 10 were exact Plaid re-import duplicates on ••4979 (null copy deleted, transfer copy kept). 23 on ••7382 were genuine uncategorized bill payments → bulk-set to `transfer`. Two ••7382 pairs (2026-03-09: -$1,685.37 and -$383.97) remain as duplicate transfer rows — no tax impact (both excluded), flag for duplicate cleanup pass.
 - [x] **`record_sale`/`reverse_return` need redeploying — deleted lots stayed FIFO-eligible (found 2026-08-02)** — _Deployed 2026-08-25._ Both functions now filter `deleted_at is null` in FIFO lot query.
 
