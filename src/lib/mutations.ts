@@ -1990,8 +1990,19 @@ export async function findPlaidOrphans(): Promise<FindOrphansResult> {
 }
 
 export async function deleteDuplicateTransactions(ids: string[]): Promise<void> {
-  // Batch in chunks of 100 to avoid PostgREST URL length limits
   const CHUNK = 100
+
+  // First: clear self-referential FK references pointing to rows we're about to delete
+  for (let i = 0; i < ids.length; i += CHUNK) {
+    const chunk = ids.slice(i, i + CHUNK)
+    const { error } = await supabase
+      .from('transactions')
+      .update({ parent_settlement_id: null })
+      .in('parent_settlement_id', chunk)
+    if (error) throw error
+  }
+
+  // Then: delete the orphaned rows
   for (let i = 0; i < ids.length; i += CHUNK) {
     const { error } = await supabase
       .from('transactions')
