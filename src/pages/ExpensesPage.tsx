@@ -6,7 +6,7 @@ import { getPeriodRange, type PeriodPreset } from '../lib/periods'
 import { resolveCategory } from '../lib/categories'
 import { parseSearchTerms, matchesSearch } from '../lib/transactionSearch'
 import { formatUSD, formatDate } from '../lib/utils'
-import { updateTransaction, deleteTransaction } from '../lib/mutations'
+import { updateTransaction, deleteTransaction, createOrUpdateCategoryRule, deleteCategoryRule } from '../lib/mutations'
 import PeriodPicker from '../components/PeriodPicker'
 import CategoryBadge from '../components/CategoryBadge'
 import SlideOver from '../components/SlideOver'
@@ -19,7 +19,7 @@ import { Field, inputCls } from '../components/Modal'
 import TradeDetailSlideOver from '../components/TradeDetailSlideOver'
 import MerchantAvatar from '../components/MerchantAvatar'
 import { useSearchParams } from 'react-router-dom'
-import { useTrade, useCustomCategories } from '../lib/queries'
+import { useTrade, useCustomCategories, useCategoryRules } from '../lib/queries'
 import CategoryDropdown, { UNCATEGORIZED_SENTINEL } from '../components/CategoryDropdown'
 import type { Transaction } from '../lib/types'
 
@@ -142,6 +142,24 @@ function TransactionDetail({ tx, onClose, onOpenTrade, onManage }: { tx: Transac
   const cat = resolveCategory(tx.schedule_c_category, customsInDetail)
   const isPlaid = tx.source === 'plaid'
   const tradeQ = useTrade(tx.trade_id ?? null)
+  const { data: rules = [] } = useCategoryRules()
+  const existingRule = tx.merchant_entity_id
+    ? (rules.find(r => r.merchant_entity_id === tx.merchant_entity_id) ?? null)
+    : null
+
+  const saveRuleMutation = useMutation({
+    mutationFn: () => createOrUpdateCategoryRule({
+      merchant_entity_id: tx.merchant_entity_id!,
+      merchant_name: tx.merchant ?? tx.merchant_entity_id!,
+      schedule_c_category: tx.schedule_c_category!,
+    }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['category_rules'] }),
+  })
+
+  const removeRuleMutation = useMutation({
+    mutationFn: (id: string) => deleteCategoryRule(id),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['category_rules'] }),
+  })
 
   return (
     <div className="space-y-4">
@@ -335,6 +353,52 @@ function TransactionDetail({ tx, onClose, onOpenTrade, onManage }: { tx: Transac
           )}
         </div>
       </div>
+
+      {/* Auto-categorization rule hint — only for Plaid transactions with a known entity */}
+      {tx.merchant_entity_id && tx.schedule_c_category && !tx.trade_id && (
+        <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs mt-1">
+          {existingRule ? (
+            <>
+              <span className="text-green-700 font-medium">Rule active:</span>
+              <span className="text-gray-600">{existingRule.merchant_name} →</span>
+              <CategoryBadge value={existingRule.schedule_c_category} />
+              {existingRule.schedule_c_category !== tx.schedule_c_category && (
+                <button
+                  type="button"
+                  onClick={() => saveRuleMutation.mutate()}
+                  disabled={saveRuleMutation.isPending}
+                  className="text-blue-600 hover:underline disabled:opacity-50"
+                >
+                  Update rule
+                </button>
+              )}
+              <span className="text-gray-300">·</span>
+              <button
+                type="button"
+                onClick={() => removeRuleMutation.mutate(existingRule.id)}
+                disabled={removeRuleMutation.isPending}
+                className="text-red-500 hover:underline disabled:opacity-50"
+              >
+                Remove
+              </button>
+            </>
+          ) : (
+            <>
+              <span className="text-gray-500">
+                Always use this category for {tx.merchant ?? 'this merchant'}?
+              </span>
+              <button
+                type="button"
+                onClick={() => saveRuleMutation.mutate()}
+                disabled={saveRuleMutation.isPending}
+                className="text-blue-600 hover:underline font-medium disabled:opacity-50"
+              >
+                {saveRuleMutation.isPending ? 'Saving…' : 'Save rule'}
+              </button>
+            </>
+          )}
+        </div>
+      )}
 
       {/* Details grid */}
       <div className="grid grid-cols-2 gap-3 text-xs">
