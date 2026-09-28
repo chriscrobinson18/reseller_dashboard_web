@@ -206,6 +206,7 @@ export async function openBox(params: {
       source_lot_id: params.sourceLotId,
       quantity: params.quantity,
       notes: params.notes ?? null,
+      status: 'closed',
     })
     .select('id')
     .single()
@@ -337,6 +338,193 @@ export async function deleteBoxOpening(boxOpeningId: string): Promise<void> {
     .update({ deleted_at })
     .eq('id', boxOpeningId)
   if (openingDelErr) throw openingDelErr
+}
+
+/**
+ * Starts a lazy breakdown: creates an 'open' box_openings row with no child
+ * lots and immediately depletes the source lot. Cards are added later via
+ * addPullToOpening(). Call closeBoxOpening() when done to write off remaining
+ * basis to COGS.
+ */
+export async function startBoxOpening(params: {
+  sourceLotId: string
+  openedAt: string     // 'yyyy-MM-dd'
+  notes?: string | null
+}): Promise<{ boxOpeningId: string }> {
+  const user_id = await getUserId()
+
+  const { data: sourceLot, error: sourceErr } = await supabase
+    .from('inventory_lots')
+    .select('id, unit_cost, quantity_remaining, transaction_id, items(name)')
+    .eq('id', params.sourceLotId)
+    .is('deleted_at', null)
+    .single()
+  if (sourceErr || !sourceLot) throw sourceErr ?? new Error('Source lot not found')
+  if (sourceLot.quantity_remaining < 1) throw new Error('Source lot has no remaining stock')
+
+  const boxCost = Number(sourceLot.unit_cost.toFixed(2))
+  const boxName = (sourceLot.items as unknown as { name: string } | null)?.name ?? 'Box'
+
+  const { error: depleteErr } = await supabase
+    .from('inventory_lots')
+    .update({ quantity_remaining: sourceLot.quantity_remaining - 1 })
+    .eq('id', params.sourceLotId)
+  if (depleteErr) throw depleteErr
+
+  const { data: opening, error: openingErr } = await supabase
+    .from('box_openings')
+    .insert({
+      user_id,
+      opened_at: params.openedAt,
+      box_name: boxName,
+      box_cost: boxCost,
+      transaction_id: sourceLot.transaction_id ?? null,
+      allocation_method: null,
+      source_lot_id: params.sourceLotId,
+      quantity: 1,
+      notes: params.notes ?? null,
+      status: 'open',
+    })
+    .select('id')
+    .single()
+  if (openingErr || !opening) throw openingErr ?? new Error('Failed to create box opening')
+
+  return { boxOpeningId: opening.id }
+}
+
+/**
+ * Adds one card lot to an open lazy breakdown. Creates a child inventory_lots
+ * row with the given basis and mirrors the source lot's transaction funding
+ * link if one exists.
+ *
+ * Throws if basis exceeds the remaining pool balance.
+ */
+export async function addPullToOpening(params: {
+  boxOpeningId: string
+  itemId?: string | null
+  newItemName?: string | null
+  newItemCategory?: string | null
+  basis: number
+}): Promise<{ lotId: string }> {
+  const user_id = await getUserId()
+
+  const { data: opening, error: openingErr } = await supabase
+    .from('box_openings')
+    .select('id, box_cost, opened_at, status, source_lot_id, transaction_id')
+    .eq('id', params.boxOpeningId)
+    .is('deleted_at', null)
+    .single()
+  if (openingErr || !opening) throw openingErr ?? new Error('Box opening not found')
+  if (opening.status !== 'open') throw new Error('This breakdown is already closed')
+
+  const { data: existingLots, error: lotsErr } = await supabase
+    .from('inventory_lots')
+    .select('unit_cost')
+    .eq('box_opening_id', params.boxOpeningId)
+    .is('deleted_at', null)
+  if (lotsErr) throw lotsErr
+  const allocated = (existingLots ?? []).reduce((sum, l) => sum + l.unit_cost, 0)
+  const remaining = Number(((opening.box_cost ?? 0) - allocated).toFixed(2))
+  if (params.basis > remaining + 0.01) {
+    throw new Error(`Basis $${params.basis.toFixed(2)} exceeds remaining pool $${remaining.toFixed(2)}`)
+  }
+
+  let itemId = params.itemId ?? null
+  if (!itemId) {
+    if (!params.newItemName?.trim()) throw new Error('Item is required')
+    const { data: newItem, error: newItemErr } = await supabase
+      .from('items')
+      .insert({ user_id, name: params.newItemName.trim(), category: params.newItemCategory ?? null })
+      .select('id')
+      .single()
+    if (newItemErr || !newItem) throw newItemErr ?? new Error('Failed to create item')
+    itemId = newItem.id
+  }
+
+  const { data: lotRow, error: lotErr } = await supabase
+    .from('inventory_lots')
+    .insert({
+      user_id,
+      item_id: itemId,
+      transaction_id: opening.transaction_id ?? null,
+      box_opening_id: params.boxOpeningId,
+      quantity_purchased: 1,
+      quantity_remaining: 1,
+      unit_cost: params.basis,
+      initial_unit_cost: params.basis,
+      purchase_date: opening.opened_at,
+    })
+    .select('id')
+    .single()
+  if (lotErr || !lotRow) throw lotErr ?? new Error('Failed to create card lot')
+
+  if (opening.transaction_id) {
+    const { error: linkErr } = await supabase
+      .from('inventory_lot_transactions')
+      .insert({
+        user_id,
+        lot_id: lotRow.id,
+        transaction_id: opening.transaction_id,
+        allocated_amount: params.basis,
+      })
+    if (linkErr) throw linkErr
+  }
+
+  return { lotId: lotRow.id }
+}
+
+/**
+ * Finalizes a lazy breakdown. If any pool basis remains unallocated (the bulk
+ * cards that won't be sold), inserts a transactions row to write off that
+ * amount as cost_of_goods on Schedule C, then marks the opening closed.
+ *
+ * Safe to call when remaining === 0 (no transaction is created).
+ */
+export async function closeBoxOpening(boxOpeningId: string): Promise<{ remainingAmount: number }> {
+  const user_id = await getUserId()
+
+  const { data: opening, error: openingErr } = await supabase
+    .from('box_openings')
+    .select('id, box_cost, box_name, status')
+    .eq('id', boxOpeningId)
+    .is('deleted_at', null)
+    .single()
+  if (openingErr || !opening) throw openingErr ?? new Error('Box opening not found')
+  if (opening.status !== 'open') throw new Error('This breakdown is already closed')
+
+  const { data: existingLots, error: lotsErr } = await supabase
+    .from('inventory_lots')
+    .select('unit_cost')
+    .eq('box_opening_id', boxOpeningId)
+    .is('deleted_at', null)
+  if (lotsErr) throw lotsErr
+  const allocated = (existingLots ?? []).reduce((sum, l) => sum + l.unit_cost, 0)
+  const remaining = Math.max(0, Number(((opening.box_cost ?? 0) - allocated).toFixed(2)))
+
+  if (remaining > 0.005) {
+    const today = new Date().toISOString().slice(0, 10)
+    const { error: txErr } = await supabase
+      .from('transactions')
+      .insert({
+        user_id,
+        date: today,
+        amount: -remaining,
+        schedule_c_category: 'cost_of_goods',
+        source: 'manual',
+        record_type: 'transaction',
+        is_non_cash: false,
+        notes: `Box close-out: ${opening.box_name} — bulk write-off`,
+      })
+    if (txErr) throw txErr
+  }
+
+  const { error: closeErr } = await supabase
+    .from('box_openings')
+    .update({ status: 'closed' })
+    .eq('id', boxOpeningId)
+  if (closeErr) throw closeErr
+
+  return { remainingAmount: remaining }
 }
 
 // ─── Lot cost adjustments (capitalized basis) ─────────────────────────────────
