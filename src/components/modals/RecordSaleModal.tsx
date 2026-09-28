@@ -97,6 +97,7 @@ export default function RecordSaleModal({ open, onClose }: { open: boolean; onCl
       qc.invalidateQueries({ queryKey: ['sales'] })
       qc.invalidateQueries({ queryKey: ['items'] })
       qc.invalidateQueries({ queryKey: ['transactions'] })
+      qc.invalidateQueries({ queryKey: ['bundles'] })
       if (oversoldCount > 0) {
         setError(`Recorded, but ${oversoldCount} item(s) were oversold. Add purchase lots to reconcile.`)
         setTimeout(() => { reset(); onClose() }, 2600)

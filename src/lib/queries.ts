@@ -304,6 +304,36 @@ export function useBundle(id: string | null) {
   })
 }
 
+/** All bundle sales for the current user, newest-first, with derived item count and net payout. */
+export function useBundles() {
+  return useQuery({
+    queryKey: ['bundles'],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from('sale_bundles')
+        .select('id, sold_at, platform, external_order_id, fees, shipping_cost, sales(id, sale_price, quantity, deleted_at)')
+        .is('deleted_at', null)
+        .order('sold_at', { ascending: false })
+      if (error) throw error
+      return (data ?? []).map(row => {
+        const lines = ((row.sales ?? []) as { id: string; sale_price: number; quantity: number; deleted_at: string | null }[])
+          .filter(s => !s.deleted_at)
+        const itemCount = lines.length
+        const itemsTotal = lines.reduce((s, l) => s + l.sale_price * l.quantity, 0)
+        const netPayout = itemsTotal - (row.fees ?? 0) - (row.shipping_cost ?? 0)
+        return {
+          id: row.id as string,
+          sold_at: row.sold_at as string,
+          platform: row.platform as string | null,
+          external_order_id: row.external_order_id as string | null,
+          itemCount,
+          netPayout,
+        }
+      })
+    },
+  })
+}
+
 /**
  * Fetches the user's custom Schedule C categories, including tombstoned rows.
  * Resolution helpers (resolveCategory) need tombstoned rows to render historical

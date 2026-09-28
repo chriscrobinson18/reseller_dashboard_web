@@ -27,6 +27,7 @@ export default function BundleDetailSlideOver({ bundleId, onClose }: Props) {
       qc.invalidateQueries({ queryKey: ['sales'] })
       qc.invalidateQueries({ queryKey: ['transactions'] })
       qc.invalidateQueries({ queryKey: ['bundle'] })
+      qc.invalidateQueries({ queryKey: ['bundles'] })
       setConfirmDelete(false)
       onClose()
     },
