@@ -104,6 +104,7 @@ export default function RecordTradeModal({ open, onClose }: Props) {
       qc.invalidateQueries({ queryKey: ['sales'] })
       qc.invalidateQueries({ queryKey: ['transactions'] })
       qc.invalidateQueries({ queryKey: ['trade'] })
+      qc.invalidateQueries({ queryKey: ['trades'] })
       reset()
       onClose()
     },
