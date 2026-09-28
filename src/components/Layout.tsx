@@ -1,5 +1,5 @@
 import { Outlet, NavLink } from 'react-router-dom'
-import { LayoutDashboard, ShoppingCart, Package, Receipt, Settings, LogOut } from 'lucide-react'
+import { LayoutDashboard, ShoppingCart, Package, PackageOpen, Receipt, Settings, LogOut } from 'lucide-react'
 import { supabase } from '../lib/supabase'
 import ErrorBoundary from './ErrorBoundary'
 
@@ -7,6 +7,7 @@ const NAV = [
   { to: '/dashboard', icon: LayoutDashboard, label: 'Dashboard' },
   { to: '/sales', icon: ShoppingCart, label: 'Sales' },
   { to: '/inventory', icon: Package, label: 'Inventory' },
+  { to: '/breakdowns', icon: PackageOpen, label: 'Breakdowns' },
   { to: '/expenses', icon: Receipt, label: 'Expenses' },
   { to: '/settings', icon: Settings, label: 'Settings' },
 ]
