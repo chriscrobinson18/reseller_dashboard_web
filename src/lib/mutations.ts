@@ -416,6 +416,7 @@ export async function addPullToOpening(params: {
     .single()
   if (openingErr || !opening) throw openingErr ?? new Error('Box opening not found')
   if (opening.status !== 'open') throw new Error('This breakdown is already closed')
+  if (params.basis <= 0) throw new Error('Basis must be greater than zero')
 
   const { data: existingLots, error: lotsErr } = await supabase
     .from('inventory_lots')
