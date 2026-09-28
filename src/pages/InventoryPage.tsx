@@ -769,7 +769,7 @@ export default function InventoryPage() {
             </tbody>
           </table>
         )}
-        {view === 'breakdowns' && (
+        {!isLoading && view === 'breakdowns' && (
           <div className="overflow-x-auto">
             {breakdowns.length === 0 ? (
               <div className="px-4 py-12 text-center text-sm text-gray-400">
@@ -777,14 +777,14 @@ export default function InventoryPage() {
               </div>
             ) : (
               <table className="w-full text-sm">
-                <thead>
-                  <tr className="border-b border-gray-200 bg-gray-50 text-xs font-medium text-gray-500 uppercase tracking-wide">
-                    <th className="px-4 py-2 text-left">Box</th>
-                    <th className="px-4 py-2 text-left">Date</th>
-                    <th className="px-4 py-2 text-left">Status</th>
-                    <th className="px-4 py-2 text-right">Pulls</th>
-                    <th className="px-4 py-2 text-right">Cost</th>
-                    <th className="px-4 py-2 text-right">Remaining</th>
+                <thead className="sticky top-0 bg-gray-50 border-b border-gray-200 z-10">
+                  <tr>
+                    <th className="px-4 py-2.5 text-left text-xs font-medium text-gray-500">Box</th>
+                    <th className="px-4 py-2.5 text-left text-xs font-medium text-gray-500">Date</th>
+                    <th className="px-4 py-2.5 text-left text-xs font-medium text-gray-500">Status</th>
+                    <th className="px-4 py-2.5 text-right text-xs font-medium text-gray-500">Pulls</th>
+                    <th className="px-4 py-2.5 text-right text-xs font-medium text-gray-500">Cost</th>
+                    <th className="px-4 py-2.5 text-right text-xs font-medium text-gray-500">Remaining</th>
                   </tr>
                 </thead>
                 <tbody>
