@@ -7,7 +7,7 @@ import { basisFromAdjustments } from '../lib/lotCost'
 import { adjustmentLabel } from '../lib/lotAdjustments'
 import type { InventoryLot, LotCostAdjustment } from '../lib/types'
 import { supabase } from '../lib/supabase'
-import { useItems, useIncompleteBreakdowns, useBoxOpenings, type ItemWithLots } from '../lib/queries'
+import { useItems, useIncompleteBreakdowns, type ItemWithLots } from '../lib/queries'
 import AddItemModal from '../components/modals/AddItemModal'
 import RecordTradeModal from '../components/modals/RecordTradeModal'
 import OpenBoxModal from '../components/modals/OpenBoxModal'
@@ -435,7 +435,7 @@ function LotLedger({ rows, onEditLot, onDeleteLot, onTradePillClick, onBoxPillCl
 
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
-type InventoryView = 'item' | 'date' | 'breakdowns'
+type InventoryView = 'item' | 'date'
 
 export default function InventoryPage() {
   const [search, setSearch] = useState('')
@@ -461,12 +461,6 @@ export default function InventoryPage() {
   const { data: items = [], isLoading } = useItems()
   const { data: incompleteBreakdowns = [] } = useIncompleteBreakdowns()
   const [breakdownBannerOpen, setBreakdownBannerOpen] = useState(true)
-  const { data: breakdownRows = [], isLoading: isBreakdownsLoading } = useBoxOpenings()
-  const breakdowns = useMemo(() => {
-    const open = breakdownRows.filter(b => b.status === 'open').sort((a, b) => b.opened_at.localeCompare(a.opened_at))
-    const closed = breakdownRows.filter(b => b.status === 'closed').sort((a, b) => b.opened_at.localeCompare(a.opened_at))
-    return [...open, ...closed]
-  }, [breakdownRows])
 
   function toggleBasis(lotId: string) {
     setExpandedBasis(prev => {
@@ -582,7 +576,7 @@ export default function InventoryPage() {
               In stock only
             </button>
             <div className="flex gap-0.5 bg-gray-100 rounded-lg p-0.5">
-              {([['item', 'By Item'], ['date', 'By Date'], ['breakdowns', 'Breakdowns']] as const).map(([v, label]) => (
+              {([['item', 'By Item'], ['date', 'By Date']] as const).map(([v, label]) => (
                 <button
                   key={v}
                   onClick={() => setView(v)}
@@ -658,7 +652,7 @@ export default function InventoryPage() {
       <div className="flex-1 overflow-y-auto">
         {isLoading ? (
           <div className="p-8 text-center text-gray-400 text-sm">Loading inventory…</div>
-        ) : view === 'breakdowns' ? null : filtered.length === 0 ? (
+        ) : filtered.length === 0 ? (
           <div className="p-8 text-center text-gray-400 text-sm">
             {search ? 'No items found.' : 'No inventory items yet. Click "Add Item" to start.'}
           </div>
@@ -772,66 +766,11 @@ export default function InventoryPage() {
             </tbody>
           </table>
         )}
-        {!isLoading && !isBreakdownsLoading && view === 'breakdowns' && (
-          <div className="overflow-x-auto">
-            {breakdowns.length === 0 ? (
-              <div className="px-4 py-12 text-center text-sm text-gray-400">
-                No breakdowns yet — use "Breakdown Inventory" to open a box.
-              </div>
-            ) : (
-              <table className="w-full text-sm">
-                <thead className="sticky top-0 bg-gray-50 border-b border-gray-200 z-10">
-                  <tr>
-                    <th className="px-4 py-2.5 text-left text-xs font-medium text-gray-500">Box</th>
-                    <th className="px-4 py-2.5 text-left text-xs font-medium text-gray-500">Date</th>
-                    <th className="px-4 py-2.5 text-left text-xs font-medium text-gray-500">Status</th>
-                    <th className="px-4 py-2.5 text-right text-xs font-medium text-gray-500">Pulls</th>
-                    <th className="px-4 py-2.5 text-right text-xs font-medium text-gray-500">Cost</th>
-                    <th className="px-4 py-2.5 text-right text-xs font-medium text-gray-500">Remaining</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {breakdowns.map(b => (
-                    <tr
-                      key={b.id}
-                      onClick={() => setOpenBoxOpeningId(b.id)}
-                      className="border-b border-gray-100 hover:bg-gray-50 cursor-pointer transition-colors"
-                    >
-                      <td className="px-4 py-2.5 font-medium text-gray-900">{b.box_name}</td>
-                      <td className="px-4 py-2.5 text-gray-500 tabular-nums">{formatDate(b.opened_at)}</td>
-                      <td className="px-4 py-2.5">
-                        {b.status === 'open' ? (
-                          <span className="px-1.5 py-0.5 rounded text-[10px] font-medium bg-amber-100 text-amber-700">In Progress</span>
-                        ) : (
-                          <span className="px-1.5 py-0.5 rounded text-[10px] font-medium bg-gray-100 text-gray-500">Closed</span>
-                        )}
-                      </td>
-                      <td className="px-4 py-2.5 text-right text-gray-500 tabular-nums">
-                        {b.pullCount === 0 ? <span className="text-gray-300">—</span> : `${b.pullCount} card${b.pullCount === 1 ? '' : 's'}`}
-                      </td>
-                      <td className="px-4 py-2.5 text-right text-gray-700 tabular-nums">
-                        {b.box_cost !== null ? formatUSD(b.box_cost) : '—'}
-                      </td>
-                      <td className="px-4 py-2.5 text-right tabular-nums">
-                        {b.remainingBasis !== null
-                          ? <span className={b.remainingBasis < 0.01 ? 'text-green-600' : 'text-gray-700'}>{formatUSD(b.remainingBasis)}</span>
-                          : <span className="text-gray-300">—</span>
-                        }
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            )}
-          </div>
-        )}
       </div>
 
       <div className="px-4 py-2 border-t border-gray-200 bg-white text-xs text-gray-400">
         {view === 'date'
           ? `${ledgerRows.length} ${ledgerRows.length === 1 ? 'lot' : 'lots'}`
-          : view === 'breakdowns'
-          ? `${breakdowns.length} ${breakdowns.length === 1 ? 'breakdown' : 'breakdowns'}`
           : `${filtered.length} items`}
       </div>
 
