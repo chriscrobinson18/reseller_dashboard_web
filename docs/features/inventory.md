@@ -162,6 +162,22 @@ A **"Breakdown Inventory"** button next to "Record Trade" in the page header ope
 
 Like `splitLotCost`, the math works in integer cents so the split always sums to the box cost exactly. For `relative_fmv` (and its equal-split fallback) it uses the **largest-remainder method** — floor each card's exact share, then hand the leftover cents one at a time to the cards with the biggest fractional remainder — rather than dumping every remainder cent on the trailing card. Pushing them all onto one card is fine for `splitLotCost`'s even per-unit splits, but here cards can have very different weights, so a trailing-only rule would visibly overcharge whichever card happened to be entered last.
 
+### Lazy Breakdown
+
+An alternative to the all-at-once flow for box opens where pull counts aren't known upfront.
+
+**Entry point:** "Breakdown Inventory" → "Start — Add As I Pull" — picks the source lot and date only; no cards required upfront.
+
+**Flow:**
+1. "Start — Add As I Pull" creates an *open* breakdown (`status = 'open'`) and depletes the source lot (`quantity_remaining − 1`).
+2. `BoxOpeningDetailSlideOver` shows an "In Progress" badge and pool balance: `remaining = box_cost − Σ(child lot unit_costs)`.
+3. "Add Pull" adds one card lot at a time. Each pull specifies an item and a basis amount drawn from the pool.
+4. "Close Box" finalizes: if any pool balance remains, inserts a `transactions` row (`cost_of_goods`, negative amount) as a bulk write-off, then marks the breakdown `'closed'`.
+
+**Accounting:** Under §471(c) NIMS, each card's cost hits COGS at time of sale (FIFO depletion of its lot). The close-out write-off is a bulk disposal event — correct when remaining cards are genuinely discarded. The pool balance display shows how much basis is unallocated at any point.
+
+**Schema note:** `box_openings.status` added in migration `20260928120000_lazy_box_breakdown.sql`. All pre-existing breakdowns are `'closed'`; all-at-once `openBox()` also sets `'closed'` explicitly.
+
 ### `OpenBoxModal` UX
 
 Single scrollable form (matches `RecordTradeModal`'s pattern, not a stepper):
