@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
-import Modal, { Field, inputCls } from '../Modal'
+import Modal, { Field, inputCls, ModalActions } from '../Modal'
 import ItemPicker from '../ItemPicker'
 import { addPullToOpening } from '../../lib/mutations'
 import { formatUSD } from '../../lib/utils'
@@ -51,7 +51,7 @@ export default function AddPullModal({ open, onClose, boxOpeningId, remainingBas
 
   return (
     <Modal open={open} onClose={handleClose} title="Add Pull">
-      <div className="space-y-4 p-4">
+      <form onSubmit={e => { e.preventDefault(); mutation.mutate() }} className="space-y-4 p-4">
         <Field label="Item">
           {isNew ? (
             <div className="space-y-2">
@@ -102,24 +102,8 @@ export default function AddPullModal({ open, onClose, boxOpeningId, remainingBas
           <p className="text-xs text-red-600">{(mutation.error as Error).message}</p>
         )}
 
-        <div className="flex gap-3 pt-1">
-          <button
-            type="button"
-            className="flex-1 bg-blue-600 text-white rounded-lg py-2 text-sm font-medium disabled:opacity-40"
-            onClick={() => mutation.mutate()}
-            disabled={!valid || mutation.isPending}
-          >
-            {mutation.isPending ? 'Adding…' : 'Add Pull'}
-          </button>
-          <button
-            type="button"
-            className="flex-1 border border-gray-200 rounded-lg py-2 text-sm text-gray-700 hover:bg-gray-50"
-            onClick={handleClose}
-          >
-            Cancel
-          </button>
-        </div>
-      </div>
+        <ModalActions onCancel={handleClose} submitLabel="Add Pull" loading={mutation.isPending} disabled={!valid} />
+      </form>
     </Modal>
   )
 }
