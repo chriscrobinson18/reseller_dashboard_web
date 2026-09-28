@@ -219,7 +219,7 @@ export default function OpenBoxModal({ open, onClose, onStarted }: Props) {
 
         {sourceLot && (
           <div className="grid grid-cols-3 gap-3">
-            <Field label="Quantity to break down">
+            <Field label="Quantity (Break down only — Start opens 1)">
               <input
                 type="number" min="1" max={sourceLot.quantity_remaining} step="1" value={quantity}
                 onChange={e => setQuantity(Math.max(1, Math.round(safeNum(e.target.value))))}

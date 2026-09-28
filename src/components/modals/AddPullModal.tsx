@@ -47,7 +47,7 @@ export default function AddPullModal({ open, onClose, boxOpeningId, remainingBas
 
   const basisNum = parseFloat(basis)
   const hasItem = isNew ? newItemName.trim().length > 0 : !!itemId
-  const valid = hasItem && !isNaN(basisNum) && basisNum > 0 && basisNum <= remainingBasis + 0.005
+  const valid = hasItem && !isNaN(basisNum) && basisNum > 0 && basisNum <= remainingBasis + 0.01
 
   return (
     <Modal open={open} onClose={handleClose} title="Add Pull">
