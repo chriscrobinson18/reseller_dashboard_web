@@ -6,7 +6,7 @@ import { useBundle } from '../../lib/queries'
 import { formatUSD } from '../../lib/utils'
 import { PAYMENT_METHODS } from '../../lib/paymentMethods'
 
-const PLATFORMS = ['ebay', 'amazon', 'tcgplayer', 'mercari', 'stockx', 'goat', 'whatnot', 'manual']
+const PLATFORMS = ['ebay', 'amazon', 'tcgplayer', 'mercari', 'stockx', 'goat', 'whatnot', 'facebook marketplace', 'facebook groups', 'discord', 'manual']
 
 interface LineState {
   id: string
