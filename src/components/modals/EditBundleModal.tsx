@@ -88,6 +88,7 @@ function EditBundleForm({ bundleId, data, onClose, qc }: {
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['sales'] })
       qc.invalidateQueries({ queryKey: ['bundle'] })
+      qc.invalidateQueries({ queryKey: ['bundles'] })
       qc.invalidateQueries({ queryKey: ['transactions'] })
       onClose()
     },
