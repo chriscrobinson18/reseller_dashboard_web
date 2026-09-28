@@ -9,7 +9,7 @@ Item + lot management. The only page that uses the centralized `useItems()` hook
 
 ## Views
 
-A segmented control next to the search box switches between two views over the same `useItems()` data (`view: 'item' | 'date'`, local state — not persisted or in the URL). The search box filters items by name/category in both.
+A two-way segmented control next to the search box switches between two views over the same `useItems()` data (`view: 'item' | 'date'`, local state — not persisted or in the URL). The search box filters items by name/category in both. Box breakdowns have their own dedicated page at `/breakdowns` (see [`docs/features/breakdowns.md`](breakdowns.md)).
 
 - **By Item** (default) — the expandable item/lot tree described below.
 - **By Date** — `LotLedger`, a flat newest-first ledger of *every* lot across all items, one row per lot with no grouping or subtotal rows. Sorted by effective lot date (`purchase_date ?? created_at`), tie-broken on `created_at`. This is the shape to use when reconciling purchases against bank transactions chronologically; the Purchase Tx cell, trade pill, and edit/delete actions behave identically to the item view.
