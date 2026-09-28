@@ -255,7 +255,7 @@ export function useBoxOpeningsWithItems() {
     queryFn: async () => {
       const { data, error } = await supabase
         .from('box_openings')
-        .select('id, box_name, opened_at, box_cost, status, inventory_lots(id, unit_cost, deleted_at, items(id, name))')
+        .select('id, box_name, opened_at, box_cost, status, inventory_lots!inventory_lots_box_opening_id_fkey(id, unit_cost, deleted_at, items(id, name))')
         .is('deleted_at', null)
         .order('opened_at', { ascending: false })
       if (error) throw error

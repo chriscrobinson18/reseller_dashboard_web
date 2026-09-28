@@ -5,7 +5,7 @@ import BoxOpeningDetailSlideOver from '../components/BoxOpeningDetailSlideOver'
 
 export default function BreakdownsPage() {
   const [openBoxOpeningId, setOpenBoxOpeningId] = useState<string | null>(null)
-  const { data: rows = [], isLoading } = useBoxOpeningsWithItems()
+  const { data: rows = [], isLoading, isError } = useBoxOpeningsWithItems()
 
   const breakdowns = useMemo(() => {
     const open = rows.filter(b => b.status === 'open').sort((a, b) => b.opened_at.localeCompare(a.opened_at))
@@ -24,6 +24,8 @@ export default function BreakdownsPage() {
       <div className="flex-1 overflow-y-auto p-4 space-y-3">
         {isLoading ? (
           <div className="p-8 text-center text-gray-400 text-sm">Loading…</div>
+        ) : isError ? (
+          <div className="p-8 text-center text-red-400 text-sm">Failed to load breakdowns.</div>
         ) : breakdowns.length === 0 ? (
           <div className="p-8 text-center text-gray-400 text-sm">
             No breakdowns yet — use "Breakdown Inventory" on the Inventory page to open a box.
