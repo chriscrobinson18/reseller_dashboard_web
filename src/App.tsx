@@ -10,6 +10,7 @@ import ExpensesPage from './pages/ExpensesPage'
 import SalesPage from './pages/SalesPage'
 import InventoryPage from './pages/InventoryPage'
 import BreakdownsPage from './pages/BreakdownsPage'
+import BundlesPage from './pages/BundlesPage'
 import SettingsPage from './pages/SettingsPage'
 
 const queryClient = new QueryClient({
@@ -50,6 +51,7 @@ export default function App() {
               <Route path="/dashboard" element={<DashboardPage />} />
               <Route path="/sales" element={<SalesPage />} />
               <Route path="/inventory" element={<InventoryPage />} />
+              <Route path="/bundles" element={<BundlesPage />} />
               <Route path="/breakdowns" element={<BreakdownsPage />} />
               <Route path="/expenses" element={<ExpensesPage />} />
               <Route path="/settings" element={<SettingsPage />} />
