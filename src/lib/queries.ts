@@ -232,7 +232,7 @@ export function useBoxOpenings() {
     queryFn: async () => {
       const { data, error } = await supabase
         .from('box_openings')
-        .select('id, box_name, opened_at, box_cost, status, quantity, allocation_method, inventory_lots(unit_cost, deleted_at)')
+        .select('id, box_name, opened_at, box_cost, status, inventory_lots(unit_cost, deleted_at)')
         .is('deleted_at', null)
         .order('opened_at', { ascending: false })
       if (error) throw error
