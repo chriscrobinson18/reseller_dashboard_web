@@ -227,6 +227,8 @@ export interface BoxOpening {
   /** How many units of the source lot were opened (usually 1). */
   quantity: number
   notes?: string | null
+  /** 'open' = lazy breakdown in progress; 'closed' = finalized. */
+  status: 'open' | 'closed'
 }
 
 export interface PlaidItem {

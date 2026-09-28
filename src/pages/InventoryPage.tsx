@@ -773,7 +773,14 @@ export default function InventoryPage() {
 
       <RecordTradeModal open={showRecordTrade} onClose={() => setShowRecordTrade(false)} />
       <TradeDetailSlideOver tradeId={openTradeId} onClose={() => setOpenTradeId(null)} />
-      <OpenBoxModal open={showOpenBox} onClose={() => setShowOpenBox(false)} />
+      <OpenBoxModal
+        open={showOpenBox}
+        onClose={() => setShowOpenBox(false)}
+        onStarted={id => {
+          setShowOpenBox(false)
+          setOpenBoxOpeningId(id)
+        }}
+      />
       <BoxOpeningDetailSlideOver boxOpeningId={openBoxOpeningId} onClose={() => setOpenBoxOpeningId(null)} />
       <LotTransactionSlideOver
         lot={txLot?.lot ?? null}

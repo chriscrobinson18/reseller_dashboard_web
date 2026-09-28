@@ -176,6 +176,7 @@ export function useBoxOpening(id: string | null) {
       cards: Array<{ id: string; quantity_remaining: number; quantity_purchased: number; unit_cost: number; items: { id: string; name: string } | null }>
       sourceLot: { id: string; quantity_remaining: number; unit_cost: number; items: { id: string; name: string } | null } | null
       transaction: Transaction | null
+      remainingBasis: number
     }> => {
       const { data: opening, error } = await supabase
         .from('box_openings')
@@ -207,11 +208,18 @@ export function useBoxOpening(id: string | null) {
       if (sourceLotRes.error) throw sourceLotRes.error
       if (txRes.error) throw txRes.error
 
+      const cards = (lotsRes.data ?? []) as unknown as Array<{ id: string; quantity_remaining: number; quantity_purchased: number; unit_cost: number; items: { id: string; name: string } | null }>
+      const remainingBasis = Math.max(
+        0,
+        Number(((opening.box_cost ?? 0) - cards.reduce((s, c) => s + c.unit_cost, 0)).toFixed(2)),
+      )
+
       return {
         opening: opening as BoxOpening,
-        cards: (lotsRes.data ?? []) as unknown as Array<{ id: string; quantity_remaining: number; quantity_purchased: number; unit_cost: number; items: { id: string; name: string } | null }>,
+        cards,
         sourceLot: (sourceLotRes.data ?? null) as unknown as { id: string; quantity_remaining: number; unit_cost: number; items: { id: string; name: string } | null } | null,
         transaction: (txRes.data ?? null) as Transaction | null,
+        remainingBasis,
       }
     },
   })
