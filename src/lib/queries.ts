@@ -225,23 +225,28 @@ export function useBoxOpening(id: string | null) {
   })
 }
 
-/** All box breakdowns for the current user, newest-first, with derived pull count and remaining basis. */
-export function useBoxOpenings() {
+/** All box breakdowns for the current user, newest-first, with child lots and item names. */
+export function useBoxOpeningsWithItems() {
   return useQuery({
     queryKey: ['box-openings'],
     queryFn: async () => {
       const { data, error } = await supabase
         .from('box_openings')
-        .select('id, box_name, opened_at, box_cost, status, inventory_lots(unit_cost, deleted_at)')
+        .select('id, box_name, opened_at, box_cost, status, inventory_lots(id, unit_cost, deleted_at, items(id, name))')
         .is('deleted_at', null)
         .order('opened_at', { ascending: false })
       if (error) throw error
       return (data ?? []).map(row => {
-        const lots = ((row.inventory_lots ?? []) as { unit_cost: number; deleted_at: string | null }[]).filter(l => !l.deleted_at)
+        const lots = ((row.inventory_lots ?? []) as unknown as {
+          id: string
+          unit_cost: number
+          deleted_at: string | null
+          items: { id: string; name: string } | null
+        }[]).filter(l => !l.deleted_at)
         const pullCount = lots.length
         const allocated = lots.reduce((s, l) => s + l.unit_cost, 0)
-        const remainingBasis = row.status === 'open'
-          ? Math.max(0, Number(((row.box_cost ?? 0) - allocated).toFixed(2)))
+        const remainingBasis = row.status === 'open' && row.box_cost !== null
+          ? Math.max(0, Number(((row.box_cost) - allocated).toFixed(2)))
           : null
         return {
           id: row.id as string,
@@ -249,6 +254,7 @@ export function useBoxOpenings() {
           opened_at: row.opened_at as string,
           box_cost: row.box_cost as number | null,
           status: row.status as 'open' | 'closed',
+          lots,
           pullCount,
           remainingBasis,
         }
