@@ -45,6 +45,7 @@ export default function BoxOpeningDetailSlideOver({ boxOpeningId, onClose }: Pro
       qc.invalidateQueries({ queryKey: ['items'] })
       qc.invalidateQueries({ queryKey: ['transactions'] })
       qc.invalidateQueries({ queryKey: ['box-opening'] })
+      close.reset()
       setConfirmClose(false)
     },
     onError: () => setConfirmClose(false),
