@@ -1,10 +1,10 @@
 import { useMemo, useState, type FormEvent } from 'react'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { Plus, Trash2, Package, ChevronLeft } from 'lucide-react'
-import Modal, { Field, inputCls, ModalActions } from '../Modal'
+import Modal, { Field, inputCls } from '../Modal'
 import InfoPopover from '../InfoPopover'
 import ItemPicker from '../ItemPicker'
-import { openBox, todayStr } from '../../lib/mutations'
+import { openBox, startBoxOpening, todayStr } from '../../lib/mutations'
 import { allocateBoxCost, type BoxAllocationMethod } from '../../lib/boxAllocation'
 import { useItems, itemUnitsInStock, type ItemWithLots } from '../../lib/queries'
 import { formatUSD, formatDate } from '../../lib/utils'
@@ -34,6 +34,7 @@ const METHODS: Array<{ value: BoxAllocationMethod; label: string }> = [
 interface Props {
   open: boolean
   onClose: () => void
+  onStarted?: (boxOpeningId: string) => void
 }
 
 /**
@@ -44,7 +45,7 @@ interface Props {
  * The box isn't named/costed by hand — it's already in inventory like any
  * other purchase, so its cost is picked up from the lot the user selects.
  */
-export default function OpenBoxModal({ open, onClose }: Props) {
+export default function OpenBoxModal({ open, onClose, onStarted }: Props) {
   const qc = useQueryClient()
   const { data: items = [] } = useItems()
   const [sourceItemId, setSourceItemId] = useState<string | null>(null)
@@ -110,10 +111,27 @@ export default function OpenBoxModal({ open, onClose }: Props) {
     },
   })
 
+  const startLazy = useMutation({
+    mutationFn: () =>
+      startBoxOpening({
+        sourceLotId: sourceLotId!,
+        openedAt,
+        notes: notes.trim() || null,
+      }),
+    onSuccess: ({ boxOpeningId }) => {
+      qc.invalidateQueries({ queryKey: ['items'] })
+      qc.invalidateQueries({ queryKey: ['box-opening'] })
+      onStarted?.(boxOpeningId)
+      reset()
+      onClose()
+    },
+  })
+
   function reset() {
     setSourceItemId(null); setSourceLotId(null); setQuantity(1); setOpenedAt(todayStr()); setNotes('')
     setMethod('relative_fmv'); setCards([emptyCard(), emptyCard()]); setPickerOpenIdx(null)
     m.reset()
+    startLazy.reset()
   }
 
   function handleClose() { reset(); onClose() }
@@ -330,7 +348,33 @@ export default function OpenBoxModal({ open, onClose }: Props) {
         {m.isError && <div className="mt-3 text-xs text-red-600">{(m.error as Error).message}</div>}
         {validationError && !m.isError && <div className="mt-3 text-xs text-gray-500">{validationError}</div>}
 
-        <ModalActions onCancel={handleClose} submitLabel="Break down" loading={m.isPending} disabled={!!validationError} />
+        {startLazy.isError && (
+          <div className="mt-2 text-xs text-red-600">{(startLazy.error as Error).message}</div>
+        )}
+        <div className="mt-4 flex gap-2">
+          <button
+            type="button"
+            onClick={handleClose}
+            className="px-3 py-2 text-sm text-gray-600 border border-gray-200 rounded-lg hover:bg-gray-50"
+          >
+            Cancel
+          </button>
+          <button
+            type="button"
+            onClick={() => startLazy.mutate()}
+            disabled={!sourceLotId || !openedAt || startLazy.isPending || m.isPending}
+            className="flex-1 px-3 py-2 text-sm border border-blue-300 text-blue-700 rounded-lg hover:bg-blue-50 disabled:opacity-40"
+          >
+            {startLazy.isPending ? 'Starting…' : 'Start — Add As I Pull'}
+          </button>
+          <button
+            type="submit"
+            disabled={!!validationError || m.isPending || startLazy.isPending}
+            className="flex-1 px-3 py-2 text-sm bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-40"
+          >
+            {m.isPending ? 'Breaking down…' : 'Break down'}
+          </button>
+        </div>
       </form>
     </Modal>
   )
