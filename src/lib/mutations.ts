@@ -503,12 +503,11 @@ export async function closeBoxOpening(boxOpeningId: string): Promise<{ remaining
   const remaining = Math.max(0, Number(((opening.box_cost ?? 0) - allocated).toFixed(2)))
 
   if (remaining > 0.005) {
-    const today = new Date().toISOString().slice(0, 10)
     const { error: txErr } = await supabase
       .from('transactions')
       .insert({
         user_id,
-        date: today,
+        date: todayStr(),
         amount: -remaining,
         schedule_c_category: 'cost_of_goods',
         source: 'manual',
