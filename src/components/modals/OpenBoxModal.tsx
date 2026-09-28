@@ -106,6 +106,7 @@ export default function OpenBoxModal({ open, onClose, onStarted }: Props) {
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['items'] })
       qc.invalidateQueries({ queryKey: ['box-opening'] })
+      qc.invalidateQueries({ queryKey: ['box-openings'] })
       reset()
       onClose()
     },
@@ -121,6 +122,7 @@ export default function OpenBoxModal({ open, onClose, onStarted }: Props) {
     onSuccess: ({ boxOpeningId }) => {
       qc.invalidateQueries({ queryKey: ['items'] })
       qc.invalidateQueries({ queryKey: ['box-opening'] })
+      qc.invalidateQueries({ queryKey: ['box-openings'] })
       onStarted?.(boxOpeningId)
       reset()
       onClose()

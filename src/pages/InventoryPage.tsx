@@ -461,7 +461,7 @@ export default function InventoryPage() {
   const { data: items = [], isLoading } = useItems()
   const { data: incompleteBreakdowns = [] } = useIncompleteBreakdowns()
   const [breakdownBannerOpen, setBreakdownBannerOpen] = useState(true)
-  const { data: breakdownRows = [] } = useBoxOpenings()
+  const { data: breakdownRows = [], isLoading: isBreakdownsLoading } = useBoxOpenings()
   const breakdowns = useMemo(() => {
     const open = breakdownRows.filter(b => b.status === 'open').sort((a, b) => b.opened_at.localeCompare(a.opened_at))
     const closed = breakdownRows.filter(b => b.status === 'closed').sort((a, b) => b.opened_at.localeCompare(a.opened_at))
@@ -504,7 +504,10 @@ export default function InventoryPage() {
         .eq('id', id)
       if (error) throw error
     },
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['incomplete_breakdowns'] }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['incomplete_breakdowns'] })
+      qc.invalidateQueries({ queryKey: ['box-openings'] })
+    },
   })
 
   const filtered = useMemo(() => {
@@ -769,7 +772,7 @@ export default function InventoryPage() {
             </tbody>
           </table>
         )}
-        {!isLoading && view === 'breakdowns' && (
+        {!isLoading && !isBreakdownsLoading && view === 'breakdowns' && (
           <div className="overflow-x-auto">
             {breakdowns.length === 0 ? (
               <div className="px-4 py-12 text-center text-sm text-gray-400">

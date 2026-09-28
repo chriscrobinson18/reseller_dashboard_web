@@ -31,6 +31,7 @@ export default function AddPullModal({ open, onClose, boxOpeningId, remainingBas
     onSuccess: ({ lotId }) => {
       qc.invalidateQueries({ queryKey: ['items'] })
       qc.invalidateQueries({ queryKey: ['box-opening'] })
+      qc.invalidateQueries({ queryKey: ['box-openings'] })
       onPullAdded(lotId)
       handleClose()
     },

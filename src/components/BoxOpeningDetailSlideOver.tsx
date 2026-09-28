@@ -33,6 +33,7 @@ export default function BoxOpeningDetailSlideOver({ boxOpeningId, onClose }: Pro
       qc.invalidateQueries({ queryKey: ['items'] })
       qc.invalidateQueries({ queryKey: ['transactions'] })
       qc.invalidateQueries({ queryKey: ['box-opening'] })
+      qc.invalidateQueries({ queryKey: ['box-openings'] })
       setConfirmDelete(false)
       onClose()
     },
@@ -45,6 +46,7 @@ export default function BoxOpeningDetailSlideOver({ boxOpeningId, onClose }: Pro
       qc.invalidateQueries({ queryKey: ['items'] })
       qc.invalidateQueries({ queryKey: ['transactions'] })
       qc.invalidateQueries({ queryKey: ['box-opening'] })
+      qc.invalidateQueries({ queryKey: ['box-openings'] })
       close.reset()
       setConfirmClose(false)
     },
