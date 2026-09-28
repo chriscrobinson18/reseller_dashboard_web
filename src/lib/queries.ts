@@ -162,6 +162,29 @@ export function useTrade(id: string | null) {
   })
 }
 
+/** All trades for the current user, newest-first. */
+export function useTrades() {
+  return useQuery({
+    queryKey: ['trades'],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from('trades')
+        .select('id, traded_at, counterparty, given_fmv, received_fmv, cash_boot')
+        .is('deleted_at', null)
+        .order('traded_at', { ascending: false })
+      if (error) throw error
+      return (data ?? []) as {
+        id: string
+        traded_at: string
+        counterparty: string | null
+        given_fmv: number | null
+        received_fmv: number | null
+        cash_boot: number | null
+      }[]
+    },
+  })
+}
+
 /**
  * Fetches a box-opening event with the resulting card lots, the source lot it
  * was opened from, and its (already-deducted) purchase transaction, if any.
@@ -300,29 +323,6 @@ export function useBundle(id: string | null) {
         lines: (linesRes.data ?? []) as unknown as Array<{ id: string; quantity: number; sale_price: number; inventory_status: string; items: { id: string; name: string } | null }>,
         transactions: txRes.data ?? [],
       }
-    },
-  })
-}
-
-/** All trades for the current user, newest-first. */
-export function useTrades() {
-  return useQuery({
-    queryKey: ['trades'],
-    queryFn: async () => {
-      const { data, error } = await supabase
-        .from('trades')
-        .select('id, traded_at, counterparty, given_fmv, received_fmv, cash_boot')
-        .is('deleted_at', null)
-        .order('traded_at', { ascending: false })
-      if (error) throw error
-      return (data ?? []) as {
-        id: string
-        traded_at: string
-        counterparty: string | null
-        given_fmv: number | null
-        received_fmv: number | null
-        cash_boot: number | null
-      }[]
     },
   })
 }
