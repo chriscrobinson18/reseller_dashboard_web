@@ -147,15 +147,42 @@ A "Marketplace CSV Import" section (after Custom Categories) has four platform c
 A result banner shows rows imported and sales created/updated.
 
 ### TCGPlayer
-Upload the JSON exported by the TCGPlayer Tampermonkey userscript
-(`tampermonkey/tcgplayer-export.user.js`). The script calls TCGPlayer's internal
-order-management API to get exact fee and net payout per order, then downloads a
-JSON file. Upload that file here.
 
+The TCGPlayer card accepts a JSON file exported by the Tampermonkey userscript
+(`tampermonkey/tcgplayer-export.user.js`, served at `/tcgplayer-export.user.js`).
+The card shows an **"Install userscript ↗"** link that opens the script URL — with
+Tampermonkey installed, clicking it triggers the install dialog automatically.
+
+**Userscript behavior (v2.6):**
+- Matches `https://sellerportal.tcgplayer.com/*`.
+- Runs at `document-start` and wraps both `window.fetch` and `XMLHttpRequest` to
+  intercept the portal's own API calls to `order-management-api.tcgplayer.com`,
+  capturing the exact request headers and `sellerKey` from the portal's first
+  successful orders search.
+- On click, reads `searchRange` + `sortBy` from the current URL
+  (e.g. `?searchRange=LastThreeMonths&sortBy=orderStatus,asc`) and paginates
+  `POST /orders/search` using those parameters. Increments `from` by the actual
+  returned page size to handle API page-size caps correctly.
+- Fetches each order's detail (`GET /orders/{id}`) in parallel batches of 5
+  with 1 s between batches (~5 req/sec).
+- Deduplicates by `orderNumber` before writing the file.
+- Downloads `tcgplayer-orders-YYYY-MM-DD.json` — an array of enriched orders
+  including `products[]` (card name, quantity, unitPrice, productId, skuId).
+- Button label reflects the active filter: `Export (Last 3 months) ↓`.
+
+**Import behavior (`import_tcgplayer_orders` edge function):**
+- Accepts `{ orders: TcgOrder[] }` JSON body.
 - Upserts directly into `sales` (no `transactions` intermediate, no sync step).
 - `source = 'tcgplayer'`, `external_order_id = orderNumber`.
-- Canceled orders are skipped. `refundStatus` maps to `return_status`.
+- `item_name` is computed from `products[]`: single-product orders use the card
+  name; multi-product orders use `"First card name + N more"`.
+- `quantity` is the sum of `products[].quantity` (minimum 1).
+- Canceled orders are skipped. `refundStatus` maps to `return_status` (`full` /
+  `partial` / `none`).
 - Re-import safe: upsert on `(user_id, external_order_id)`.
+- Response: `{ platform, received, sales_upserted, skipped, failed }` — `received`
+  is the total orders in the payload; `failed` counts batch upsert errors (surfaced
+  as "N skipped" in the UI alongside canceled orders).
 - No settlement/payout matching (TCGPlayer pays Mon/Thu but exposes no payout ID).
 
 ## Settlement Status
