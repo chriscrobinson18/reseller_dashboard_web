@@ -135,10 +135,13 @@ export default function CSVGroupDetailSlideOver({ group, platform, open, onClose
       if (isNearMatch && expectedDeposit !== undefined) {
         const gap = expectedDeposit - candidate.amount  // positive = received less (expense); negative = received more (income)
         if (Math.abs(gap) > 0) {
+          const isRTFee = Math.abs(gap) === 2
           await insertTransaction({
             date: candidate.date,
             amount: -gap,
-            merchant: `${platformDisplayName(platform)} Disbursement Fee`,
+            merchant: isRTFee
+              ? `${platformDisplayName(platform)} Real-Time Transfer Fee`
+              : `${platformDisplayName(platform)} Disbursement Fee`,
             type: 'fee',
             scheduleCCategory: 'commissions_fees',
             notes: null,
@@ -229,6 +232,13 @@ export default function CSVGroupDetailSlideOver({ group, platform, open, onClose
                       <div>
                         <div className="text-sm font-medium text-gray-900">{c.merchant ?? 'Deposit'}</div>
                         <div className="text-xs text-gray-500">{fmtDate(c.date)} · {c.account_display ?? ''}</div>
+                        {isNearMatch && expectedDeposit !== undefined && (
+                          <div className="text-xs text-amber-600 mt-0.5">
+                            {Math.abs(expectedDeposit - c.amount) === 2
+                              ? 'Real-Time Transfer Fee (−$2.00)'
+                              : `Gap: ${fmtUSD(expectedDeposit - c.amount)}`}
+                          </div>
+                        )}
                       </div>
                       <span className="text-sm font-semibold text-green-700">{fmtUSD(c.amount)}</span>
                     </button>
