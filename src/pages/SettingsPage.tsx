@@ -118,7 +118,9 @@ export default function SettingsPage() {
       qc.invalidateQueries({ queryKey: ['csv-groups', platform] })
       qc.invalidateQueries({ queryKey: ['sales'] })
     } catch (e: unknown) {
-      setState({ phase: 'error', message: e instanceof Error ? e.message : 'Import failed' })
+      console.error('Import error:', e)
+      const msg = e instanceof Error ? e.message : 'Import failed'
+      setState({ phase: 'error', message: msg })
     }
   }
 

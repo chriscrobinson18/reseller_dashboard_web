@@ -91,18 +91,26 @@ function notDash(s: string): string | null {
 
 const BATCH = 200
 
+const CORS = {
+  'Access-Control-Allow-Origin': '*',
+  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
+}
+const json = (status: number, body: unknown) =>
+  new Response(JSON.stringify(body), { status, headers: { ...CORS, 'Content-Type': 'application/json' } })
+
 serve(async (req) => {
+  if (req.method === 'OPTIONS') return new Response('ok', { headers: CORS })
   try {
     const authHeader = req.headers.get('Authorization')!
     const token = authHeader.replace('Bearer ', '')
     const supabase = createClient(Deno.env.get('SUPABASE_URL') ?? '', Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? '')
     const { data: { user }, error: authError } = await supabase.auth.getUser(token)
-    if (authError || !user) return new Response(JSON.stringify({ error: 'Unauthorized' }), { status: 401 })
+    if (authError || !user) return json(401, { error: 'Unauthorized' })
 
     const body = await req.json()
     const platform: string = body.platform
     const csvText: string = body.csv_text
-    if (!csvText || !platform) return new Response(JSON.stringify({ error: 'Missing platform or csv_text' }), { status: 400 })
+    if (!csvText || !platform) return json(400, { error: 'Missing platform or csv_text' })
 
     const allRows = parseCSV(csvText)
     const transactions: any[] = []
@@ -151,9 +159,7 @@ serve(async (req) => {
       }
 
       if (headerIdx === -1) {
-        return new Response(JSON.stringify({
-          error: 'Could not detect Amazon report format. Use: Seller Central → Reports → Payments → Transaction View.',
-        }), { status: 400 })
+        return json(400, { error: 'Could not detect Amazon report format. Use: Seller Central → Reports → Payments → Transaction View.' })
       }
 
       const header = allRows[headerIdx].map(h => h.replace(/"/g,'').trim().toLowerCase())
@@ -356,7 +362,7 @@ serve(async (req) => {
       for (let i = 0; i < allRows.length; i++) {
         if (allRows[i][0]?.replace(/"/g,'').trim() === 'Transaction creation date') { headerIdx = i; break }
       }
-      if (headerIdx === -1) return new Response(JSON.stringify({ error: 'Could not find eBay CSV header row (expected first column: "Transaction creation date")' }), { status: 400 })
+      if (headerIdx === -1) return json(400, { error: 'Could not find eBay CSV header row (expected first column: "Transaction creation date")' })
 
       const header = allRows[headerIdx].map(h => h.replace(/"/g,'').trim())
       const col = (row: string[], name: string) => row[header.indexOf(name)]?.replace(/"/g,'').trim() ?? ''
@@ -437,7 +443,7 @@ serve(async (req) => {
         const norm = allRows[i].map(h => h.replace(/"/g,'').trim().toLowerCase())
         if (norm.includes('item id') && norm.includes('sold date')) { headerIdx = i; break }
       }
-      if (headerIdx === -1) return new Response(JSON.stringify({ error: 'Could not find Mercari CSV header. Expected columns: Item Id, Sold Date, Item Title, Item Price, etc.' }), { status: 400 })
+      if (headerIdx === -1) return json(400, { error: 'Could not find Mercari CSV header. Expected columns: Item Id, Sold Date, Item Title, Item Price, etc.' })
 
       const header = allRows[headerIdx].map(h => h.replace(/"/g,'').trim().toLowerCase())
       const col = (row: string[], name: string) => row[header.indexOf(name)]?.replace(/"/g,'').trim() ?? ''
@@ -484,9 +490,7 @@ serve(async (req) => {
         }
       }
       if (headerIdx === -1) {
-        return new Response(JSON.stringify({
-          error: 'Could not find Order Earnings header row. Expected columns: "Order creation date" and "Order earnings". Use: Seller Hub → Reports → Order Earnings Report.',
-        }), { status: 400 })
+        return json(400, { error: 'Could not find Order Earnings header row. Expected columns: "Order creation date" and "Order earnings". Use: Seller Hub → Reports → Order Earnings Report.' })
       }
 
       const header = allRows[headerIdx].map(h => h.replace(/"/g, '').trim())
@@ -598,15 +602,15 @@ serve(async (req) => {
         else salesUpserted += salesRows.slice(i, i + BATCH).length
       }
 
-      return new Response(JSON.stringify({
+      return json(200, {
         success: true, platform: 'ebay_order_earnings',
         rows_parsed: rowsParsed, rows_skipped: rowsSkipped,
         skipped_breakdown: skippedTypes,
         sales_upserted: salesUpserted,
-      }), { headers: { 'Content-Type': 'application/json' } })
+      })
 
     } else {
-      return new Response(JSON.stringify({ error: `Unknown platform: ${platform}. Supported: ebay, ebay_order_earnings, amazon, mercari` }), { status: 400 })
+      return json(400, { error: `Unknown platform: ${platform}. Supported: ebay, ebay_order_earnings, amazon, mercari` })
     }
 
     for (let i = 0; i < transactions.length; i += BATCH) {
@@ -615,15 +619,15 @@ serve(async (req) => {
       if (error) console.error('Upsert error:', error)
     }
 
-    return new Response(JSON.stringify({
+    return json(200, {
       success: true, platform,
       amazon_format: amazonFormat || undefined,
       rows_parsed: rowsParsed, rows_skipped: rowsSkipped,
       skipped_breakdown: skippedTypes,
-    }), { headers: { 'Content-Type': 'application/json' } })
+    })
 
   } catch (error: any) {
     console.error('Import error:', error)
-    return new Response(JSON.stringify({ error: error.message }), { status: 500 })
+    return json(500, { error: error.message })
   }
 })
