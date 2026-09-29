@@ -718,6 +718,7 @@ serve(async (req) => {
           sold_at: e.date,
           inventory_status: 'ok',
           refunded_quantity: 0,
+          deleted_at: null,
         })
       }
 
