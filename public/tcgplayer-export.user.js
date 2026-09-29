@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         TCGPlayer Export for Reseller Dashboard
 // @namespace    https://sellerportal.tcgplayer.com
-// @version      2.5
+// @version      2.6
 // @description  Export orders matching the current portal filter for Reseller Dashboard import
 // @match        https://sellerportal.tcgplayer.com/*
 // @grant        none
@@ -12,6 +12,7 @@
   'use strict'
 
   const PAGE_SIZE = 100
+  const CONCURRENCY = 5   // parallel detail fetches per batch
   const BASE = 'https://order-management-api.tcgplayer.com'
 
   const RANGE_LABEL = {
@@ -37,7 +38,7 @@
     updateButton()
   }
 
-  // ── Intercept window.fetch (runs before portal JS since @run-at document-start)
+  // ── Intercept window.fetch ────────────────────────────────────────────────────
 
   const origFetch = window.fetch.bind(window)
   window.fetch = async function (input, init) {
@@ -53,7 +54,7 @@
     return origFetch(input, init)
   }
 
-  // ── Intercept XMLHttpRequest (Axios uses XHR by default) ─────────────────────
+  // ── Intercept XHR (Axios uses XHR by default) ─────────────────────────────────
 
   const origOpen = XMLHttpRequest.prototype.open
   const origSetHeader = XMLHttpRequest.prototype.setRequestHeader
@@ -64,14 +65,12 @@
     this._rdbHeaders = {}
     return origOpen.apply(this, [method, url, ...rest])
   }
-
   XMLHttpRequest.prototype.setRequestHeader = function (name, value) {
     if (this._rdbUrl?.includes('order-management-api.tcgplayer.com')) {
       this._rdbHeaders[name] = value
     }
     return origSetHeader.apply(this, [name, value])
   }
-
   XMLHttpRequest.prototype.send = function (body) {
     if (this._rdbUrl?.includes('order-management-api.tcgplayer.com') &&
         Object.keys(this._rdbHeaders || {}).length > 0) {
@@ -96,8 +95,11 @@
       if (!res.ok) throw new Error(`Search failed: ${res.status}`)
       const data = await res.json()
       total = data.totalOrders ?? 0
-      orders.push(...(data.orders ?? []))
-      from += PAGE_SIZE
+      const page = data.orders ?? []
+      orders.push(...page)
+      // Increment by actual returned count to avoid skipping pages if API caps page size
+      from += page.length || PAGE_SIZE
+      if (page.length === 0) break  // safety: no results means we're done
     }
     return orders
   }
@@ -142,33 +144,51 @@
 
     const { searchRange, sortBy } = getExportParams()
     const btn = document.getElementById('rdb-tcg-export')
-    btn.textContent = 'Fetching orders…'
+    btn.textContent = 'Fetching orders list…'
     btn.disabled = true
 
     try {
       const orders = await fetchAllOrders(searchRange, sortBy, capturedSellerKey)
-      const enriched = []
+      btn.textContent = `Fetching details (0 / ${orders.length})…`
 
-      for (let i = 0; i < orders.length; i++) {
-        btn.textContent = `Fetching ${i + 1} of ${orders.length}…`
-        if (!orders[i].orderNumber) continue
-        const detail = await fetchOrderDetail(orders[i].orderNumber)
-        enriched.push({
-          orderNumber: detail.orderNumber,
-          orderDate: detail.createdAt ?? orders[i].orderDate,
-          orderStatus: detail.status,
-          productAmount: detail.transaction?.productAmount ?? 0,
-          shippingAmount: detail.transaction?.shippingAmount ?? 0,
-          grossAmount: detail.transaction?.grossAmount ?? 0,
-          feeAmount: detail.transaction?.feeAmount ?? 0,
-          netAmount: detail.transaction?.netAmount ?? 0,
-          refundStatus: detail.refundStatus ?? '',
-          refunds: detail.refunds ?? [],
-        })
-        if ((i + 1) % 3 === 0) await sleep(1000)
+      const enriched = []
+      const validOrders = orders.filter(o => o.orderNumber)
+
+      // Parallel detail fetches — CONCURRENCY at a time, 1s between batches
+      for (let i = 0; i < validOrders.length; i += CONCURRENCY) {
+        const batch = validOrders.slice(i, i + CONCURRENCY)
+        btn.textContent = `Fetching details (${i} / ${validOrders.length})…`
+
+        const details = await Promise.all(batch.map(o => fetchOrderDetail(o.orderNumber)))
+
+        for (let j = 0; j < details.length; j++) {
+          const detail = details[j]
+          const listRow = batch[j]
+          enriched.push({
+            orderNumber: detail.orderNumber,
+            orderDate: detail.createdAt ?? listRow.orderDate,
+            orderStatus: detail.status,
+            productAmount: detail.transaction?.productAmount ?? 0,
+            shippingAmount: detail.transaction?.shippingAmount ?? 0,
+            grossAmount: detail.transaction?.grossAmount ?? 0,
+            feeAmount: detail.transaction?.feeAmount ?? 0,
+            netAmount: detail.transaction?.netAmount ?? 0,
+            refundStatus: detail.refundStatus ?? '',
+            refunds: detail.refunds ?? [],
+            products: (detail.products ?? []).map(p => ({
+              name: p.name,
+              quantity: p.quantity ?? 1,
+              unitPrice: p.unitPrice ?? 0,
+              productId: p.productId,
+              skuId: p.skuId,
+            })),
+          })
+        }
+
+        if (i + CONCURRENCY < validOrders.length) await sleep(1000)
       }
 
-      // Deduplicate by orderNumber (safety net in case API returns duplicates across pages)
+      // Deduplicate by orderNumber
       const seen = new Set()
       const deduped = enriched.filter(o => {
         if (!o.orderNumber || seen.has(o.orderNumber)) return false
@@ -207,7 +227,7 @@
     if (btn && !btn.disabled) btn.textContent = getButtonLabel()
   }
 
-  // ── UI injection (deferred — document.body doesn't exist at document-start) ──
+  // ── UI injection ─────────────────────────────────────────────────────────────
 
   function injectButton() {
     if (document.getElementById('rdb-tcg-export')) { updateButton(); return }
@@ -225,7 +245,6 @@
     document.body.appendChild(btn)
   }
 
-  // SPA URL change detection
   const origPushState = history.pushState
   history.pushState = function (...args) {
     origPushState.apply(this, args)

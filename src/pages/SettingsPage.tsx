@@ -140,8 +140,8 @@ export default function SettingsPage() {
         phase: 'done',
         importResult: {
           platform: 'tcgplayer',
-          rows_parsed: result.sales_upserted + result.skipped,
-          rows_skipped: result.skipped,
+          rows_parsed: result.received,
+          rows_skipped: result.skipped + result.failed,
           sales_upserted: result.sales_upserted,
         },
         syncResult: { created: result.sales_upserted, updated: 0, removed: 0 },

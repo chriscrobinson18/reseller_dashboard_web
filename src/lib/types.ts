@@ -281,6 +281,7 @@ export type CSVSaleSyncResult = {
 
 export type TcgPlayerImportResult = {
   platform: 'tcgplayer'
+  received: number
   sales_upserted: number
   skipped: number
   failed: number

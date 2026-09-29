@@ -14,6 +14,14 @@ const CORS = {
 const json = (status: number, body: unknown) =>
   new Response(JSON.stringify(body), { status, headers: { ...CORS, 'Content-Type': 'application/json' } })
 
+type TcgProduct = {
+  name?: string
+  quantity?: number
+  unitPrice?: number
+  productId?: string
+  skuId?: string
+}
+
 type TcgOrder = {
   orderNumber: string
   orderDate: string       // ISO 8601 e.g. "2026-09-26T01:25:13.767Z"
@@ -25,6 +33,7 @@ type TcgOrder = {
   netAmount: number
   refundStatus: string    // "" | "FullRefund" | "PartialRefund"
   refunds: unknown[]
+  products?: TcgProduct[]
 }
 
 serve(async (req) => {
@@ -53,11 +62,19 @@ serve(async (req) => {
       const rs = (o.refundStatus ?? '').toLowerCase()
       const returnStatus = rs.includes('full') ? 'full' : rs.includes('partial') ? 'partial' : 'none'
 
+      const products = o.products ?? []
+      const itemName = products.length === 0
+        ? 'TCGPlayer Sale'
+        : products.length === 1
+          ? (products[0].name || 'TCGPlayer Sale')
+          : `${products[0].name || 'Item'} + ${products.length - 1} more`
+
       salesRows.push({
         user_id: user.id,
         platform: 'tcgplayer',
         source: 'tcgplayer',
         external_order_id: o.orderNumber,
+        item_name: itemName,
         sale_price: o.productAmount,
         shipping_cost: o.shippingAmount,
         fees: o.feeAmount,
@@ -85,7 +102,7 @@ serve(async (req) => {
       }
     }
 
-    return json(200, { platform: 'tcgplayer', sales_upserted: upserted, skipped, failed })
+    return json(200, { platform: 'tcgplayer', received: orders.length, sales_upserted: upserted, skipped, failed })
   } catch (error: unknown) {
     console.error('Import error:', error)
     return json(500, { error: error instanceof Error ? error.message : 'Unknown error' })
