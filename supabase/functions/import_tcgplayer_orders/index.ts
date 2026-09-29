@@ -48,7 +48,7 @@ serve(async (req) => {
     let skipped = 0
 
     for (const o of orders) {
-      if (!o.orderNumber || o.orderStatus === 'Canceled') { skipped++; continue }
+      if (!o.orderNumber || !o.orderDate || o.orderStatus === 'Canceled') { skipped++; continue }
 
       const rs = (o.refundStatus ?? '').toLowerCase()
       const returnStatus = rs.includes('full') ? 'full' : rs.includes('partial') ? 'partial' : 'none'
@@ -71,6 +71,7 @@ serve(async (req) => {
     }
 
     let upserted = 0
+    let failed = 0
     for (let i = 0; i < salesRows.length; i += BATCH) {
       const batch = salesRows.slice(i, i + BATCH)
       const { error } = await supabase
@@ -78,12 +79,13 @@ serve(async (req) => {
         .upsert(batch, { onConflict: 'user_id,external_order_id' })
       if (error) {
         console.error('Sales upsert error:', error)
+        failed += batch.length
       } else {
         upserted += batch.length
       }
     }
 
-    return json(200, { platform: 'tcgplayer', sales_upserted: upserted, skipped })
+    return json(200, { platform: 'tcgplayer', sales_upserted: upserted, skipped, failed })
   } catch (error: unknown) {
     console.error('Import error:', error)
     return json(500, { error: error instanceof Error ? error.message : 'Unknown error' })

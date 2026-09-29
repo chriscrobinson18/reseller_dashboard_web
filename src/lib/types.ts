@@ -283,6 +283,7 @@ export type TcgPlayerImportResult = {
   platform: 'tcgplayer'
   sales_upserted: number
   skipped: number
+  failed: number
 }
 
 export interface CSVGroup {
