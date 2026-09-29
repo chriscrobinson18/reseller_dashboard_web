@@ -18,6 +18,19 @@ import { paymentMethodLabel } from '../lib/paymentMethods'
 import type { Sale } from '../lib/types'
 import TradeDetailSlideOver from '../components/TradeDetailSlideOver'
 
+const FEE_LABELS: Record<string, string> = {
+  final_value_fee_fixed: 'FVF (fixed)',
+  final_value_fee_variable: 'FVF (variable)',
+  promoted_listing_standard: 'Promoted Listing',
+  regulatory_operating: 'Regulatory',
+  international: 'International',
+  below_standard_performance: 'Below Standard',
+  item_not_as_described: 'INAD Fee',
+  deposit_processing: 'Deposit Processing',
+  payment_dispute: 'Payment Dispute',
+  charity_donation: 'Charity',
+}
+
 async function fetchSales(start: string | null, end: string | null): Promise<{
   sales: Sale[]
   netPayoutBySale: Record<string, number>
@@ -253,6 +266,7 @@ function SaleDetail({ sale, netPayoutBySale, onLinkItem, onEdit, onDelete, onPro
           { label: 'Quantity', value: String(sale.quantity) },
           { label: 'Platform Fees', value: formatUSD(displayFees) },
           { label: 'Shipping', value: displayShipping != null ? formatUSD(displayShipping) : '—' },
+          ...(sale.discount ? [{ label: 'Discount', value: formatUSD(sale.discount) }] : []),
           { label: 'Net Payout', value: formatUSD(netPayout), negative: netPayout < 0 },
           { label: 'Order ID', value: sale.external_order_id || '—' },
         ].map(({ label, value, negative }) => (
@@ -314,35 +328,46 @@ function SaleDetail({ sale, netPayoutBySale, onLinkItem, onEdit, onDelete, onPro
       </div>
 
       {/* Profitability */}
-      {hasCogsData && (
-        <div className="bg-gray-50 rounded-xl p-4">
-          <div className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">Profitability</div>
-          {[
-            { label: 'Revenue', value: netRevenue },
-            { label: 'COGS', value: -cogs },
-            { label: 'Fees', value: -displayFees },
-            { label: 'Shipping', value: -(displayShipping ?? 0) },
-          ].map(({ label, value }) => (
-            <div key={label} className="flex justify-between py-0.5 text-xs">
-              <span className="text-gray-600">{label}</span>
-              <span className={`tabular-nums font-medium ${value < 0 ? 'text-red-500' : 'text-gray-800'}`}>
-                {formatUSD(value)}
+      {hasCogsData && (() => {
+        const feeLines = sale.fee_breakdown
+          ? Object.entries(sale.fee_breakdown)
+              .filter(([, v]) => v !== 0)
+              .map(([key, value]) => ({ label: FEE_LABELS[key] ?? key.replace(/_/g, ' '), value: -Math.abs(value) }))
+          : [{ label: 'Fees', value: -displayFees }]
+
+        const profitLines = [
+          { label: 'Revenue', value: netRevenue },
+          { label: 'COGS', value: -cogs },
+          ...feeLines,
+          ...(displayShipping != null && displayShipping !== 0 ? [{ label: 'Shipping Label', value: -displayShipping }] : []),
+          ...(sale.discount ? [{ label: 'Discount', value: -sale.discount }] : []),
+        ]
+
+        return (
+          <div className="bg-gray-50 rounded-xl p-4">
+            <div className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">Profitability</div>
+            {profitLines.map(({ label, value }) => (
+              <div key={label} className="flex justify-between py-0.5 text-xs">
+                <span className={`${sale.fee_breakdown && label !== 'Revenue' && label !== 'COGS' ? 'text-gray-400 pl-2' : 'text-gray-600'}`}>{label}</span>
+                <span className={`tabular-nums font-medium ${value < 0 ? 'text-red-500' : 'text-gray-800'}`}>
+                  {formatUSD(value)}
+                </span>
+              </div>
+            ))}
+            <div className="flex justify-between pt-2 border-t border-gray-200 mt-1 text-sm">
+              <span className="font-semibold text-gray-900">Net Profit</span>
+              <span className={`font-bold tabular-nums ${profit >= 0 ? 'text-green-600' : 'text-red-500'}`}>
+                {formatUSD(profit)}
               </span>
             </div>
-          ))}
-          <div className="flex justify-between pt-2 border-t border-gray-200 mt-1 text-sm">
-            <span className="font-semibold text-gray-900">Net Profit</span>
-            <span className={`font-bold tabular-nums ${profit >= 0 ? 'text-green-600' : 'text-red-500'}`}>
-              {formatUSD(profit)}
-            </span>
+            {netRevenue > 0 && (
+              <div className="text-xs text-gray-400 text-right mt-0.5">
+                {((profit / netRevenue) * 100).toFixed(1)}% margin
+              </div>
+            )}
           </div>
-          {netRevenue > 0 && (
-            <div className="text-xs text-gray-400 text-right mt-0.5">
-              {((profit / netRevenue) * 100).toFixed(1)}% margin
-            </div>
-          )}
-        </div>
-      )}
+        )
+      })()}
     </div>
   )
 }
