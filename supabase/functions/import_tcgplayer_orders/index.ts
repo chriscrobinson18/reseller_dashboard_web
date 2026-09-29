@@ -30,7 +30,8 @@ type TcgOrder = {
 serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: CORS })
   try {
-    const authHeader = req.headers.get('Authorization')!
+    const authHeader = req.headers.get('Authorization')
+    if (!authHeader) return json(401, { error: 'Unauthorized' })
     const token = authHeader.replace('Bearer ', '')
     const supabase = createClient(
       Deno.env.get('SUPABASE_URL') ?? '',
@@ -47,7 +48,7 @@ serve(async (req) => {
     let skipped = 0
 
     for (const o of orders) {
-      if (o.orderStatus === 'Canceled') { skipped++; continue }
+      if (!o.orderNumber || o.orderStatus === 'Canceled') { skipped++; continue }
 
       const rs = (o.refundStatus ?? '').toLowerCase()
       const returnStatus = rs.includes('full') ? 'full' : rs.includes('partial') ? 'partial' : 'none'
@@ -62,7 +63,7 @@ serve(async (req) => {
         fees: o.feeAmount,
         net_payout: o.netAmount,
         return_status: returnStatus,
-        sold_at: o.orderDate.slice(0, 10),
+        sold_at: (o.orderDate ?? '').slice(0, 10),
         inventory_status: 'ok',
         refunded_quantity: 0,
         deleted_at: null,
