@@ -463,7 +463,7 @@ export default function SettingsPage() {
           <CSVImportCard
             platform="amazon"
             label="Amazon"
-            description="Seller Central → Reports → Payments → Transaction View"
+            description="Seller Central → Reports → Payments → Date Range Reports (or Transaction View)"
             state={amazonState}
             inputRef={amazonRef}
             onPick={() => amazonRef.current?.click()}
