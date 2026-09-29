@@ -68,6 +68,7 @@ serve(async (req) => {
         : products.length === 1
           ? (products[0].name || 'TCGPlayer Sale')
           : `${products[0].name || 'Item'} + ${products.length - 1} more`
+      const totalQty = products.reduce((s, p) => s + (p.quantity ?? 1), 0) || 1
 
       salesRows.push({
         user_id: user.id,
@@ -75,6 +76,7 @@ serve(async (req) => {
         source: 'tcgplayer',
         external_order_id: o.orderNumber,
         item_name: itemName,
+        quantity: totalQty,
         sale_price: o.productAmount,
         shipping_cost: o.shippingAmount,
         fees: o.feeAmount,
