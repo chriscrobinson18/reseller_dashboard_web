@@ -49,11 +49,15 @@ export interface Sale {
   item_id?: string
   item_name?: string | null
   platform?: string
-  source: 'manual' | 'csv_import' | 'plaid' | 'trade'
+  source: 'manual' | 'csv_import' | 'plaid' | 'trade' | 'ebay'
   quantity: number
   sale_price: number
   fees: number
   shipping_cost?: number
+  /** Itemized fee breakdown from eBay Order Earnings. Null for non-eBay sales. */
+  fee_breakdown?: Record<string, number> | null
+  /** Discount amount from eBay Order Earnings. Null when no discount. */
+  discount?: number | null
   net_payout?: number
   external_order_id?: string
   /** How the buyer paid — see lib/paymentMethods.ts. Orthogonal to `platform`. */
@@ -266,6 +270,7 @@ export type CSVImportResult = {
   rows_skipped: number
   skipped_breakdown?: Record<string, number>
   amazon_format?: string  // 'transaction_view' | 'settlement_report'
+  sales_upserted?: number
 }
 
 export type CSVSaleSyncResult = {
