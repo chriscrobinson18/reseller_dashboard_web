@@ -488,7 +488,7 @@ export default function SettingsPage() {
         <div className="flex items-center justify-between">
           <h2 className="text-lg font-semibold text-gray-900">Settlement Status</h2>
           <div className="flex items-center gap-3">
-            {csvGroups.filter(g => !isLinkedGroup(g)).length > 0 && (
+            {csvGroups.filter(g => !isLinkedGroup(g) && getExpectedDeposit(g) !== undefined).length > 0 && (
               <button
                 type="button"
                 onClick={handleAutoMatch}
@@ -498,14 +498,16 @@ export default function SettingsPage() {
                 {autoMatchState.phase === 'running' ? 'Matching…' : 'Auto-Match'}
               </button>
             )}
-            {csvGroups.length > 0 && (
-              <span className={`text-sm font-medium ${
-                csvGroups.filter(isLinkedGroup).length === csvGroups.length
-                  ? 'text-green-600' : 'text-amber-600'
-              }`}>
-                {csvGroups.filter(isLinkedGroup).length} of {csvGroups.length} matched
-              </span>
-            )}
+            {(() => {
+              const matchable = csvGroups.filter(g => getExpectedDeposit(g) !== undefined)
+              const matched = matchable.filter(isLinkedGroup).length
+              if (matchable.length === 0) return null
+              return (
+                <span className={`text-sm font-medium ${matched === matchable.length ? 'text-green-600' : 'text-amber-600'}`}>
+                  {matched} of {matchable.length} matched
+                </span>
+              )
+            })()}
           </div>
         </div>
         {autoMatchState.phase === 'done' && (
