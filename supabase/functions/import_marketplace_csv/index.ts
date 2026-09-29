@@ -269,6 +269,17 @@ serve(async (req) => {
                 csv_transaction_id: `amz_dr_${settlementId}_${safeOrder}_refund`,
                 csv_group_id: groupId, notes: orderId || null, parent_settlement_id: null })
             } else { trackSkip('refund_zero') }
+            // Capture selling fee reversal (positive = Amazon crediting fee back).
+            // Stored as positive commissions_fees so sync's signed arithmetic nets it against original fee.
+            if (sellingFees !== 0) {
+              rowsParsed++
+              transactions.push({ user_id: user.id, date, amount: sellingFees, gross_amount: null,
+                merchant: 'Amazon Fee Reversal',
+                type: 'other', source: 'csv_import', platform: 'amazon',
+                schedule_c_category: 'commissions_fees', record_type: 'transaction',
+                csv_transaction_id: `amz_dr_${settlementId}_${safeOrder}_fee_reversal`,
+                csv_group_id: groupId, notes: orderId || null, parent_settlement_id: null })
+            }
 
           } else if (type === 'Transfer') {
             if (total !== 0) {

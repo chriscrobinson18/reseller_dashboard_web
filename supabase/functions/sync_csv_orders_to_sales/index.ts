@@ -1,6 +1,7 @@
-// sync_csv_orders_to_sales v3
-// Fix: return_status='none' instead of null — sales table is NOT NULL on this column.
-// Prior: sync_csv_orders_to_sales v2
+// sync_csv_orders_to_sales v4
+// Fix: fees use signed arithmetic (entry.fees -= amount) so positive fee reversals
+//      (e.g. Amazon DR Refund fee_reversal transactions) reduce fees rather than inflating them.
+// Prior: sync_csv_orders_to_sales v3
 // Groups csv_import transactions by order ref (notes field) and upserts
 // unlinked sales rows. Fixes three mobile bugs:
 //   1. shipping_postage rows were unreachable dead code — now included
@@ -107,7 +108,8 @@ serve(async (req) => {
           entry.refundedAmount += Math.abs(amount)
         }
       } else if (cat === "commissions_fees") {
-        entry.fees += Math.abs(amount)
+        // Signed: negative = fee cost, positive = fee reversal (e.g. on returns)
+        entry.fees -= amount
       } else if (cat === "shipping_postage") {
         entry.shippingCost += Math.abs(amount)
       }
