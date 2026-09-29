@@ -168,15 +168,23 @@
         if ((i + 1) % 3 === 0) await sleep(1000)
       }
 
+      // Deduplicate by orderNumber (safety net in case API returns duplicates across pages)
+      const seen = new Set()
+      const deduped = enriched.filter(o => {
+        if (!o.orderNumber || seen.has(o.orderNumber)) return false
+        seen.add(o.orderNumber)
+        return true
+      })
+
       const filename = `tcgplayer-orders-${new Date().toISOString().slice(0, 10)}.json`
-      const blob = new Blob([JSON.stringify(enriched, null, 2)], { type: 'application/json' })
+      const blob = new Blob([JSON.stringify(deduped, null, 2)], { type: 'application/json' })
       const url = URL.createObjectURL(blob)
       const a = document.createElement('a')
       a.href = url
       a.download = filename
       a.click()
       URL.revokeObjectURL(url)
-      btn.textContent = `✓ Exported ${enriched.length} orders`
+      btn.textContent = `✓ Exported ${deduped.length} orders`
     } catch (err) {
       btn.textContent = 'Export failed — see console'
       console.error('[RDB TCGPlayer Export]', err)
