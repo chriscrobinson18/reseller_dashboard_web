@@ -14,10 +14,11 @@ import BankConnectionsSection from './settings/BankConnectionsSection'
 import CustomCategoriesList from '../components/CustomCategoriesList'
 import ShortcutsSettingsCard from '../components/ShortcutsSettingsCard'
 import DuplicateConnectionModal from '../components/modals/DuplicateConnectionModal'
-import { importMarketplaceCSV, syncCSVOrders } from '../lib/mutations'
+import { importMarketplaceCSV, syncCSVOrders, linkCSVGroupToSettlement } from '../lib/mutations'
 import type { CSVImportResult, CSVSaleSyncResult, FindOrphansResult } from '../lib/types'
 import ConfirmDialog from '../components/ConfirmDialog'
 import { useCSVGroups, isLinkedGroup, getExpectedDeposit } from '../lib/queries'
+import { supabase } from '../lib/supabase'
 import CSVGroupDetailSlideOver from '../components/CSVGroupDetailSlideOver'
 import type { CSVGroup } from '../lib/types'
 import ReturnReconciliationSection from '../components/ReturnReconciliationSection'
@@ -46,6 +47,11 @@ export default function SettingsPage() {
   const [settlementPlatform, setSettlementPlatform] = useState<'ebay' | 'amazon'>('ebay')
   const { data: csvGroups = [], isLoading: groupsLoading } = useCSVGroups(settlementPlatform)
   const [selectedGroup, setSelectedGroup] = useState<CSVGroup | null>(null)
+  const [autoMatchState, setAutoMatchState] = useState<
+    | { phase: 'idle' }
+    | { phase: 'running' }
+    | { phase: 'done'; matched: number; skipped: number }
+  >({ phase: 'idle' })
 
   const [ebayState, setEbayState] = useState<ImportState>({ phase: 'idle' })
   const [amazonState, setAmazonState] = useState<ImportState>({ phase: 'idle' })
@@ -122,6 +128,38 @@ export default function SettingsPage() {
       const msg = e instanceof Error ? e.message : 'Import failed'
       setState({ phase: 'error', message: msg })
     }
+  }
+
+  async function handleAutoMatch() {
+    const unlinked = csvGroups.filter(g => !isLinkedGroup(g))
+    if (unlinked.length === 0) return
+    setAutoMatchState({ phase: 'running' })
+    let matched = 0, skipped = 0
+    for (const g of unlinked) {
+      const expected = getExpectedDeposit(g)
+      if (expected === undefined) { skipped++; continue }
+      const dates = g.transactions.map(t => t.date).sort()
+      const dateMin = dates[0]
+      const dateMax = dates[dates.length - 1]
+      const searchEnd = dateMax
+        ? new Date(new Date(dateMax).getTime() + 14 * 86400000).toISOString().slice(0, 10)
+        : undefined
+      const { data } = await supabase
+        .from('transactions')
+        .select('id')
+        .eq('source', 'plaid')
+        .eq('amount', expected)
+        .gte('date', dateMin ?? '2000-01-01')
+        .lte('date', searchEnd ?? '2100-01-01')
+      if (data?.length === 1) {
+        await linkCSVGroupToSettlement(g.groupId, data[0].id, settlementPlatform)
+        matched++
+      } else {
+        skipped++
+      }
+    }
+    setAutoMatchState({ phase: 'done', matched, skipped })
+    qc.invalidateQueries({ queryKey: ['csv-groups', settlementPlatform] })
   }
 
   function invalidatePlaid() {
@@ -449,15 +487,33 @@ export default function SettingsPage() {
       <section className="space-y-3">
         <div className="flex items-center justify-between">
           <h2 className="text-lg font-semibold text-gray-900">Settlement Status</h2>
-          {csvGroups.length > 0 && (
-            <span className={`text-sm font-medium ${
-              csvGroups.filter(isLinkedGroup).length === csvGroups.length
-                ? 'text-green-600' : 'text-amber-600'
-            }`}>
-              {csvGroups.filter(isLinkedGroup).length} of {csvGroups.length} matched
-            </span>
-          )}
+          <div className="flex items-center gap-3">
+            {csvGroups.filter(g => !isLinkedGroup(g)).length > 0 && (
+              <button
+                type="button"
+                onClick={handleAutoMatch}
+                disabled={autoMatchState.phase === 'running'}
+                className="text-sm font-medium text-blue-600 hover:text-blue-700 disabled:opacity-50"
+              >
+                {autoMatchState.phase === 'running' ? 'Matching…' : 'Auto-Match'}
+              </button>
+            )}
+            {csvGroups.length > 0 && (
+              <span className={`text-sm font-medium ${
+                csvGroups.filter(isLinkedGroup).length === csvGroups.length
+                  ? 'text-green-600' : 'text-amber-600'
+              }`}>
+                {csvGroups.filter(isLinkedGroup).length} of {csvGroups.length} matched
+              </span>
+            )}
+          </div>
         </div>
+        {autoMatchState.phase === 'done' && (
+          <div className="text-xs text-gray-500 bg-gray-50 border border-gray-200 rounded-lg px-3 py-2">
+            Auto-matched {autoMatchState.matched} of {autoMatchState.matched + autoMatchState.skipped} groups.
+            {autoMatchState.skipped > 0 && ` ${autoMatchState.skipped} need manual review.`}
+          </div>
+        )}
 
         {/* Platform toggle */}
         <div className="flex rounded-lg border border-gray-200 overflow-hidden w-fit">
@@ -465,7 +521,7 @@ export default function SettingsPage() {
             <button
               key={p}
               type="button"
-              onClick={() => setSettlementPlatform(p)}
+              onClick={() => { setSettlementPlatform(p); setAutoMatchState({ phase: 'idle' }) }}
               className={`px-4 py-1.5 text-sm font-medium ${
                 settlementPlatform === p
                   ? 'bg-gray-900 text-white'
