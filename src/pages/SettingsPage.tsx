@@ -14,8 +14,8 @@ import BankConnectionsSection from './settings/BankConnectionsSection'
 import CustomCategoriesList from '../components/CustomCategoriesList'
 import ShortcutsSettingsCard from '../components/ShortcutsSettingsCard'
 import DuplicateConnectionModal from '../components/modals/DuplicateConnectionModal'
-import { importMarketplaceCSV, syncCSVOrders, linkCSVGroupToSettlement } from '../lib/mutations'
-import type { CSVImportResult, CSVSaleSyncResult, FindOrphansResult } from '../lib/types'
+import { importMarketplaceCSV, syncCSVOrders, linkCSVGroupToSettlement, importTCGPlayerOrders } from '../lib/mutations'
+import type { CSVImportResult, CSVSaleSyncResult, FindOrphansResult, TcgPlayerImportResult } from '../lib/types'
 import ConfirmDialog from '../components/ConfirmDialog'
 import { useCSVGroups, isLinkedGroup, getExpectedDeposit } from '../lib/queries'
 import { supabase } from '../lib/supabase'
@@ -57,11 +57,13 @@ export default function SettingsPage() {
   const [amazonState, setAmazonState] = useState<ImportState>({ phase: 'idle' })
   const [mercariState, setMercariState] = useState<ImportState>({ phase: 'idle' })
   const [ebayOEState, setEbayOEState] = useState<ImportState>({ phase: 'idle' })
+  const [tcgState, setTcgState] = useState<ImportState>({ phase: 'idle' })
 
   const ebayRef = useRef<HTMLInputElement>(null)
   const amazonRef = useRef<HTMLInputElement>(null)
   const mercariRef = useRef<HTMLInputElement>(null)
   const ebayOERef = useRef<HTMLInputElement>(null)
+  const tcgRef = useRef<HTMLInputElement>(null)
 
   // ── Plaid dedup state ──
   const [dedupState, setDedupState] = useState<
@@ -127,6 +129,27 @@ export default function SettingsPage() {
       console.error('Import error:', e)
       const msg = e instanceof Error ? e.message : 'Import failed'
       setState({ phase: 'error', message: msg })
+    }
+  }
+
+  async function handleTCGImport(file: File) {
+    setTcgState({ phase: 'importing' })
+    try {
+      const result: TcgPlayerImportResult = await importTCGPlayerOrders(file)
+      setTcgState({
+        phase: 'done',
+        importResult: {
+          platform: 'tcgplayer',
+          rows_parsed: result.sales_upserted + result.skipped,
+          rows_skipped: result.skipped,
+          sales_upserted: result.sales_upserted,
+        },
+        syncResult: { created: result.sales_upserted, updated: 0, removed: 0 },
+      })
+      qc.invalidateQueries({ queryKey: ['sales'] })
+    } catch (e: unknown) {
+      console.error('TCGPlayer import error:', e)
+      setTcgState({ phase: 'error', message: e instanceof Error ? e.message : 'Import failed' })
     }
   }
 
@@ -480,6 +503,17 @@ export default function SettingsPage() {
             onFile={file => handleImport('mercari', file, setMercariState)}
             onReset={() => setMercariState({ phase: 'idle' })}
           />
+          <CSVImportCard
+            platform="tcgplayer"
+            label="TCGPlayer"
+            description="Install the TCGPlayer userscript, then upload the exported JSON"
+            state={tcgState}
+            inputRef={tcgRef}
+            onPick={() => tcgRef.current?.click()}
+            onFile={handleTCGImport}
+            onReset={() => setTcgState({ phase: 'idle' })}
+            accept=".json"
+          />
         </div>
       </section>
 
@@ -647,9 +681,10 @@ type CSVImportCardProps = {
   onPick: () => void
   onFile: (file: File) => void
   onReset: () => void
+  accept?: string
 }
 
-function CSVImportCard({ platform: _platform, label, description, state, inputRef, onPick, onFile, onReset }: CSVImportCardProps) {
+function CSVImportCard({ platform: _platform, label, description, state, inputRef, onPick, onFile, onReset, accept = '.csv' }: CSVImportCardProps) {
   const busy = state.phase === 'importing' || state.phase === 'syncing'
 
   return (
@@ -702,7 +737,7 @@ function CSVImportCard({ platform: _platform, label, description, state, inputRe
         <input
           ref={inputRef}
           type="file"
-          accept=".csv"
+          accept={accept}
           className="hidden"
           onChange={e => {
             const file = e.target.files?.[0]
