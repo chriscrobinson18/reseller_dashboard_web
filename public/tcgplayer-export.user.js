@@ -1,11 +1,10 @@
 // ==UserScript==
 // @name         TCGPlayer Export for Reseller Dashboard
 // @namespace    https://sellerportal.tcgplayer.com
-// @version      2.1
+// @version      2.2
 // @description  Export orders matching the current portal filter for Reseller Dashboard import
 // @match        https://sellerportal.tcgplayer.com/*
-// @grant        GM_xmlhttpRequest
-// @connect      order-management-api.tcgplayer.com
+// @grant        none
 // ==/UserScript==
 
 (function () {
@@ -23,24 +22,23 @@
     LastTwoYears: 'Last 2 years',
   }
 
-  // ── GM_xmlhttpRequest wrapper (bypasses CORS, sends session cookies) ─────────
+  // ── Intercept portal's fetch to capture Authorization header ─────────────────
+  // The API requires a Bearer token the portal sets — we piggyback on it.
 
-  function gmFetch(url, options = {}) {
-    return new Promise((resolve, reject) => {
-      GM_xmlhttpRequest({
-        method: options.method || 'GET',
-        url,
-        headers: { 'Content-Type': 'application/json', ...(options.headers || {}) },
-        data: options.body,
-        withCredentials: true,
-        onload: (res) => resolve({
-          ok: res.status >= 200 && res.status < 300,
-          status: res.status,
-          json: () => Promise.resolve(JSON.parse(res.responseText)),
-        }),
-        onerror: (err) => reject(new Error(`Request failed: ${JSON.stringify(err)}`)),
-      })
-    })
+  let capturedAuth = null
+  const origFetch = window.fetch.bind(window)
+
+  window.fetch = async function (input, init) {
+    const url = typeof input === 'string' ? input
+      : (input instanceof Request ? input.url : String(input))
+    if (url.includes('order-management-api.tcgplayer.com') && init) {
+      const h = init.headers
+      const auth = h instanceof Headers
+        ? (h.get('Authorization') || h.get('authorization'))
+        : (h?.['Authorization'] || h?.['authorization'])
+      if (auth) capturedAuth = auth
+    }
+    return origFetch(input, init)
   }
 
   // ── Read current filter from URL ────────────────────────────────────────────
@@ -58,11 +56,19 @@
     return { searchRange, sortBy }
   }
 
-  // ── API helpers ─────────────────────────────────────────────────────────────
+  function authHeaders() {
+    const h = { 'Content-Type': 'application/json' }
+    if (capturedAuth) h['Authorization'] = capturedAuth
+    return h
+  }
+
+  // ── API helpers (use origFetch with captured auth) ───────────────────────────
 
   async function detectSellerKey(searchRange, sortBy) {
-    const res = await gmFetch(`${BASE}/orders/search?api-version=2.0`, {
+    const res = await origFetch(`${BASE}/orders/search?api-version=2.0`, {
       method: 'POST',
+      credentials: 'include',
+      headers: authHeaders(),
       body: JSON.stringify({ searchRange, filters: {}, sortBy, from: 0, size: 1 }),
     })
     if (!res.ok) throw new Error(`Failed to detect seller key: ${res.status}`)
@@ -77,8 +83,10 @@
     let from = 0
     let total = Infinity
     while (from < total) {
-      const res = await gmFetch(`${BASE}/orders/search?api-version=2.0`, {
+      const res = await origFetch(`${BASE}/orders/search?api-version=2.0`, {
         method: 'POST',
+        credentials: 'include',
+        headers: authHeaders(),
         body: JSON.stringify({
           searchRange,
           filters: { sellerKey },
@@ -97,7 +105,10 @@
   }
 
   async function fetchOrderDetail(orderNumber) {
-    const res = await gmFetch(`${BASE}/orders/${orderNumber}?api-version=2.0`)
+    const res = await origFetch(`${BASE}/orders/${orderNumber}?api-version=2.0`, {
+      credentials: 'include',
+      headers: authHeaders(),
+    })
     if (!res.ok) throw new Error(`Detail fetch failed for ${orderNumber}: ${res.status}`)
     return res.json()
   }
@@ -109,6 +120,10 @@
   async function exportOrders() {
     if (!window.location.pathname.startsWith('/orders')) {
       alert('Navigate to the Orders page first, then click Export.')
+      return
+    }
+    if (!capturedAuth) {
+      alert('Auth not captured yet — scroll the orders list to trigger a page load, then try again.')
       return
     }
 
