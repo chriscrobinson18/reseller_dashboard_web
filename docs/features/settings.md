@@ -139,12 +139,24 @@ that used to be listed as pending are now shipped:
 
 ## Marketplace CSV Import
 
-A "Marketplace CSV Import" section (after Custom Categories) has three platform cards — eBay, Amazon, Mercari — each with an "Import CSV" button. Selecting a `.csv` file triggers a two-step flow:
+A "Marketplace CSV Import" section (after Custom Categories) has four platform cards — eBay, Amazon, Mercari, TCGPlayer — each with an "Import" button (CSV for the first three; JSON for TCGPlayer). Selecting a file triggers a two-step flow:
 
 1. **`import_marketplace_csv` edge function (v16)** — parses the CSV and upserts rows into `transactions` with `source='csv_import'`, `platform=<platform>`, and `csv_group_id` linking rows that belong to the same settlement period
 2. **`sync_csv_orders_to_sales` edge function (v1)** — groups those transactions by order ref (`notes` field) and upserts `sales` rows with `source='ebay'|'amazon'|'csv_import'`, `external_order_id=<orderRef>`, `item_id=null` (unlinked)
 
 A result banner shows rows imported and sales created/updated.
+
+### TCGPlayer
+Upload the JSON exported by the TCGPlayer Tampermonkey userscript
+(`tampermonkey/tcgplayer-export.user.js`). The script calls TCGPlayer's internal
+order-management API to get exact fee and net payout per order, then downloads a
+JSON file. Upload that file here.
+
+- Upserts directly into `sales` (no `transactions` intermediate, no sync step).
+- `source = 'tcgplayer'`, `external_order_id = orderNumber`.
+- Canceled orders are skipped. `refundStatus` maps to `return_status`.
+- Re-import safe: upsert on `(user_id, external_order_id)`.
+- No settlement/payout matching (TCGPlayer pays Mon/Thu but exposes no payout ID).
 
 ## Settlement Status
 
