@@ -257,9 +257,12 @@ serve(async (req) => {
             } else { trackSkip('shipping_zero') }
 
           } else if (type === 'Refund') {
-            if (total !== 0) {
+            // Use productSales (gross product refund, negative) not total (net after fee reversals).
+            // This keeps refund amounts on the same basis as Order productSales so the sync can
+            // correctly compare refundedAmount >= grossRevenue for full-return detection.
+            if (productSales !== 0) {
               rowsParsed++
-              transactions.push({ user_id: user.id, date, amount: total, gross_amount: null,
+              transactions.push({ user_id: user.id, date, amount: productSales, gross_amount: null,
                 merchant: description || (orderId ? `Amazon Refund ${orderId}` : 'Amazon Refund'),
                 type: 'other', source: 'csv_import', platform: 'amazon',
                 schedule_c_category: 'payout', record_type: 'transaction',
