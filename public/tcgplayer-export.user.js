@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         TCGPlayer Export for Reseller Dashboard
 // @namespace    https://sellerportal.tcgplayer.com
-// @version      2.3
+// @version      2.4
 // @description  Export orders matching the current portal filter for Reseller Dashboard import
 // @match        https://sellerportal.tcgplayer.com/*
 // @grant        none
@@ -22,59 +22,54 @@
     LastTwoYears: 'Last 2 years',
   }
 
-  // ── Cookie helpers ───────────────────────────────────────────────────────────
+  // ── Intercept portal fetch to capture its exact headers + sellerKey ──────────
+  // We replay these verbatim so we never need to know what auth mechanism is used.
 
-  function getCookie(name) {
-    const match = document.cookie.match(new RegExp('(?:^|; )' + name + '=([^;]*)'))
-    return match ? decodeURIComponent(match[1]) : null
-  }
+  let capturedHeaders = null   // exact headers the portal sends to the API
+  let capturedSellerKey = null // extracted from the portal's own request body
 
-  function getSellerKey() {
-    return getCookie('LastSeller')
-  }
+  const origFetch = window.fetch.bind(window)
 
-  function getCSRFToken() {
-    // ASP.NET sets __RequestVerificationToken_<base64-path>=<token>
-    const match = document.cookie.match(/(?:^|; )__RequestVerificationToken_[^=]+=([^;]*)/)
-    return match ? decodeURIComponent(match[1]) : null
-  }
+  window.fetch = async function (input, init) {
+    const url = typeof input === 'string' ? input
+      : (input instanceof Request ? input.url : String(input))
 
-  function buildHeaders() {
-    const h = {
-      'Content-Type': 'application/json',
-      'Accept': 'application/json, text/plain, */*',
+    if (url.includes('order-management-api.tcgplayer.com') && init?.headers) {
+      // Clone headers into a plain object
+      const h = init.headers
+      const headers = {}
+      if (h instanceof Headers) {
+        h.forEach((v, k) => { headers[k] = v })
+      } else {
+        Object.assign(headers, h)
+      }
+      capturedHeaders = headers
+
+      // Extract sellerKey from request body
+      if (typeof init.body === 'string') {
+        try {
+          const body = JSON.parse(init.body)
+          if (body.filters?.sellerKey) capturedSellerKey = body.filters.sellerKey
+        } catch {}
+      }
+
+      updateButton()
     }
-    const csrf = getCSRFToken()
-    if (csrf) h['RequestVerificationToken'] = csrf
-    return h
+
+    return origFetch(input, init)
   }
 
-  // ── Read current filter from URL ────────────────────────────────────────────
-
-  function getExportParams() {
-    const params = new URLSearchParams(window.location.search)
-    const searchRange = params.get('searchRange') || 'LastThreeMonths'
-    const sortByRaw = params.getAll('sortBy')
-    const sortBy = sortByRaw.length > 0
-      ? sortByRaw.map(s => {
-          const [field, dir] = s.split(',')
-          return { sortingType: field, direction: dir === 'desc' ? 'descending' : 'ascending' }
-        })
-      : [{ sortingType: 'orderDate', direction: 'ascending' }]
-    return { searchRange, sortBy }
-  }
-
-  // ── API helpers ─────────────────────────────────────────────────────────────
+  // ── API helpers (use captured headers verbatim) ──────────────────────────────
 
   async function fetchAllOrders(searchRange, sortBy, sellerKey) {
     const orders = []
     let from = 0
     let total = Infinity
     while (from < total) {
-      const res = await fetch(`${BASE}/orders/search?api-version=2.0`, {
+      const res = await origFetch(`${BASE}/orders/search?api-version=2.0`, {
         method: 'POST',
         credentials: 'include',
-        headers: buildHeaders(),
+        headers: capturedHeaders,
         body: JSON.stringify({
           searchRange,
           filters: { sellerKey },
@@ -93,15 +88,30 @@
   }
 
   async function fetchOrderDetail(orderNumber) {
-    const res = await fetch(`${BASE}/orders/${orderNumber}?api-version=2.0`, {
+    const res = await origFetch(`${BASE}/orders/${orderNumber}?api-version=2.0`, {
       credentials: 'include',
-      headers: buildHeaders(),
+      headers: capturedHeaders,
     })
     if (!res.ok) throw new Error(`Detail fetch failed for ${orderNumber}: ${res.status}`)
     return res.json()
   }
 
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
+
+  // ── Read current filter from URL ────────────────────────────────────────────
+
+  function getExportParams() {
+    const params = new URLSearchParams(window.location.search)
+    const searchRange = params.get('searchRange') || 'LastThreeMonths'
+    const sortByRaw = params.getAll('sortBy')
+    const sortBy = sortByRaw.length > 0
+      ? sortByRaw.map(s => {
+          const [field, dir] = s.split(',')
+          return { sortingType: field, direction: dir === 'desc' ? 'descending' : 'ascending' }
+        })
+      : [{ sortingType: 'orderDate', direction: 'ascending' }]
+    return { searchRange, sortBy }
+  }
 
   // ── Export flow ─────────────────────────────────────────────────────────────
 
@@ -110,10 +120,8 @@
       alert('Navigate to the Orders page first, then click Export.')
       return
     }
-
-    const sellerKey = getSellerKey()
-    if (!sellerKey) {
-      alert('Could not detect seller key from cookies. Make sure you are logged in.')
+    if (!capturedHeaders || !capturedSellerKey) {
+      alert('Waiting for portal to load orders — scroll the list or change the date filter, then try again.')
       return
     }
 
@@ -123,7 +131,7 @@
     btn.disabled = true
 
     try {
-      const orders = await fetchAllOrders(searchRange, sortBy, sellerKey)
+      const orders = await fetchAllOrders(searchRange, sortBy, capturedSellerKey)
       const enriched = []
 
       for (let i = 0; i < orders.length; i++) {
@@ -162,11 +170,14 @@
     }
   }
 
-  // ── Button label reflects current URL filter ─────────────────────────────────
+  // ── Button label ─────────────────────────────────────────────────────────────
 
   function getButtonLabel() {
     if (!window.location.pathname.startsWith('/orders')) {
       return 'Export for Reseller Dashboard'
+    }
+    if (!capturedHeaders) {
+      return 'Export ↓ (loading…)'
     }
     const range = new URLSearchParams(window.location.search).get('searchRange')
     return range
