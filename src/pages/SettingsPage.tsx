@@ -506,13 +506,14 @@ export default function SettingsPage() {
           <CSVImportCard
             platform="tcgplayer"
             label="TCGPlayer"
-            description="Install the TCGPlayer userscript, then upload the exported JSON"
+            description="Run the TCGPlayer userscript on seller.tcgplayer.com, then upload the exported JSON"
             state={tcgState}
             inputRef={tcgRef}
             onPick={() => tcgRef.current?.click()}
             onFile={handleTCGImport}
             onReset={() => setTcgState({ phase: 'idle' })}
             accept=".json"
+            scriptHref="/tcgplayer-export.user.js"
           />
         </div>
       </section>
@@ -682,9 +683,10 @@ type CSVImportCardProps = {
   onFile: (file: File) => void
   onReset: () => void
   accept?: string
+  scriptHref?: string
 }
 
-function CSVImportCard({ platform: _platform, label, description, state, inputRef, onPick, onFile, onReset, accept = '.csv' }: CSVImportCardProps) {
+function CSVImportCard({ platform: _platform, label, description, state, inputRef, onPick, onFile, onReset, accept = '.csv', scriptHref }: CSVImportCardProps) {
   const busy = state.phase === 'importing' || state.phase === 'syncing'
 
   return (
@@ -692,6 +694,11 @@ function CSVImportCard({ platform: _platform, label, description, state, inputRe
       <div className="flex-1 min-w-0">
         <div className="font-medium text-gray-900 text-sm">{label}</div>
         <div className="text-xs text-gray-500 mt-0.5">{description}</div>
+        {scriptHref && (
+          <a href={scriptHref} target="_blank" rel="noreferrer" className="text-xs text-blue-600 hover:underline mt-0.5 inline-block">
+            Install userscript ↗
+          </a>
+        )}
 
         {/* Result banner */}
         {(state.phase === 'syncing' || state.phase === 'done') && (
