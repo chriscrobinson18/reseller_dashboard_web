@@ -59,6 +59,10 @@
   // ── Export flow ─────────────────────────────────────────────────────────────
 
   async function exportOrders() {
+    if (SELLER_KEY === 'REPLACE_WITH_YOUR_SELLER_KEY') {
+      alert('TCGPlayer Export: Edit the script and replace REPLACE_WITH_YOUR_SELLER_KEY with your seller key (lowercase prefix of any order number, e.g. "ae18d02e").')
+      return
+    }
     const choice = prompt(
       'Export date range:\n1 = Last 3 months\n2 = Last 6 months\n3 = Last year',
       '1'
@@ -77,6 +81,7 @@
 
       for (let i = 0; i < orders.length; i++) {
         btn.textContent = `Fetching order ${i + 1} of ${orders.length}…`
+        if (!orders[i].orderNumber) continue
         const detail = await fetchOrderDetail(orders[i].orderNumber)
         enriched.push({
           orderNumber: detail.orderNumber,
@@ -133,5 +138,5 @@
   // Re-inject after SPA navigation
   new MutationObserver(() => {
     if (!document.getElementById('rdb-tcg-export')) injectButton()
-  }).observe(document.body, { childList: true, subtree: false })
+  }).observe(document.body, { childList: true, subtree: true })
 })()
