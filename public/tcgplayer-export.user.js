@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         TCGPlayer Export for Reseller Dashboard
 // @namespace    https://sellerportal.tcgplayer.com
-// @version      2.2
+// @version      2.3
 // @description  Export orders matching the current portal filter for Reseller Dashboard import
 // @match        https://sellerportal.tcgplayer.com/*
 // @grant        none
@@ -22,23 +22,31 @@
     LastTwoYears: 'Last 2 years',
   }
 
-  // ── Intercept portal's fetch to capture Authorization header ─────────────────
-  // The API requires a Bearer token the portal sets — we piggyback on it.
+  // ── Cookie helpers ───────────────────────────────────────────────────────────
 
-  let capturedAuth = null
-  const origFetch = window.fetch.bind(window)
+  function getCookie(name) {
+    const match = document.cookie.match(new RegExp('(?:^|; )' + name + '=([^;]*)'))
+    return match ? decodeURIComponent(match[1]) : null
+  }
 
-  window.fetch = async function (input, init) {
-    const url = typeof input === 'string' ? input
-      : (input instanceof Request ? input.url : String(input))
-    if (url.includes('order-management-api.tcgplayer.com') && init) {
-      const h = init.headers
-      const auth = h instanceof Headers
-        ? (h.get('Authorization') || h.get('authorization'))
-        : (h?.['Authorization'] || h?.['authorization'])
-      if (auth) capturedAuth = auth
+  function getSellerKey() {
+    return getCookie('LastSeller')
+  }
+
+  function getCSRFToken() {
+    // ASP.NET sets __RequestVerificationToken_<base64-path>=<token>
+    const match = document.cookie.match(/(?:^|; )__RequestVerificationToken_[^=]+=([^;]*)/)
+    return match ? decodeURIComponent(match[1]) : null
+  }
+
+  function buildHeaders() {
+    const h = {
+      'Content-Type': 'application/json',
+      'Accept': 'application/json, text/plain, */*',
     }
-    return origFetch(input, init)
+    const csrf = getCSRFToken()
+    if (csrf) h['RequestVerificationToken'] = csrf
+    return h
   }
 
   // ── Read current filter from URL ────────────────────────────────────────────
@@ -56,37 +64,17 @@
     return { searchRange, sortBy }
   }
 
-  function authHeaders() {
-    const h = { 'Content-Type': 'application/json' }
-    if (capturedAuth) h['Authorization'] = capturedAuth
-    return h
-  }
-
-  // ── API helpers (use origFetch with captured auth) ───────────────────────────
-
-  async function detectSellerKey(searchRange, sortBy) {
-    const res = await origFetch(`${BASE}/orders/search?api-version=2.0`, {
-      method: 'POST',
-      credentials: 'include',
-      headers: authHeaders(),
-      body: JSON.stringify({ searchRange, filters: {}, sortBy, from: 0, size: 1 }),
-    })
-    if (!res.ok) throw new Error(`Failed to detect seller key: ${res.status}`)
-    const data = await res.json()
-    const first = data.orders?.[0]
-    if (!first?.orderNumber) throw new Error('No orders found in this date range')
-    return first.orderNumber.split('-')[0].toLowerCase()
-  }
+  // ── API helpers ─────────────────────────────────────────────────────────────
 
   async function fetchAllOrders(searchRange, sortBy, sellerKey) {
     const orders = []
     let from = 0
     let total = Infinity
     while (from < total) {
-      const res = await origFetch(`${BASE}/orders/search?api-version=2.0`, {
+      const res = await fetch(`${BASE}/orders/search?api-version=2.0`, {
         method: 'POST',
         credentials: 'include',
-        headers: authHeaders(),
+        headers: buildHeaders(),
         body: JSON.stringify({
           searchRange,
           filters: { sellerKey },
@@ -105,9 +93,9 @@
   }
 
   async function fetchOrderDetail(orderNumber) {
-    const res = await origFetch(`${BASE}/orders/${orderNumber}?api-version=2.0`, {
+    const res = await fetch(`${BASE}/orders/${orderNumber}?api-version=2.0`, {
       credentials: 'include',
-      headers: authHeaders(),
+      headers: buildHeaders(),
     })
     if (!res.ok) throw new Error(`Detail fetch failed for ${orderNumber}: ${res.status}`)
     return res.json()
@@ -122,18 +110,19 @@
       alert('Navigate to the Orders page first, then click Export.')
       return
     }
-    if (!capturedAuth) {
-      alert('Auth not captured yet — scroll the orders list to trigger a page load, then try again.')
+
+    const sellerKey = getSellerKey()
+    if (!sellerKey) {
+      alert('Could not detect seller key from cookies. Make sure you are logged in.')
       return
     }
 
     const { searchRange, sortBy } = getExportParams()
     const btn = document.getElementById('rdb-tcg-export')
-    btn.textContent = 'Detecting seller…'
+    btn.textContent = 'Fetching orders…'
     btn.disabled = true
 
     try {
-      const sellerKey = await detectSellerKey(searchRange, sortBy)
       const orders = await fetchAllOrders(searchRange, sortBy, sellerKey)
       const enriched = []
 
