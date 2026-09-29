@@ -1,10 +1,11 @@
 // ==UserScript==
 // @name         TCGPlayer Export for Reseller Dashboard
 // @namespace    https://sellerportal.tcgplayer.com
-// @version      2.0
+// @version      2.1
 // @description  Export orders matching the current portal filter for Reseller Dashboard import
 // @match        https://sellerportal.tcgplayer.com/*
-// @grant        none
+// @grant        GM_xmlhttpRequest
+// @connect      order-management-api.tcgplayer.com
 // ==/UserScript==
 
 (function () {
@@ -20,6 +21,26 @@
     LastSixMonths: 'Last 6 months',
     LastYear: 'Last year',
     LastTwoYears: 'Last 2 years',
+  }
+
+  // ── GM_xmlhttpRequest wrapper (bypasses CORS, sends session cookies) ─────────
+
+  function gmFetch(url, options = {}) {
+    return new Promise((resolve, reject) => {
+      GM_xmlhttpRequest({
+        method: options.method || 'GET',
+        url,
+        headers: { 'Content-Type': 'application/json', ...(options.headers || {}) },
+        data: options.body,
+        withCredentials: true,
+        onload: (res) => resolve({
+          ok: res.status >= 200 && res.status < 300,
+          status: res.status,
+          json: () => Promise.resolve(JSON.parse(res.responseText)),
+        }),
+        onerror: (err) => reject(new Error(`Request failed: ${JSON.stringify(err)}`)),
+      })
+    })
   }
 
   // ── Read current filter from URL ────────────────────────────────────────────
@@ -40,16 +61,14 @@
   // ── API helpers ─────────────────────────────────────────────────────────────
 
   async function detectSellerKey(searchRange, sortBy) {
-    const res = await fetch(`${BASE}/orders/search?api-version=2.0`, {
+    const res = await gmFetch(`${BASE}/orders/search?api-version=2.0`, {
       method: 'POST',
-      credentials: 'include',
-      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ searchRange, filters: {}, sortBy, from: 0, size: 1 }),
     })
     if (!res.ok) throw new Error(`Failed to detect seller key: ${res.status}`)
     const data = await res.json()
     const first = data.orders?.[0]
-    if (!first?.orderNumber) throw new Error('No orders found in this date range to detect seller key')
+    if (!first?.orderNumber) throw new Error('No orders found in this date range')
     return first.orderNumber.split('-')[0].toLowerCase()
   }
 
@@ -58,10 +77,8 @@
     let from = 0
     let total = Infinity
     while (from < total) {
-      const res = await fetch(`${BASE}/orders/search?api-version=2.0`, {
+      const res = await gmFetch(`${BASE}/orders/search?api-version=2.0`, {
         method: 'POST',
-        credentials: 'include',
-        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           searchRange,
           filters: { sellerKey },
@@ -80,9 +97,7 @@
   }
 
   async function fetchOrderDetail(orderNumber) {
-    const res = await fetch(`${BASE}/orders/${orderNumber}?api-version=2.0`, {
-      credentials: 'include',
-    })
+    const res = await gmFetch(`${BASE}/orders/${orderNumber}?api-version=2.0`)
     if (!res.ok) throw new Error(`Detail fetch failed for ${orderNumber}: ${res.status}`)
     return res.json()
   }
