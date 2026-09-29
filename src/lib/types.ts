@@ -279,6 +279,12 @@ export type CSVSaleSyncResult = {
   removed: number
 }
 
+export type TcgPlayerImportResult = {
+  platform: 'tcgplayer'
+  sales_upserted: number
+  skipped: number
+}
+
 export interface CSVGroup {
   groupId: string
   platform: string

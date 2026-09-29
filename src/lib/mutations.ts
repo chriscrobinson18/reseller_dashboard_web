@@ -1,7 +1,7 @@
 import { supabase } from './supabase'
 import { splitLotCost, basisFromAdjustments, type LotBasis } from './lotCost'
 import { ADJUSTMENT_LABELS } from './lotAdjustments'
-import type { Item, InventoryLot, LotAdjustmentType, CSVImportResult, CSVSaleSyncResult, FindOrphansResult } from './types'
+import type { Item, InventoryLot, LotAdjustmentType, CSVImportResult, CSVSaleSyncResult, TcgPlayerImportResult, FindOrphansResult } from './types'
 import { CATEGORIES } from './categories'
 import { isColorKey, type ColorKey } from './categoryPalette'
 
@@ -2132,6 +2132,16 @@ export async function syncCSVOrders(platform: string): Promise<CSVSaleSyncResult
   })
   if (error) throw error
   return data as CSVSaleSyncResult
+}
+
+export async function importTCGPlayerOrders(file: File): Promise<TcgPlayerImportResult> {
+  const text = await file.text()
+  const orders = JSON.parse(text)
+  const { data, error } = await supabase.functions.invoke('import_tcgplayer_orders', {
+    body: { orders },
+  })
+  if (error) throw error
+  return data as TcgPlayerImportResult
 }
 
 export async function markTransactionAsSettlement(
