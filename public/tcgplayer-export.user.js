@@ -1,10 +1,11 @@
 // ==UserScript==
 // @name         TCGPlayer Export for Reseller Dashboard
 // @namespace    https://sellerportal.tcgplayer.com
-// @version      2.4
+// @version      2.5
 // @description  Export orders matching the current portal filter for Reseller Dashboard import
 // @match        https://sellerportal.tcgplayer.com/*
 // @grant        none
+// @run-at       document-start
 // ==/UserScript==
 
 (function () {
@@ -22,44 +23,64 @@
     LastTwoYears: 'Last 2 years',
   }
 
-  // ── Intercept portal fetch to capture its exact headers + sellerKey ──────────
-  // We replay these verbatim so we never need to know what auth mechanism is used.
+  let capturedHeaders = null
+  let capturedSellerKey = null
 
-  let capturedHeaders = null   // exact headers the portal sends to the API
-  let capturedSellerKey = null // extracted from the portal's own request body
+  function onCaptured(headers, bodyStr) {
+    capturedHeaders = headers
+    if (typeof bodyStr === 'string') {
+      try {
+        const parsed = JSON.parse(bodyStr)
+        if (parsed.filters?.sellerKey) capturedSellerKey = parsed.filters.sellerKey
+      } catch {}
+    }
+    updateButton()
+  }
+
+  // ── Intercept window.fetch (runs before portal JS since @run-at document-start)
 
   const origFetch = window.fetch.bind(window)
-
   window.fetch = async function (input, init) {
     const url = typeof input === 'string' ? input
       : (input instanceof Request ? input.url : String(input))
-
     if (url.includes('order-management-api.tcgplayer.com') && init?.headers) {
-      // Clone headers into a plain object
       const h = init.headers
       const headers = {}
-      if (h instanceof Headers) {
-        h.forEach((v, k) => { headers[k] = v })
-      } else {
-        Object.assign(headers, h)
-      }
-      capturedHeaders = headers
-
-      // Extract sellerKey from request body
-      if (typeof init.body === 'string') {
-        try {
-          const body = JSON.parse(init.body)
-          if (body.filters?.sellerKey) capturedSellerKey = body.filters.sellerKey
-        } catch {}
-      }
-
-      updateButton()
+      if (h instanceof Headers) h.forEach((v, k) => { headers[k] = v })
+      else Object.assign(headers, h)
+      onCaptured(headers, init.body)
     }
-
     return origFetch(input, init)
   }
 
-  // ── API helpers (use captured headers verbatim) ──────────────────────────────
+  // ── Intercept XMLHttpRequest (Axios uses XHR by default) ─────────────────────
+
+  const origOpen = XMLHttpRequest.prototype.open
+  const origSetHeader = XMLHttpRequest.prototype.setRequestHeader
+  const origSend = XMLHttpRequest.prototype.send
+
+  XMLHttpRequest.prototype.open = function (method, url, ...rest) {
+    this._rdbUrl = url
+    this._rdbHeaders = {}
+    return origOpen.apply(this, [method, url, ...rest])
+  }
+
+  XMLHttpRequest.prototype.setRequestHeader = function (name, value) {
+    if (this._rdbUrl?.includes('order-management-api.tcgplayer.com')) {
+      this._rdbHeaders[name] = value
+    }
+    return origSetHeader.apply(this, [name, value])
+  }
+
+  XMLHttpRequest.prototype.send = function (body) {
+    if (this._rdbUrl?.includes('order-management-api.tcgplayer.com') &&
+        Object.keys(this._rdbHeaders || {}).length > 0) {
+      onCaptured({ ...this._rdbHeaders }, body)
+    }
+    return origSend.apply(this, [body])
+  }
+
+  // ── API helpers ─────────────────────────────────────────────────────────────
 
   async function fetchAllOrders(searchRange, sortBy, sellerKey) {
     const orders = []
@@ -70,13 +91,7 @@
         method: 'POST',
         credentials: 'include',
         headers: capturedHeaders,
-        body: JSON.stringify({
-          searchRange,
-          filters: { sellerKey },
-          sortBy,
-          from,
-          size: PAGE_SIZE,
-        }),
+        body: JSON.stringify({ searchRange, filters: { sellerKey }, sortBy, from, size: PAGE_SIZE }),
       })
       if (!res.ok) throw new Error(`Search failed: ${res.status}`)
       const data = await res.json()
@@ -121,7 +136,7 @@
       return
     }
     if (!capturedHeaders || !capturedSellerKey) {
-      alert('Waiting for portal to load orders — scroll the list or change the date filter, then try again.')
+      alert('Orders not loaded yet — wait for the page to finish loading, then try again.')
       return
     }
 
@@ -173,16 +188,10 @@
   // ── Button label ─────────────────────────────────────────────────────────────
 
   function getButtonLabel() {
-    if (!window.location.pathname.startsWith('/orders')) {
-      return 'Export for Reseller Dashboard'
-    }
-    if (!capturedHeaders) {
-      return 'Export ↓ (loading…)'
-    }
+    if (!window.location.pathname.startsWith('/orders')) return 'Export for Reseller Dashboard'
+    if (!capturedHeaders) return 'Export ↓ (loading…)'
     const range = new URLSearchParams(window.location.search).get('searchRange')
-    return range
-      ? `Export (${RANGE_LABEL[range] ?? range}) ↓`
-      : 'Export for Reseller Dashboard'
+    return range ? `Export (${RANGE_LABEL[range] ?? range}) ↓` : 'Export for Reseller Dashboard'
   }
 
   function updateButton() {
@@ -190,10 +199,11 @@
     if (btn && !btn.disabled) btn.textContent = getButtonLabel()
   }
 
-  // ── UI injection ─────────────────────────────────────────────────────────────
+  // ── UI injection (deferred — document.body doesn't exist at document-start) ──
 
   function injectButton() {
     if (document.getElementById('rdb-tcg-export')) { updateButton(); return }
+    if (!document.body) return
     const btn = document.createElement('button')
     btn.id = 'rdb-tcg-export'
     btn.textContent = getButtonLabel()
@@ -216,7 +226,10 @@
   window.addEventListener('popstate', () => setTimeout(updateButton, 50))
 
   window.addEventListener('load', injectButton)
-  new MutationObserver(() => {
-    if (!document.getElementById('rdb-tcg-export')) injectButton()
-  }).observe(document.body, { childList: true, subtree: true })
+  document.addEventListener('DOMContentLoaded', () => {
+    injectButton()
+    new MutationObserver(() => {
+      if (!document.getElementById('rdb-tcg-export')) injectButton()
+    }).observe(document.body, { childList: true, subtree: true })
+  })
 })()
