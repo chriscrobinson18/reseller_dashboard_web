@@ -50,10 +50,12 @@ export default function SettingsPage() {
   const [ebayState, setEbayState] = useState<ImportState>({ phase: 'idle' })
   const [amazonState, setAmazonState] = useState<ImportState>({ phase: 'idle' })
   const [mercariState, setMercariState] = useState<ImportState>({ phase: 'idle' })
+  const [ebayOEState, setEbayOEState] = useState<ImportState>({ phase: 'idle' })
 
   const ebayRef = useRef<HTMLInputElement>(null)
   const amazonRef = useRef<HTMLInputElement>(null)
   const mercariRef = useRef<HTMLInputElement>(null)
+  const ebayOERef = useRef<HTMLInputElement>(null)
 
   // ── Plaid dedup state ──
   const [dedupState, setDedupState] = useState<
@@ -104,9 +106,15 @@ export default function SettingsPage() {
     setState({ phase: 'importing' })
     try {
       const importResult = await importMarketplaceCSV(platform, file)
-      setState({ phase: 'syncing', importResult })
-      const syncResult = await syncCSVOrders(platform)
-      setState({ phase: 'done', importResult, syncResult })
+      if (platform === 'ebay_order_earnings') {
+        // Order Earnings writes directly to sales — no sync step
+        const count = importResult.sales_upserted ?? 0
+        setState({ phase: 'done', importResult, syncResult: { created: count, updated: 0, removed: 0 } })
+      } else {
+        setState({ phase: 'syncing', importResult })
+        const syncResult = await syncCSVOrders(platform)
+        setState({ phase: 'done', importResult, syncResult })
+      }
       qc.invalidateQueries({ queryKey: ['csv-groups', platform] })
       qc.invalidateQueries({ queryKey: ['sales'] })
     } catch (e: unknown) {
@@ -401,6 +409,16 @@ export default function SettingsPage() {
             onPick={() => ebayRef.current?.click()}
             onFile={file => handleImport('ebay', file, setEbayState)}
             onReset={() => setEbayState({ phase: 'idle' })}
+          />
+          <CSVImportCard
+            platform="ebay_order_earnings"
+            label="eBay Order Earnings"
+            description="Seller Hub → Reports → Order Earnings Report"
+            state={ebayOEState}
+            inputRef={ebayOERef}
+            onPick={() => ebayOERef.current?.click()}
+            onFile={file => handleImport('ebay_order_earnings', file, setEbayOEState)}
+            onReset={() => setEbayOEState({ phase: 'idle' })}
           />
           <CSVImportCard
             platform="amazon"
