@@ -2159,6 +2159,16 @@ export async function linkCSVGroupToSettlement(
   if (error) throw error
 }
 
+/** Rolls back a markTransactionAsSettlement call — used when linkCSVGroupToSettlement fails. */
+export async function resetSettlementTransaction(id: string): Promise<void> {
+  const { error } = await supabase
+    .from('transactions')
+    .update({ record_type: 'transaction', schedule_c_category: null, platform: null })
+    .eq('id', id)
+    .eq('source', 'plaid')
+  if (error) throw error
+}
+
 export async function unlinkCSVGroup(groupId: string, platform: string): Promise<void> {
   const { error } = await supabase
     .from('transactions')

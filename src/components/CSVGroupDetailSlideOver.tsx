@@ -8,7 +8,7 @@ import {
 } from '../lib/queries'
 import {
   markTransactionAsSettlement, linkCSVGroupToSettlement,
-  unlinkCSVGroup, insertTransaction,
+  unlinkCSVGroup, insertTransaction, resetSettlementTransaction,
 } from '../lib/mutations'
 import { supabase } from '../lib/supabase'
 import type { CSVGroup, Transaction } from '../lib/types'
@@ -149,7 +149,13 @@ export default function CSVGroupDetailSlideOver({ group, platform, open, onClose
         }
       }
       await markTransactionAsSettlement(candidate.id, platform)
-      await linkCSVGroupToSettlement(group.groupId, candidate.id, platform)
+      try {
+        await linkCSVGroupToSettlement(group.groupId, candidate.id, platform)
+      } catch (linkErr) {
+        // Roll back: un-mark the Plaid transaction so it stays searchable
+        try { await resetSettlementTransaction(candidate.id) } catch {}
+        throw linkErr
+      }
       qc.invalidateQueries({ queryKey: ['csv-groups', platform] })
       qc.invalidateQueries({ queryKey: ['transactions'] })
       onLinked()
