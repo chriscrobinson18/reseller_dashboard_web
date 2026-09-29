@@ -80,7 +80,7 @@
         const detail = await fetchOrderDetail(orders[i].orderNumber)
         enriched.push({
           orderNumber: detail.orderNumber,
-          orderDate: detail.createdAt,
+          orderDate: detail.createdAt ?? orders[i].orderDate,
           orderStatus: detail.status,
           productAmount: detail.transaction?.productAmount ?? 0,
           shippingAmount: detail.transaction?.shippingAmount ?? 0,
