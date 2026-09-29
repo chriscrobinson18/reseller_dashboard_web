@@ -1,26 +1,59 @@
 // ==UserScript==
 // @name         TCGPlayer Export for Reseller Dashboard
-// @namespace    https://seller.tcgplayer.com
-// @version      1.0
-// @description  Export TCGPlayer orders with fee data for Reseller Dashboard import
-// @match        https://seller.tcgplayer.com/*
+// @namespace    https://sellerportal.tcgplayer.com
+// @version      2.0
+// @description  Export orders matching the current portal filter for Reseller Dashboard import
+// @match        https://sellerportal.tcgplayer.com/*
 // @grant        none
 // ==/UserScript==
 
 (function () {
   'use strict'
 
-  // ── CONFIG ──────────────────────────────────────────────────────────────────
-  // Your seller key: lowercase prefix of any order number.
-  // e.g. order "AE18D02E-28AA51-BAA99" → seller key is "ae18d02e"
-  const SELLER_KEY = 'REPLACE_WITH_YOUR_SELLER_KEY'
-
   const PAGE_SIZE = 100
   const BASE = 'https://order-management-api.tcgplayer.com'
 
+  const RANGE_LABEL = {
+    LastMonth: 'Last month',
+    LastThreeMonths: 'Last 3 months',
+    LastFourMonths: 'Last 4 months',
+    LastSixMonths: 'Last 6 months',
+    LastYear: 'Last year',
+    LastTwoYears: 'Last 2 years',
+  }
+
+  // ── Read current filter from URL ────────────────────────────────────────────
+
+  function getExportParams() {
+    const params = new URLSearchParams(window.location.search)
+    const searchRange = params.get('searchRange') || 'LastThreeMonths'
+    const sortByRaw = params.getAll('sortBy')
+    const sortBy = sortByRaw.length > 0
+      ? sortByRaw.map(s => {
+          const [field, dir] = s.split(',')
+          return { sortingType: field, direction: dir === 'desc' ? 'descending' : 'ascending' }
+        })
+      : [{ sortingType: 'orderDate', direction: 'ascending' }]
+    return { searchRange, sortBy }
+  }
+
   // ── API helpers ─────────────────────────────────────────────────────────────
 
-  async function fetchAllOrders(searchRange) {
+  async function detectSellerKey(searchRange, sortBy) {
+    const res = await fetch(`${BASE}/orders/search?api-version=2.0`, {
+      method: 'POST',
+      credentials: 'include',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ searchRange, filters: {}, sortBy, from: 0, size: 1 }),
+    })
+    if (!res.ok) throw new Error(`Failed to detect seller key: ${res.status}`)
+    const data = await res.json()
+    const first = data.orders?.[0]
+    if (!first?.orderNumber) throw new Error('No orders found in this date range to detect seller key')
+    return first.orderNumber.split('-')[0].toLowerCase()
+  }
+
+  async function fetchAllOrders(searchRange, sortBy, sellerKey) {
     const orders = []
     let from = 0
     let total = Infinity
@@ -31,8 +64,8 @@
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           searchRange,
-          filters: { sellerKey: SELLER_KEY },
-          sortBy: [{ sortingType: 'orderDate', direction: 'ascending' }],
+          filters: { sellerKey },
+          sortBy,
           from,
           size: PAGE_SIZE,
         }),
@@ -59,28 +92,23 @@
   // ── Export flow ─────────────────────────────────────────────────────────────
 
   async function exportOrders() {
-    if (SELLER_KEY === 'REPLACE_WITH_YOUR_SELLER_KEY') {
-      alert('TCGPlayer Export: Edit the script and replace REPLACE_WITH_YOUR_SELLER_KEY with your seller key (lowercase prefix of any order number, e.g. "ae18d02e").')
+    if (!window.location.pathname.startsWith('/orders')) {
+      alert('Navigate to the Orders page first, then click Export.')
       return
     }
-    const choice = prompt(
-      'Export date range:\n1 = Last 3 months\n2 = Last 6 months\n3 = Last year',
-      '1'
-    )
-    if (choice === null) return // user cancelled
-    const rangeMap = { '1': 'LastThreeMonths', '2': 'LastSixMonths', '3': 'LastYear' }
-    const searchRange = rangeMap[choice] ?? 'LastThreeMonths'
 
+    const { searchRange, sortBy } = getExportParams()
     const btn = document.getElementById('rdb-tcg-export')
-    btn.textContent = 'Fetching order list…'
+    btn.textContent = 'Detecting seller…'
     btn.disabled = true
 
     try {
-      const orders = await fetchAllOrders(searchRange)
+      const sellerKey = await detectSellerKey(searchRange, sortBy)
+      const orders = await fetchAllOrders(searchRange, sortBy, sellerKey)
       const enriched = []
 
       for (let i = 0; i < orders.length; i++) {
-        btn.textContent = `Fetching order ${i + 1} of ${orders.length}…`
+        btn.textContent = `Fetching ${i + 1} of ${orders.length}…`
         if (!orders[i].orderNumber) continue
         const detail = await fetchOrderDetail(orders[i].orderNumber)
         enriched.push({
@@ -95,7 +123,6 @@
           refundStatus: detail.refundStatus ?? '',
           refunds: detail.refunds ?? [],
         })
-        // ~3 req/sec throttle
         if ((i + 1) % 3 === 0) await sleep(1000)
       }
 
@@ -107,7 +134,6 @@
       a.download = filename
       a.click()
       URL.revokeObjectURL(url)
-
       btn.textContent = `✓ Exported ${enriched.length} orders`
     } catch (err) {
       btn.textContent = 'Export failed — see console'
@@ -117,13 +143,30 @@
     }
   }
 
+  // ── Button label reflects current URL filter ─────────────────────────────────
+
+  function getButtonLabel() {
+    if (!window.location.pathname.startsWith('/orders')) {
+      return 'Export for Reseller Dashboard'
+    }
+    const range = new URLSearchParams(window.location.search).get('searchRange')
+    return range
+      ? `Export (${RANGE_LABEL[range] ?? range}) ↓`
+      : 'Export for Reseller Dashboard'
+  }
+
+  function updateButton() {
+    const btn = document.getElementById('rdb-tcg-export')
+    if (btn && !btn.disabled) btn.textContent = getButtonLabel()
+  }
+
   // ── UI injection ─────────────────────────────────────────────────────────────
 
   function injectButton() {
-    if (document.getElementById('rdb-tcg-export')) return
+    if (document.getElementById('rdb-tcg-export')) { updateButton(); return }
     const btn = document.createElement('button')
     btn.id = 'rdb-tcg-export'
-    btn.textContent = 'Export for Reseller Dashboard'
+    btn.textContent = getButtonLabel()
     btn.style.cssText = [
       'position:fixed', 'bottom:20px', 'right:20px', 'z-index:9999',
       'background:#2563eb', 'color:#fff', 'border:none', 'border-radius:6px',
@@ -134,8 +177,15 @@
     document.body.appendChild(btn)
   }
 
+  // SPA URL change detection
+  const origPushState = history.pushState
+  history.pushState = function (...args) {
+    origPushState.apply(this, args)
+    setTimeout(updateButton, 50)
+  }
+  window.addEventListener('popstate', () => setTimeout(updateButton, 50))
+
   window.addEventListener('load', injectButton)
-  // Re-inject after SPA navigation
   new MutationObserver(() => {
     if (!document.getElementById('rdb-tcg-export')) injectButton()
   }).observe(document.body, { childList: true, subtree: true })
