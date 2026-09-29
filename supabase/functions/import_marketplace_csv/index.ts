@@ -1,4 +1,9 @@
-// import_marketplace_csv v19
+// import_marketplace_csv v20
+// Add: Amazon Date Range Transaction Report parser (amz_dr_* keys). Auto-detected
+//      from header: has 'settlement id' + 'transaction status'. Enables Settlement
+//      Status for Amazon and captures per-order shipping label costs. Deferred rows
+//      (Transaction Status=Deferred) are skipped — not yet released to payout.
+// Prior: import_marketplace_csv v19
 // Add: eBay Order Earnings Report parser. Writes directly to `sales` table
 //      (not `transactions`) with per-order fee breakdown, shipping label cost,
 //      discount, and refund data. Groups multi-item orders into one sale row.
@@ -126,6 +131,7 @@ serve(async (req) => {
     if (platform === 'amazon') {
       let headerIdx = -1
       let isTransactionView = false
+      let isDateRange = false
 
       for (let i = 0; i < allRows.length; i++) {
         const norm = allRows[i].map(h => h.replace(/"/g,'').trim().toLowerCase())
@@ -140,6 +146,11 @@ serve(async (req) => {
         // True Transaction View (Python-style): has 'product details' or 'total product charges'
         if (hasProductDetails || hasTotalCharges) {
           headerIdx = i; isTransactionView = true; break
+        }
+        // New Date Range Transaction Report: has settlement id + transaction status
+        const hasTransactionStatus = norm.includes('transaction status')
+        if (hasSettlementId && hasTransactionStatus) {
+          headerIdx = i; isDateRange = true; break
         }
         // Standard SR / Transaction View hybrid: settlement id present
         // If it also has 'type'+'order id' but NOT 'product sales', treat as TV
@@ -163,7 +174,7 @@ serve(async (req) => {
       }
 
       const header = allRows[headerIdx].map(h => h.replace(/"/g,'').trim().toLowerCase())
-      amazonFormat = isTransactionView ? 'transaction_view' : 'settlement_report'
+      amazonFormat = isDateRange ? 'date_range' : isTransactionView ? 'transaction_view' : 'settlement_report'
       console.log(`Amazon format: ${amazonFormat}, header cols: ${header.slice(0,10).join(', ')}`)
 
       const col = (row: string[], name: string) => row[header.indexOf(name)]?.replace(/"/g,'').trim() ?? ''
@@ -172,8 +183,124 @@ serve(async (req) => {
         return ''
       }
 
+      // ── Amazon Date Range Transaction Report ──────────────────────────────
+      if (isDateRange) {
+        for (let i = headerIdx + 1; i < allRows.length; i++) {
+          const r = allRows[i]
+          const dateRaw     = col(r, 'date/time')
+          const settlementId = col(r, 'settlement id')
+          const type         = col(r, 'type')
+          const orderId      = col(r, 'order id')
+          const description  = col(r, 'description')
+          const txStatus     = col(r, 'transaction status')
+
+          if (txStatus === 'Deferred') { trackSkip('deferred'); continue }
+
+          const date = parseDateAny(dateRaw)
+          if (!date) { trackSkip('bad_date'); continue }
+          if (!settlementId) { trackSkip('no_settlement_id'); continue }
+
+          const safeOrder = orderId.replace(/[^a-zA-Z0-9_-]/g, '_')
+          const groupId   = settlementId
+
+          const productSales = parseAmount(col(r, 'product sales'))
+          const sellingFees  = parseAmount(col(r, 'selling fees'))
+          const fbaFees      = parseAmount(col(r, 'fba fees'))
+          const total        = parseAmount(col(r, 'total'))
+
+          if (type === 'Order') {
+            if (productSales !== 0) {
+              rowsParsed++
+              transactions.push({ user_id: user.id, date, amount: productSales, gross_amount: productSales,
+                merchant: description || orderId || 'Amazon Sale',
+                type: 'other', source: 'csv_import', platform: 'amazon',
+                schedule_c_category: 'payout', record_type: 'transaction',
+                csv_transaction_id: `amz_dr_${settlementId}_${safeOrder}_sales`,
+                csv_group_id: groupId, notes: orderId || null, parent_settlement_id: null })
+            }
+            if (sellingFees !== 0) {
+              rowsParsed++
+              transactions.push({ user_id: user.id, date, amount: sellingFees, gross_amount: null,
+                merchant: 'Amazon Fees',
+                type: 'other', source: 'csv_import', platform: 'amazon',
+                schedule_c_category: 'commissions_fees', record_type: 'transaction',
+                csv_transaction_id: `amz_dr_${settlementId}_${safeOrder}_fees`,
+                csv_group_id: groupId, notes: orderId || null, parent_settlement_id: null })
+            }
+            if (fbaFees !== 0) {
+              rowsParsed++
+              transactions.push({ user_id: user.id, date, amount: fbaFees, gross_amount: null,
+                merchant: 'Amazon FBA Fees',
+                type: 'other', source: 'csv_import', platform: 'amazon',
+                schedule_c_category: 'commissions_fees', record_type: 'transaction',
+                csv_transaction_id: `amz_dr_${settlementId}_${safeOrder}_fba`,
+                csv_group_id: groupId, notes: orderId || null, parent_settlement_id: null })
+            }
+            if (productSales === 0 && sellingFees === 0 && fbaFees === 0) trackSkip('order_all_zero')
+
+          } else if (type === 'Shipping Services') {
+            if (total !== 0) {
+              const descLower = description.toLowerCase()
+              const isReturn  = descLower.includes('returnpostage') || descLower.includes('return postage')
+              const isAdj     = descLower.includes('adjustment')
+              const merchant  = isReturn ? 'Amazon Return Label' : isAdj ? 'Amazon Shipping Adjustment' : 'Amazon Shipping Label'
+              const suffix    = isReturn ? 'return_ship' : isAdj ? 'ship_adj' : 'ship'
+              rowsParsed++
+              transactions.push({ user_id: user.id, date, amount: total, gross_amount: null,
+                merchant,
+                type: 'other', source: 'csv_import', platform: 'amazon',
+                schedule_c_category: 'shipping_postage', record_type: 'transaction',
+                csv_transaction_id: orderId
+                  ? `amz_dr_${settlementId}_${safeOrder}_${suffix}`
+                  : `amz_dr_${settlementId}_${suffix}_${Math.round(Math.abs(total) * 100)}`,
+                csv_group_id: groupId, notes: orderId || null, parent_settlement_id: null })
+            } else { trackSkip('shipping_zero') }
+
+          } else if (type === 'Refund') {
+            if (total !== 0) {
+              rowsParsed++
+              transactions.push({ user_id: user.id, date, amount: total, gross_amount: null,
+                merchant: description || (orderId ? `Amazon Refund ${orderId}` : 'Amazon Refund'),
+                type: 'other', source: 'csv_import', platform: 'amazon',
+                schedule_c_category: 'payout', record_type: 'transaction',
+                csv_transaction_id: `amz_dr_${settlementId}_${safeOrder}_refund`,
+                csv_group_id: groupId, notes: orderId || null, parent_settlement_id: null })
+            } else { trackSkip('refund_zero') }
+
+          } else if (type === 'Transfer') {
+            if (total !== 0) {
+              rowsParsed++
+              transactions.push({ user_id: user.id, date, amount: total, gross_amount: null,
+                merchant: 'Amazon Transfer',
+                type: 'other', source: 'csv_import', platform: 'amazon',
+                schedule_c_category: 'transfer', record_type: 'transaction',
+                // One Transfer per settlement assumed (matches SR parser behavior).
+                // If Amazon ever emits two Transfer rows for one settlement, the second
+                // is silently skipped by ignoreDuplicates — first-write wins.
+                csv_transaction_id: `amz_dr_${settlementId}_transfer`,
+                csv_group_id: groupId, notes: null, parent_settlement_id: null })
+            } else { trackSkip('transfer_zero') }
+
+          } else if (type === 'Debt') {
+            if (total !== 0) {
+              rowsParsed++
+              transactions.push({ user_id: user.id, date, amount: total, gross_amount: null,
+                merchant: 'Amazon Debt Carry',
+                type: 'other', source: 'csv_import', platform: 'amazon',
+                schedule_c_category: 'balance_adjustment', record_type: 'transaction',
+                csv_transaction_id: `amz_dr_${settlementId}_debt`,
+                csv_group_id: groupId, notes: null, parent_settlement_id: null })
+            } else { trackSkip('debt_zero') }
+
+          } else if (type === 'Service Fee') {
+            trackSkip('intentional:ServiceFee')
+          } else {
+            trackSkip(`amz_dr_type:${type || 'empty'}`)
+          }
+        }
+
       // ── Amazon Transaction View (Python-style CSV) ────────────────────────
-      if (isTransactionView) {
+      } else if (isTransactionView) {
         for (let i = headerIdx + 1; i < allRows.length; i++) {
           const r = allRows[i]
           const dateRaw     = colAny(r, 'date/time', 'date', 'transaction date')
