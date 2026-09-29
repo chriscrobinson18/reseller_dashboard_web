@@ -1,4 +1,6 @@
-// sync_csv_orders_to_sales v1
+// sync_csv_orders_to_sales v2
+// Change: skip eBay — Order Earnings import writes directly to sales.
+// Prior: sync_csv_orders_to_sales v1
 // Groups csv_import transactions by order ref (notes field) and upserts
 // unlinked sales rows. Fixes three mobile bugs:
 //   1. shipping_postage rows were unreachable dead code — now included
@@ -51,6 +53,12 @@ serve(async (req) => {
     const body = await req.json()
     const platform: string = body.platform
     if (!platform) return json(400, { error: "Missing platform" })
+
+    // eBay sales come from Order Earnings import (import_marketplace_csv v19),
+    // not from Transaction Report transactions. Skip sync for eBay.
+    if (platform === "ebay") {
+      return json(200, { created: 0, updated: 0, removed: 0 })
+    }
 
     // ── 1. Fetch all csv_import transactions for this user + platform ─────────
     const { data: rows, error: fetchErr } = await supabase
