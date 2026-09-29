@@ -1,6 +1,6 @@
-// sync_csv_orders_to_sales v2
-// Change: skip eBay — Order Earnings import writes directly to sales.
-// Prior: sync_csv_orders_to_sales v1
+// sync_csv_orders_to_sales v3
+// Fix: return_status='none' instead of null — sales table is NOT NULL on this column.
+// Prior: sync_csv_orders_to_sales v2
 // Groups csv_import transactions by order ref (notes field) and upserts
 // unlinked sales rows. Fixes three mobile bugs:
 //   1. shipping_postage rows were unreachable dead code — now included
@@ -152,7 +152,7 @@ serve(async (req) => {
       const salePrice = entry.grossRevenue - entry.refundedAmount
       const netPayout = salePrice - entry.fees - entry.shippingCost
       const returnStatus =
-        entry.refundedAmount === 0 ? null
+        entry.refundedAmount === 0 ? "none"
         : entry.refundedAmount >= entry.grossRevenue ? "full"
         : "partial"
 
