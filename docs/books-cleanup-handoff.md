@@ -49,15 +49,17 @@ Scratchpad backups and analysis scripts from earlier sessions are **gone** with 
 - Phase 1 (categorize 2025–26 spending) complete.
 - `sales.shipping_charged` migration applied; TCGplayer buyer-paid shipping moved there. Re-imports via `_shared/salesImport.ts` (never un-delete, never reset inventory/return fields). Both import functions deployed.
 
-## What's on the branch but NOT live
+## Merged to `main` and live (2026-11-09)
 
-| Item | State |
-|---|---|
-| Sales-based Schedule C income (`src/lib/salesIncome.ts`, `isSaleDerivedTransaction`, Dashboard + both CSV exports, trade income legs) | Built, tested, committed. Takes effect when the branch is merged (Vercel deploys `main`). |
-| Part III, traditional method (`src/lib/partIII.ts`, `PartIIICard`, Summary CSV Part III for "Last Year") | Built, tested, committed. **Migration `supabase/migrations/20261109150000_inventory_valuations.sql` NOT applied**; apply it (with approval) before merging, or the Part III card errors. |
-| Year-End Tie-Out (step 4) | **In progress:** lib + tests done, dry-run done; Dashboard card and docs not built. See below. |
+The whole branch was fast-forwarded to `main` (Vercel deploys `main`):
+- **Sales-based Schedule C income:** `src/lib/salesIncome.ts`, `isSaleDerivedTransaction`, Dashboard and both CSV exports, trade income legs. Dashboard "Total Income" = Schedule C Line 1 − Line 2 (regression test).
+- **Part III, traditional method:** `partIII.ts`, `PartIIICard`, Summary CSV. Migration `20261109150000_inventory_valuations.sql` **applied** (RLS on, 4 owner policies; table empty until the owner enters year-end values).
+- **`sync_csv_orders_to_sales` v5** (deploy version 9, JWT on, byte-identical to repo): Amazon / Mercari sync is re-import safe. Amazon sales backed up privately before the deploy.
+- **Tie-out library + tests:** on `main` but not wired into any UI yet (step 4 still in progress, see below).
 
-Test suite: `npx vitest run` (129 passing at handoff). Pre-existing lint errors in `CSVGroupDetailSlideOver.tsx` and `SettingsPage.tsx` aren't from this work.
+Branch `claude/books-cleanup-phase1` stays the working branch; fast-forward `main` when the owner approves a release.
+
+Test suite: `npx vitest run` (130 passing at handoff). Pre-existing lint errors in `CSVGroupDetailSlideOver.tsx` and `SettingsPage.tsx` aren't from this work.
 
 ## Next: Year-End Tie-Out (step 4)
 
@@ -79,7 +81,7 @@ Dry-run findings (no amounts here):
 **Import safety (checked for the owner, 2026-11-09):**
 - eBay Order Earnings and TCGplayer re-uploads go through `_shared/salesImport.ts`: no duplicates, and only money / description fields refresh.
 - eBay and Amazon Transaction Report rows are insert-only on `(user_id, csv_transaction_id)`.
-- **Amazon is the exception:** after the import, Settings runs `sync_csv_orders_to_sales`, which rewrites every Amazon sale (`inventory_status`, `refunded_quantity`, return status), **un-deletes** soft-deleted sales, and soft-deletes orders missing from the CSV rows. The recommended fix (needs a deploy, so owner approval first) is to move it onto `upsertImportedSales`.
+- Amazon used to be the exception (its sync un-deleted sales and reset inventory / return fields). **Fixed and deployed as v5** (2026-11-09), so all import cards are now re-upload safe.
 
 **Purpose:** prove every sale is recorded. The owner's words: settlements are "insurance that all sales are recorded".
 
@@ -108,7 +110,7 @@ Dry-run findings (no amounts here):
    - fetches the year's sales, deposits and eBay CSV rows
    - shows: a platform table (table on `md+`, stacked cards on phones; see `docs/mobile-layout.md`), an expandable month view, the income-deposits list, and the eBay mismatch summary plus list
 4. **Docs:** add a "Year-End Tie-Out" section to `docs/features/dashboard.md`; update the tooling note in `bookkeeping-routine.md` and the step-4 item in TASKS.md.
-5. Then ask the owner about: **applying the inventory migration**, **merging the branch**, and Phase 2.
+5. Then ask the owner about Phase 2. (Inventory migration applied and branch merged on 2026-11-09.)
 
 ## After the tie-out
 
