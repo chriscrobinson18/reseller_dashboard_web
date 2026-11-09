@@ -1,6 +1,9 @@
 import { describe, it, expect } from 'vitest'
 import { computeScheduleC, computeKPIs, computeMonthlyChart } from '../scheduleCMath'
 import type { Transaction } from '../types'
+import type { SalesIncomeTotals } from '../salesIncome'
+
+const SALES: SalesIncomeTotals = { grossReceipts: 1000, returns: 100, fees: 130, platformShipping: 40, saleCount: 3 }
 
 function tx(overrides: Partial<Transaction> = {}): Transaction {
   return {
@@ -140,5 +143,34 @@ describe('computeMonthlyChart', () => {
       tx({ id: 'c', date: '2026-02-10', amount: 100, schedule_c_category: 'payout' }),
     ], [])
     expect(result.map(r => r.month)).toEqual(['2026-01', '2026-02', '2026-03'])
+  })
+})
+
+describe('sales-based income (2026-11-09)', () => {
+  it('computeScheduleC merges sales into payout / returns / fees / shipping', () => {
+    const r = computeScheduleC([tx({ amount: -10, schedule_c_category: 'shipping_postage' })], [], SALES)
+    expect(r.payout).toBe(1000)
+    expect(r.returns_allowances).toBe(-100)
+    expect(r.commissions_fees).toBe(-130)
+    expect(r.shipping_postage).toBe(-50)
+  })
+
+  it('computeScheduleC without sales is unchanged', () => {
+    expect(computeScheduleC([tx()], [])).toEqual({ supplies: -50 })
+  })
+
+  it('computeKPIs: income = gross − returns, expenses += fees + platform shipping', () => {
+    const k = computeKPIs([tx({ amount: -50 })], [], SALES)
+    expect(k.income).toBe(900)
+    expect(k.expenses).toBe(220)
+    expect(k.net).toBe(680)
+  })
+
+  it('computeMonthlyChart adds sales by month, including months with no transactions', () => {
+    const bars = computeMonthlyChart([tx({ date: '2026-01-10', amount: -50 })], [], { '2026-02': SALES })
+    expect(bars).toEqual([
+      { month: '2026-01', income: 0, expenses: 50 },
+      { month: '2026-02', income: 900, expenses: 170 },
+    ])
   })
 })

@@ -58,6 +58,11 @@ describe('bucketTransaction', () => {
     expect(result.bucket).toBeNull()
   })
 
+  it('filters bundle-linked transactions (bundle income/fees come from sales + sale_bundles)', () => {
+    const result = bucketTransaction(tx({ related_bundle_id: 'b1' }), [])
+    expect(result.bucket).toBeNull()
+  })
+
   it('filters csv_import transactions', () => {
     const result = bucketTransaction(tx({ source: 'csv_import' }), [])
     expect(result.bucket).toBeNull()

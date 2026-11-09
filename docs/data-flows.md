@@ -20,7 +20,7 @@ Rules — first match wins, anything that returns `bucket: null` is excluded:
 | `scheduleLine === 'Part III'` | `'cogs'` |
 | Otherwise (Part II) | `'expense'` (×0.5 if `mealsHalf`) |
 
-**Why `related_sale_id` / `csv_import` are excluded**: a sale's revenue/fees/shipping are already counted via `computeProfitability(sales)`. The payout/fee/shipping `transactions` rows that `recordSale` auto-creates (see below) exist so Expenses shows them, but a Dashboard aggregate that summed both the sale and its linked transactions would double-count.
+**Why sale-derived rows are excluded** (`isSaleDerivedTransaction`: `related_sale_id`, `related_bundle_id`, `csv_import`): since 2026-11-09 a sale's revenue/fees/shipping/refunds reach Schedule C from the `sales` row itself ([`salesIncome.ts`](../src/lib/salesIncome.ts); see [categories.md](categories.md#sales-based-income-2026-11-09)). The payout/fee/shipping `transactions` rows that `recordSale`, bundles and CSV imports create exist so Expenses shows them, but counting both the sale and its rows would double-count.
 
 **Signed-amount semantics:** `bucketTransaction` returns `signedAmount` preserving the original sign (with the meals 0.5 multiplier already applied for the expense bucket). Consumers sum signed amounts per bucket/category, take `abs()` only at display time. A refund posted to an expense category now correctly *reduces* that expense total instead of inflating both income and expenses (the pre-2026-06-23 bug). See [categories.md](categories.md#buckettransaction--single-bucketing-helper) for the full description.
 

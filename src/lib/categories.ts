@@ -135,6 +135,20 @@ import type { Transaction } from './types'
 
 export type ScheduleCBucket = 'income' | 'expense' | 'cogs' | null
 
+/**
+ * Sales-based income (2026-11-09): a sale's income, fees and shipping reach
+ * Schedule C from the `sales` row (src/lib/salesIncome.ts). The transactions
+ * that Record Sale (`related_sale_id`), bundles (`related_bundle_id`) and
+ * marketplace CSV imports (`source = 'csv_import'`) create for the same money
+ * are audit detail only and must never be counted on Schedule C as well.
+ * Shared by bucketTransaction and the CSV exports so they can't drift.
+ */
+export function isSaleDerivedTransaction(
+  t: Pick<Transaction, 'related_sale_id' | 'related_bundle_id' | 'source'>,
+): boolean {
+  return !!t.related_sale_id || !!t.related_bundle_id || t.source === 'csv_import'
+}
+
 export interface BucketedAmount {
   bucket: ScheduleCBucket
   categoryValue: string | null
@@ -155,8 +169,7 @@ export function bucketTransaction(t: Transaction, customs: CustomCategory[]): Bu
   const none: BucketedAmount = { bucket: null, categoryValue: null, signedAmount: 0 }
 
   if (t.record_type === 'settlement') return none
-  if (t.related_sale_id) return none
-  if (t.source === 'csv_import') return none
+  if (isSaleDerivedTransaction(t)) return none
   if (t.net_zero_pair_id) return none
   if (!t.schedule_c_category) return none
 

@@ -84,7 +84,26 @@ The `is_non_cash` flag exists so a future bank-reconciliation or cash-flow view 
 
 ## Known correctness gaps (see TASKS.md P0/P1 for full detail — don't fix ad-hoc, read that list first)
 
-- The Dashboard's Schedule C **breakdown** and KPI cards are transaction-derived (`bucketTransaction`), which excludes every `related_sale_id` row — so sale income, sale fees/shipping, and `record_return`'s refund rows are all absent from those cards. Sale economics (incl. returns via `netRevenue`) live in the separate Sales Profitability card instead. The two are not combined into a single Schedule C net-profit figure on the Dashboard; the Schedule C **CSV export** is the surface that includes sale-linked rows. A unified on-screen Schedule C summary (and the "subtract Returns & Allowances from Line 1" render) is still open — see the Returns & Allowances section below and TASKS.md.
+- ~~The Dashboard's Schedule C breakdown and KPI cards are transaction-derived and miss sale income.~~ **Fixed 2026-11-09** by sales-based income (next section): the Breakdown, KPIs, chart and both CSV exports now include every recorded sale.
+
+## Sales-based income (2026-11-09)
+
+**Schedule C income comes from the Sales tab, not from bank deposits or transaction rows.** Owner decision, recorded in TASKS.md "Books Cleanup". Single source: [`src/lib/salesIncome.ts`](../src/lib/salesIncome.ts).
+
+| Line | From each non-deleted `sales` row (period by `sold_at`) |
+|---|---|
+| Line 1 gross receipts | `sale_price + shipping_charged` (buyer-paid shipping is income; eBay's gross already includes it, TCGplayer reports it separately) |
+| Line 2 returns | `refunded_amount`. A fully returned sale stays in Line 1 with its refund on Line 2 (1099-K presentation), netting to zero |
+| Line 10 fees | `fees` (eBay: every Order Earnings fee column, incl. promoted-listing fees) |
+| Line 27a shipping | `shipping_cost` = postage the **platform deducted**. Postage bought on a card (e.g. a label service) is a separate bank transaction, categorized as usual |
+
+Bundles add their order-level `sale_bundles.fees` / `shipping_cost` once (lines store 0). Trades count at the recorded fair-market sale price.
+
+**No double counting:** `isSaleDerivedTransaction(t)` (in `categories.ts`) marks the transactions that duplicate a sale's money: `related_sale_id` (Record Sale's payout/fee/shipping/refund rows), `related_bundle_id` (bundle rows) and `source = 'csv_import'` (marketplace report rows). `bucketTransaction` and both CSV exports skip them; they remain visible in Expenses as audit detail. Marketplace bank deposits are `settlement` rows (excluded); they serve as the completeness check (year-end tie-out), not income.
+
+**What still counts from transactions:** every other categorized business row. That includes bank deposits still tagged `payout` (P2P / auction / wallet deposits whose sales aren't recorded yet): the Phase 2 backlog, kept as income until classified so nothing disappears.
+
+**Wiring:** `computeScheduleC` / `computeKPIs` / `computeMonthlyChart` take optional `SalesIncomeTotals` (merged into `payout`, `returns_allowances`, `commissions_fees`, `shipping_postage`); `computeScheduleCSummary` and `scheduleCExportRows` take the sales (and bundles). Without the optional argument they behave as before, which keeps older callers and tests valid. Net-zero pairs are excluded from the exports too (previously only the Dashboard excluded them).
 
 ## Custom categories (shipped 2026-06-25)
 

@@ -4,6 +4,17 @@ import {
   computeScheduleCSummary, buildScheduleCSummaryCSV,
 } from '../csvExport'
 import type { Transaction } from '../types'
+import { computeSalesIncome } from '../salesIncome'
+import type { SaleLedgerInput } from '../csvExport'
+
+function sale(overrides: Partial<SaleLedgerInput> = {}): SaleLedgerInput {
+  return {
+    sale_price: 100, fees: 13, shipping_cost: 5, shipping_charged: null,
+    refunded_amount: 0, sold_at: '2026-01-20', deleted_at: undefined,
+    platform: 'ebay', item_name: 'Card', external_order_id: '01-1',
+    ...overrides,
+  }
+}
 
 function tx(overrides: Partial<Transaction> = {}): Transaction {
   return {
@@ -53,13 +64,37 @@ describe('scheduleCExportRows', () => {
     expect(rows).toHaveLength(0)
   })
 
-  it('includes sale-linked rows (that is where sales income lives)', () => {
+  it('excludes sale-derived rows (sale-linked, bundle-linked, csv_import): sales carry that money', () => {
     const rows = scheduleCExportRows([
       tx({ amount: 100, schedule_c_category: 'payout', related_sale_id: 's1', platform: 'ebay' }),
+      tx({ amount: 80, schedule_c_category: 'payout', related_bundle_id: 'b1' }),
+      tx({ amount: -9, schedule_c_category: 'commissions_fees', source: 'csv_import' }),
     ], [])
-    expect(rows).toHaveLength(1)
+    expect(rows).toHaveLength(0)
+  })
+
+  it('emits income + fee + platform shipping + refund rows per sale (sales-based income)', () => {
+    const rows = scheduleCExportRows([], [], [sale({ refunded_amount: 20 })])
+    expect(rows.map(r => [r[TYPE], r[LINE], r[AMOUNT]])).toEqual([
+      ['Income', 'Part I', '100.00'],
+      ['Expense', 'Line 10', '13.00'],
+      ['Expense', 'Line 27a', '5.00'],
+      ['Expense', 'Part I', '20.00'],
+    ])
     expect(rows[0][PLATFORM]).toBe('ebay')
-    expect(rows[0][TYPE]).toBe('Income')
+    expect(rows[0][NOTES]).toBe('Order 01-1')
+  })
+
+  it('counts buyer-paid shipping (shipping_charged) as income, not expense', () => {
+    const rows = scheduleCExportRows([], [], [sale({ sale_price: 3.18, fees: 0.92, shipping_cost: null, shipping_charged: 1.49, platform: 'tcgplayer' })])
+    expect(rows.map(r => [r[TYPE], r[AMOUNT]])).toEqual([['Income', '4.67'], ['Expense', '0.92']])
+  })
+
+  it('skips deleted sales and adds bundle-level fee/shipping rows once', () => {
+    const rows = scheduleCExportRows([], [], [sale({ deleted_at: '2026-02-01' })], [
+      { fees: 7, shipping_cost: 4, sold_at: '2026-01-21', platform: 'ebay', external_order_id: 'B9' },
+    ])
+    expect(rows.map(r => [r[TYPE], r[LINE], r[AMOUNT]])).toEqual([['Expense', 'Line 10', '7.00'], ['Expense', 'Line 27a', '4.00']])
   })
 
   it('includes uncategorized rows labeled Uncategorized with no line', () => {
@@ -121,21 +156,40 @@ describe('buildScheduleCTransactionsCSV', () => {
 
 describe('computeScheduleCSummary', () => {
   it('puts returns on Line 2 (never netted into Line 1 gross receipts)', () => {
-    const s = computeScheduleCSummary([
-      tx({ amount: 1000, schedule_c_category: 'payout', related_sale_id: 's1' }),
-      tx({ amount: -150, schedule_c_category: 'returns_allowances', related_sale_id: 's1' }),
-    ], [])
+    const s = computeScheduleCSummary([], [], computeSalesIncome([sale({ sale_price: 1000, fees: 0, shipping_cost: 0, refunded_amount: 150 })]))
     expect(s.grossReceipts).toBe(1000)
     expect(s.returns).toBe(150)
     expect(s.netReceipts).toBe(850)
   })
 
-  it('includes sale-linked income in gross receipts', () => {
+  it('a fully returned sale stays in Line 1 with the refund on Line 2 (nets to zero)', () => {
+    const s = computeScheduleCSummary([], [], computeSalesIncome([sale({ sale_price: 250, fees: 0, shipping_cost: 0, refunded_amount: 250 })]))
+    expect(s.grossReceipts).toBe(250)
+    expect(s.returns).toBe(250)
+    expect(s.netReceipts).toBe(0)
+  })
+
+  it('income comes from sales; sale-linked and csv_import transactions are not double counted', () => {
     const s = computeScheduleCSummary([
-      tx({ amount: 500, schedule_c_category: 'payout', related_sale_id: 's1' }),
-      tx({ amount: 200, schedule_c_category: 'payout' }),
-    ], [])
+      tx({ amount: 500, schedule_c_category: 'payout', related_sale_id: 's1' }),   // Record Sale's payout row: audit only
+      tx({ amount: -65, schedule_c_category: 'commissions_fees', related_sale_id: 's1' }),
+      tx({ amount: 500, schedule_c_category: 'payout', source: 'csv_import' }),    // CSV payout row: audit only
+      tx({ amount: 200, schedule_c_category: 'payout' }),                          // unlinked income still counts
+    ], [], computeSalesIncome([sale({ sale_price: 500, fees: 65, shipping_cost: 8 })]))
     expect(s.grossReceipts).toBe(700)
+    expect(s.expensesByLine['Line 10']).toBe(65)
+    expect(s.expensesByLine['Line 27a']).toBe(8)
+  })
+
+  it('ledger export and summary tie out with sales (Line 1, 2, 10, 27a)', () => {
+    const sales = [sale(), sale({ sale_price: 40, fees: 5, shipping_cost: 0, shipping_charged: 3, refunded_amount: 10 })]
+    const rows = scheduleCExportRows([tx({ amount: -12, schedule_c_category: 'shipping_postage' })], [], sales)
+    const sum = (line: string, type: string) => rows.filter(r => r[LINE] === line && r[TYPE] === type).reduce((a, r) => a + Number(r[AMOUNT]), 0)
+    const s = computeScheduleCSummary([tx({ amount: -12, schedule_c_category: 'shipping_postage' })], [], computeSalesIncome(sales))
+    expect(s.grossReceipts).toBeCloseTo(sum('Part I', 'Income'))       // 100 + 43
+    expect(s.returns).toBeCloseTo(sum('Part I', 'Expense'))           // refunds
+    expect(s.expensesByLine['Line 10']).toBeCloseTo(sum('Line 10', 'Expense'))
+    expect(s.expensesByLine['Line 27a']).toBeCloseTo(sum('Line 27a', 'Expense')) // 5 platform + 12 card postage
   })
 
   it('takes COGS from cost_of_goods transactions (purchases), as a positive magnitude', () => {
@@ -221,5 +275,15 @@ describe('buildScheduleCSummaryCSV', () => {
     const csv = buildScheduleCSummaryCSV([tx({ amount: -50, schedule_c_category: 'advertising' })], [], 'YTD')
     expect(csv).toContain('Line 8,Advertising')
     expect(csv).not.toContain('Line 22,Supplies')
+  })
+})
+
+describe('net-zero pairs (aligned with the Dashboard, 2026-11-09)', () => {
+  it('are excluded from both the ledger and the summary', () => {
+    const txs = [tx({ amount: 300, schedule_c_category: 'payout', net_zero_pair_id: 'p1' }), tx({ amount: -40, schedule_c_category: 'supplies' })]
+    expect(scheduleCExportRows(txs, [])).toHaveLength(1)
+    const s = computeScheduleCSummary(txs, [])
+    expect(s.grossReceipts).toBe(0)
+    expect(s.expensesByLine['Line 22']).toBe(40)
   })
 })

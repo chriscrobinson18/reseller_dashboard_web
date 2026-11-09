@@ -1,5 +1,9 @@
 import type { Transaction } from './types'
-import { resolveCategory, type CustomCategory } from './categories'
+import { resolveCategory, isSaleDerivedTransaction, type CustomCategory } from './categories'
+import {
+  saleIncomeParts, emptySalesIncome,
+  type SaleIncomeInput, type BundleIncomeInput, type SalesIncomeTotals,
+} from './salesIncome'
 
 // ─── Generic CSV helpers ──────────────────────────────────────────────────────
 
@@ -34,16 +38,33 @@ export const SCHEDULE_C_EXPORT_HEADERS = [
   'Date', 'Type', 'Category', 'Schedule C Line', 'Merchant', 'Platform', 'Gross Amount', 'Amount', 'Notes',
 ]
 
+/** A sale as the ledger export reads it (Sales tab row). */
+export type SaleLedgerInput = SaleIncomeInput & {
+  item_name?: string | null
+  external_order_id?: string | null
+}
+/** A bundle as the ledger export reads it. */
+export type BundleLedgerInput = BundleIncomeInput & {
+  platform?: string | null
+  external_order_id?: string | null
+}
+
 /**
  * Builds the row set for the per-period Schedule C transaction export.
  *
- * Scope: **all business rows** for the period — every transaction EXCEPT
- *   - `record_type === 'settlement'` (disbursement rows, not P&L lines), and
- *   - rows whose resolved category is `isExcluded` (Transfer / Personal /
- *     Settlement / Balance Adjustment, plus customs inheriting that flag).
- * Sale-linked (`related_sale_id` / `csv_import`) rows ARE included — that is
- * where sales income and selling costs live — as are uncategorized rows, which
- * are labeled `Uncategorized` so nothing is silently dropped from the ledger.
+ * Scope: **all business rows** for the period.
+ *  - Transactions: every row EXCEPT `record_type === 'settlement'`, rows whose
+ *    resolved category is `isExcluded` (Transfer / Personal / Settlement /
+ *    Balance Adjustment, plus customs inheriting that flag), and — since the
+ *    2026-11-09 switch to sales-based income — sale-derived rows
+ *    (`isSaleDerivedTransaction`: Record Sale / bundle / marketplace CSV rows),
+ *    which duplicate money the sales rows below already carry. Uncategorized
+ *    rows are kept, labeled `Uncategorized`, so nothing is silently dropped.
+ *  - Sales (Sales tab): one Income row per sale (gross = price + buyer-paid
+ *    shipping, Line 1), plus Expense rows for its fees (Line 10), platform
+ *    postage (Line 27a) and refund (Line 2); bundles add their order-level
+ *    fee/shipping rows. Category labels come from the built-in categories so
+ *    the ledger reads the same as before.
  *
  * Sign convention: `Amount` is always the absolute value; the `Type` column
  * (`Income` / `Expense`) carries the direction that abs() removed. A refund
@@ -57,38 +78,75 @@ export const SCHEDULE_C_EXPORT_HEADERS = [
 export function scheduleCExportRows(
   transactions: Transaction[],
   customs: CustomCategory[],
+  sales: SaleLedgerInput[] = [],
+  bundles: BundleLedgerInput[] = [],
 ): (string | number)[][] {
-  return transactions
-    .filter(t => {
-      if (t.record_type === 'settlement') return false
-      const cat = resolveCategory(t.schedule_c_category, customs)
-      return !cat?.isExcluded
-    })
-    .slice()
-    .sort((a, b) => a.date.localeCompare(b.date))
-    .map(t => {
-      const cat = resolveCategory(t.schedule_c_category, customs)
-      const abs = Math.abs(t.amount)
-      return [
-        t.date,
-        t.amount >= 0 ? 'Income' : 'Expense',
-        cat?.label ?? 'Uncategorized',
-        cat?.scheduleLine ?? '',
-        t.merchant ?? '',
-        t.platform ?? '',
-        (t.gross_amount ?? abs).toFixed(2),
-        abs.toFixed(2),
-        t.notes ?? '',
-      ]
-    })
+  type Row = { date: string; cells: (string | number)[] }
+  const out: Row[] = []
+
+  for (const t of transactions) {
+    if (t.record_type === 'settlement') continue
+    if (isSaleDerivedTransaction(t)) continue
+    // Net-zero pairs (matched offsetting rows) are excluded everywhere, as in
+    // bucketTransaction; before 2026-11-09 the exports alone still counted them.
+    if (t.net_zero_pair_id) continue
+    const cat = resolveCategory(t.schedule_c_category, customs)
+    if (cat?.isExcluded) continue
+    const abs = Math.abs(t.amount)
+    out.push({ date: t.date, cells: [
+      t.date,
+      t.amount >= 0 ? 'Income' : 'Expense',
+      cat?.label ?? 'Uncategorized',
+      cat?.scheduleLine ?? '',
+      t.merchant ?? '',
+      t.platform ?? '',
+      (t.gross_amount ?? abs).toFixed(2),
+      abs.toFixed(2),
+      t.notes ?? '',
+    ] })
+  }
+
+  const line = (v: string) => resolveCategory(v, customs)
+  const saleRow = (date: string, type: 'Income' | 'Expense', catValue: string, merchant: string, platform: string, amount: number, notes: string) => {
+    const cat = line(catValue)
+    out.push({ date, cells: [date, type, cat?.label ?? catValue, cat?.scheduleLine ?? '', merchant, platform, amount.toFixed(2), amount.toFixed(2), notes] })
+  }
+  for (const s of sales) {
+    if (s.deleted_at) continue
+    const d = s.sold_at.slice(0, 10)
+    const p = saleIncomeParts(s)
+    const name = s.item_name ?? 'Sale'
+    const plat = s.platform ?? ''
+    const ref = s.external_order_id ? `Order ${s.external_order_id}` : ''
+    saleRow(d, 'Income', 'payout', name, plat, p.grossReceipts, ref)
+    if (p.fees) saleRow(d, 'Expense', 'commissions_fees', name, plat, p.fees, ref)
+    if (p.platformShipping) saleRow(d, 'Expense', 'shipping_postage', name, plat, p.platformShipping, ref)
+    if (p.returns) saleRow(d, 'Expense', 'returns_allowances', name, plat, p.returns, ref)
+  }
+  for (const b of bundles) {
+    if (b.deleted_at) continue
+    const d = b.sold_at.slice(0, 10)
+    const ref = b.external_order_id ? `Bundle order ${b.external_order_id}` : 'Bundle'
+    const fees = Math.abs(b.fees ?? 0), ship = Math.abs(b.shipping_cost ?? 0)
+    if (fees) saleRow(d, 'Expense', 'commissions_fees', 'Bundle', b.platform ?? '', fees, ref)
+    if (ship) saleRow(d, 'Expense', 'shipping_postage', 'Bundle', b.platform ?? '', ship, ref)
+  }
+
+  // Stable sort: same-day rows keep transactions-first, then sales order.
+  return out
+    .map((r, i) => ({ ...r, i }))
+    .sort((a, b) => a.date.localeCompare(b.date) || a.i - b.i)
+    .map(r => r.cells)
 }
 
 /** Full CSV string for the Schedule C transaction export. */
 export function buildScheduleCTransactionsCSV(
   transactions: Transaction[],
   customs: CustomCategory[],
+  sales: SaleLedgerInput[] = [],
+  bundles: BundleLedgerInput[] = [],
 ): string {
-  return toCSV(SCHEDULE_C_EXPORT_HEADERS, scheduleCExportRows(transactions, customs))
+  return toCSV(SCHEDULE_C_EXPORT_HEADERS, scheduleCExportRows(transactions, customs, sales, bundles))
 }
 
 // ─── Schedule C summary ("form" view) ──────────────────────────────────────────
@@ -132,10 +190,16 @@ export interface ScheduleCSummary {
 }
 
 /**
- * Rolls the same all-business-row transaction set as the CSV transaction export
- * up into IRS Schedule C form lines (so the two exports tie out — the one
- * exception is Line 24b, where the form shows the 50%-deductible meals amount
- * while the transaction ledger shows the actual dollar amount).
+ * Rolls the same all-business-row set as the CSV transaction export up into
+ * IRS Schedule C form lines (so the two exports tie out — the one exception is
+ * Line 24b, where the form shows the 50%-deductible meals amount while the
+ * transaction ledger shows the actual dollar amount).
+ *
+ * Income comes from the Sales tab (`sales`, 2026-11-09): pass the period's
+ * `SalesIncomeTotals` (src/lib/salesIncome.ts). Its gross goes to Line 1,
+ * refunds to Line 2, fees to Line 10, platform postage to Line 27a.
+ * Sale-derived transactions (`isSaleDerivedTransaction`) are skipped so that
+ * money isn't counted twice.
  *
  * Sourcing note (chosen model): COGS (Line 4) is the sum of `cost_of_goods`
  * transactions — i.e. inventory PURCHASES in the period (a cash-basis
@@ -147,6 +211,7 @@ export interface ScheduleCSummary {
 export function computeScheduleCSummary(
   transactions: Transaction[],
   customs: CustomCategory[],
+  sales: SalesIncomeTotals = emptySalesIncome(),
 ): ScheduleCSummary {
   const perLine: Record<string, number> = {}  // signed sums keyed by scheduleLine
   let returnsSigned = 0
@@ -155,6 +220,10 @@ export function computeScheduleCSummary(
 
   for (const t of transactions) {
     if (t.record_type === 'settlement') continue
+    if (isSaleDerivedTransaction(t)) continue
+    // Net-zero pairs (matched offsetting rows) are excluded everywhere, as in
+    // bucketTransaction; before 2026-11-09 the exports alone still counted them.
+    if (t.net_zero_pair_id) continue
     const cat = resolveCategory(t.schedule_c_category, customs)
     if (cat?.isExcluded) continue
     if (!cat?.scheduleLine) {
@@ -169,6 +238,12 @@ export function computeScheduleCSummary(
     }
     perLine[cat.scheduleLine] = (perLine[cat.scheduleLine] ?? 0) + signed
   }
+
+  // Sales tab: Line 1 / 2 / 10 / 27a.
+  perLine['Part I'] = (perLine['Part I'] ?? 0) + sales.grossReceipts
+  returnsSigned -= sales.returns
+  perLine['Line 10'] = (perLine['Line 10'] ?? 0) - sales.fees
+  perLine['Line 27a'] = (perLine['Line 27a'] ?? 0) - sales.platformShipping
 
   const grossReceipts = perLine['Part I'] ?? 0
   const returns = Math.abs(returnsSigned)
@@ -206,8 +281,9 @@ export function buildScheduleCSummaryCSV(
   transactions: Transaction[],
   customs: CustomCategory[],
   periodLabel: string,
+  sales: SalesIncomeTotals = emptySalesIncome(),
 ): string {
-  const s = computeScheduleCSummary(transactions, customs)
+  const s = computeScheduleCSummary(transactions, customs, sales)
   const money = (n: number) => n.toFixed(2)
 
   const rows: (string | number)[][] = [
@@ -235,6 +311,7 @@ export function buildScheduleCSummaryCSV(
     ['Schedule C Summary'],
     ['Period', periodLabel],
     ['Basis', 'Cash — COGS (Line 4) is inventory purchases in the period, not FIFO cost of items sold'],
+    ['Income', `From recorded sales (Sales tab): ${sales.saleCount} sales. Bank deposits from marketplaces are settlements, not income`],
     [],
     ['Line', 'Description', 'Amount'],
   ]

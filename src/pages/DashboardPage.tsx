@@ -9,6 +9,7 @@ import { getPeriodRange, PERIOD_LABELS, type PeriodPreset } from '../lib/periods
 import { CATEGORIES, resolveCategory, type CustomCategory, type CategoryDef } from '../lib/categories'
 import { useCustomCategories } from '../lib/queries'
 import { computeScheduleC, computeKPIs, computeMonthlyChart } from '../lib/scheduleCMath'
+import { computeSalesIncome, computeSalesIncomeByMonth, type BundleIncomeInput } from '../lib/salesIncome'
 import { formatUSD } from '../lib/utils'
 import { buildScheduleCTransactionsCSV, buildScheduleCSummaryCSV, downloadCSV } from '../lib/csvExport'
 import { Download } from 'lucide-react'
@@ -40,6 +41,22 @@ async function fetchSales(start: string | null, end: string | null): Promise<Sal
   const { data, error } = await q.limit(2000)
   if (error) throw error
   return data ?? []
+}
+
+type BundleRow = BundleIncomeInput & { id: string; platform: string | null; external_order_id: string | null }
+
+/** Order-level fees/shipping live on sale_bundles (lines store 0); fetched so
+ *  sales-based income counts them once. Same sold_at period filter as sales. */
+async function fetchBundles(start: string | null, end: string | null): Promise<BundleRow[]> {
+  let q = supabase
+    .from('sale_bundles')
+    .select('id, sold_at, fees, shipping_cost, platform, external_order_id, deleted_at')
+    .is('deleted_at', null)
+  if (start) q = q.gte('sold_at', start + 'T00:00:00Z')
+  if (end) q = q.lte('sold_at', end + 'T23:59:59Z')
+  const { data, error } = await q.limit(2000)
+  if (error) throw error
+  return (data ?? []) as BundleRow[]
 }
 
 // ─── Computation helpers ──────────────────────────────────────────────────────
@@ -132,18 +149,28 @@ export default function DashboardPage() {
     queryFn: () => fetchSales(range.start, range.end),
   })
 
+  const { data: bundles = [], isLoading: loadingBundles } = useQuery({
+    queryKey: ['sale_bundles', 'dashboard', range.start, range.end],
+    queryFn: () => fetchBundles(range.start, range.end),
+  })
+
   const { data: customs = [] } = useCustomCategories()
 
-  const kpis = useMemo(() => computeKPIs(transactions, customs), [transactions, customs])
+  // Income comes from the Sales tab (2026-11-09) — see src/lib/salesIncome.ts.
+  const salesIncome = useMemo(() => computeSalesIncome(sales, bundles), [sales, bundles])
+  const salesByMonth = useMemo(() => computeSalesIncomeByMonth(sales, bundles), [sales, bundles])
+
+  const kpis = useMemo(() => computeKPIs(transactions, customs, salesIncome), [transactions, customs, salesIncome])
   const profitability = useMemo(() => computeProfitability(sales), [sales])
-  const monthlyData = useMemo(() => computeMonthlyChart(transactions, customs), [transactions, customs])
-  const scheduleC = useMemo(() => computeScheduleC(transactions, customs), [transactions, customs])
+  const monthlyData = useMemo(() => computeMonthlyChart(transactions, customs, salesByMonth), [transactions, customs, salesByMonth])
+  const scheduleC = useMemo(() => computeScheduleC(transactions, customs, salesIncome), [transactions, customs, salesIncome])
 
   // Note: scheduleC values are SIGNED. For Part I, positive = income (display as is).
   // For Part II/III (expenses/COGS), values are negative; we display the absolute value
   // and let the section total show as a positive expense magnitude.
-  // returns_allowances rows are sale-linked so bucketTransaction excludes them from scheduleC;
-  // the Line 1 / Line 2 (Returns & Allowances) split is handled in the Summary CSV export.
+  // Sales income is merged in (payout = Line 1 gross, returns_allowances = Line 2 refunds,
+  // commissions_fees / shipping_postage = Line 10 / 27a); sale-derived transactions are
+  // excluded by bucketTransaction so nothing is counted twice.
   const allCategories = useMemo<CategoryDef[]>(() => {
     const customsResolved = customs
       .map((c: CustomCategory) => resolveCategory(c.value, customs))
@@ -173,21 +200,21 @@ export default function DashboardPage() {
     t.source !== 'csv_import'
   ).length
 
-  const loading = loadingTx || loadingSales
+  const loading = loadingTx || loadingSales || loadingBundles
 
   const periodSlug = `${(range.start ?? 'all').slice(0, 10)}-to-${(range.end ?? 'now').slice(0, 10)}`
 
   function handleExportTransactions() {
     downloadCSV(
       `schedule-c-transactions-${periodSlug}.csv`,
-      buildScheduleCTransactionsCSV(transactions, customs),
+      buildScheduleCTransactionsCSV(transactions, customs, sales, bundles),
     )
   }
 
   function handleExportSummary() {
     downloadCSV(
       `schedule-c-summary-${periodSlug}.csv`,
-      buildScheduleCSummaryCSV(transactions, customs, PERIOD_LABELS[period]),
+      buildScheduleCSummaryCSV(transactions, customs, PERIOD_LABELS[period], salesIncome),
     )
   }
 
@@ -202,7 +229,7 @@ export default function DashboardPage() {
           {loading && <span className="text-xs text-gray-400 mr-1">Loading…</span>}
           <button
             onClick={handleExportSummary}
-            disabled={transactions.length === 0}
+            disabled={transactions.length === 0 && sales.length === 0}
             title="Download the Schedule C summary (one row per IRS line) for this period"
             className="flex items-center gap-1.5 border border-gray-200 rounded-lg px-3 py-1.5 text-sm font-medium text-gray-700 hover:bg-gray-50 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
           >
@@ -210,7 +237,7 @@ export default function DashboardPage() {
           </button>
           <button
             onClick={handleExportTransactions}
-            disabled={transactions.length === 0}
+            disabled={transactions.length === 0 && sales.length === 0}
             title="Download this period's business transactions as a Schedule C ledger CSV"
             className="flex items-center gap-1.5 border border-gray-200 rounded-lg px-3 py-1.5 text-sm font-medium text-gray-700 hover:bg-gray-50 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
           >
