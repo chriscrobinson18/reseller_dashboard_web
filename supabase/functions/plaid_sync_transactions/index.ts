@@ -53,6 +53,12 @@ const plaidClient = new PlaidApi(plaidConfig)
 const PFC_TO_SCHEDULE_C: Record<string, string> = {
   'TRANSFER_IN':        'transfer',
   'TRANSFER_OUT':       'transfer',
+  // Credit-card payments (both the checking-side debit and the card-side
+  // "PAYMENT - THANK YOU" credit). Moving money between your own accounts is
+  // never Schedule C income or expense. Also covers loan payments generally —
+  // principal is never deductible; business loan interest (Line 16) must be
+  // split out by hand either way.
+  'LOAN_PAYMENTS':      'transfer',
   'INCOME':             'payout',
   'BANK_FEES':          'other_expense',
   'FOOD_AND_DRINK':     'meals',

@@ -55,6 +55,22 @@ The same dropdown is also used by [`AddTransactionModal`](../../src/components/m
 - **In-modal help.** An `InfoPopover` in the modal header explains the two mapping modes (`Refine an existing category` vs. `Map to a Schedule C line directly`), tombstone behavior, and why Line 24b is excluded from the explicit-line picker. Pattern matches the trades modal.
 - **Friendly line labels in the explicit-line picker.** The `<select>` shows `"Office Expense (Line 18)"`, `"Utilities (Line 25)"`, `"Income / Gross Receipts (Part I)"`, etc. — never raw `"Line 18"` / `"Part I"`. Labels come from `describeScheduleLine()` in `src/lib/categories.ts`. If you add another category-picker surface that exposes Schedule C line choices, route it through the same helper so the language stays consistent.
 
+## Auto-categorization on Plaid sync
+
+`plaid_sync_transactions` stamps a category on newly synced, still-uncategorized rows (`record_type = 'transaction'`) using Plaid's primary `personal_finance_category` (`PFC_TO_SCHEDULE_C` in `supabase/functions/plaid_sync_transactions/index.ts`):
+
+| Plaid primary | → category |
+|---|---|
+| `TRANSFER_IN`, `TRANSFER_OUT`, `LOAN_PAYMENTS` | `transfer` (excluded from Schedule C) |
+| `INCOME` | `payout` |
+| `BANK_FEES` | `other_expense` |
+| `FOOD_AND_DRINK` | `meals` |
+| `TRAVEL` | `travel` |
+| `RENT_AND_UTILITIES` | `utilities` |
+| `PERSONAL_CARE`, `MEDICAL` | `personal` |
+
+Marketplace payouts from known sources are classified as `settlement` before this runs. The pass only fills `NULL` categories, so manual edits are never overwritten. `LOAN_PAYMENTS` was added 2026-11-09: credit-card payments had been left uncategorized because they have no `merchant_entity_id` for category rules to key off. **Caveat:** blanket `TRANSFER_IN → transfer` can hide real income that arrives as a transfer (P2P business payments, some marketplace payouts). Re-tag those to Payout by hand.
+
 ## Detail panel (`TransactionDetail`, inside a `SlideOver`)
 
 - **Plaid-sourced transactions** (`source === 'plaid'`) are read-only except category and notes — no Edit button, edit-mode amount/date/merchant fields don't render. Delete still works (removes the row).
