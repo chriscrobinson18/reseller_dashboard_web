@@ -48,6 +48,38 @@ _Created: June 23, 2026. Source of truth for porting the iOS app's feature set t
 
 ---
 
+## 🧹 Books Cleanup — 2025 amended return + 2026 filing
+
+_Started 2026-11-09. Scope: Schedule C accuracy for tax years 2025 (amendment) and 2026 (filing); 2024 is out of scope. Per-item sale ↔ inventory linking is **not** required for past years. This repo is public, so no amounts, merchant names or account numbers go here; data snapshots and undo backups are kept privately, never in git._
+
+**Accounting model (decided):**
+- Income comes from **recorded sales** (marketplace imports, Record Sale, Apple Shortcut). Bank deposits never carry income: each one is tagged `settlement` (sales proceeds arriving), `transfer` (own money) or `personal`.
+- Income is earned when the buyer pays, not when the money is deposited. Personal spending of business money before it's deposited is an owner's draw: not deductible, and it doesn't reduce income.
+- Going forward (option C): **deposit all business money first, then pay yourself from the bank.** Venmo is personal-only. Bank accounts in the app are business-only.
+- Rule for converting history: **record the sales first, then re-tag their deposits as settlements.** Never the reverse, or the income disappears.
+
+**Done (2026-11-09):**
+- [x] Legacy iOS category tags (`proxies`, `automation_software`, `cook_group`, `memberships`, `equipment`, `disbursement`) re-tagged onto real Schedule C lines; custom category "Software & Subscriptions" (Line 27a)
+- [x] Credit-card payments (`LOAN_PAYMENTS`) → `transfer`: backfilled, plus a sync rule
+- [x] PayPal / Cash App wallet cash-outs → `settlement` (sync rule + existing rows); Venmo kept as `transfer`
+- [x] Personal cards removed: sync disabled per account, their transactions deleted (full backup kept privately)
+
+**Phases:**
+- [ ] **Phase 1: Categorize spending.** Uncategorized 2025–26 transactions on business accounts, batched by merchant group (the top 50 groups cover ~95% of dollars), then the long tail. Create `category_rules` for repeat merchants so future syncs auto-tag. Includes eBay/marketplace **refunds on credit cards that the sync mis-tagged as `settlement`**: re-tag them so they net against the original purchase category.
+- [ ] **Phase 2: Classify incoming money.** Uncategorized credits, plus deposits currently tagged `payout` (P2P, Zelle, cash): label each as settlement / transfer / refund / owner contribution, following the conversion rule above.
+- [ ] **Phase 3: Missing sales.** P2P, cash, Whatnot/Facebook and other non-imported sales for 2025–26, from wallet statements and records. One-off data loads through the same code path as Record Sale (not new import features); one summary sale per month where line-item detail is gone. Then re-tag the matching deposits as `settlement`.
+- [ ] **Phase 4: Missing transactions.** Business expenses that never reached the bank (cash spent at shows, purchases from wallet balances), entered by hand.
+- [ ] **Phase 5: Inventory (Part III).** Year-end inventory value as of 2025-12-31 and 2026-12-31 (count or estimate).
+- [ ] **Phase 6: Close each year.** Schedule C totals per line for 2025 and 2026, compared with the filed 2025 return → hand to tax preparer for the 1040-X decision.
+
+**Code follow-ups found during cleanup:**
+- [ ] **Deploy `plaid_sync_transactions`** (card-payment rule, wallet settlement rule): `supabase functions deploy plaid_sync_transactions --project-ref qmizmnbzergqbpgyqseg`
+- [ ] **P0: `classifySettlement` tags *any* incoming "eBay" credit as a settlement**, including refunds on credit cards. It should only match payouts into checking accounts (deposits), not card credits.
+- [ ] **P0: Dashboard "Total Income" leaves out sale-linked and CSV-import income** (it counts only deposits tagged `payout`). Under the sales-based model it will trend toward $0 even though the Schedule C export is correct. Make the card match the export.
+- [ ] Settlement ↔ sale linking UI: **deferred** (bookkeeping control, not required for Schedule C).
+
+---
+
 ## 🚨 P0 — Tax Correctness (port fixes, don't port the bugs)
 
 _These bugs exist in mobile's codebase (see mobile TASKS.md "P0 — June 2026 Audit Additions" and "Architectural Review"). Web's category/totals logic is being written fresh right now — fix these as part of the initial build instead of inheriting them._
