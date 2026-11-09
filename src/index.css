@@ -2,9 +2,11 @@
 
 * { box-sizing: border-box; }
 
-body { margin: 0; font-family: system-ui, 'Segoe UI', Roboto, sans-serif; }
+html, body { overflow-x: hidden; }
 
-#root { width: 100%; min-height: 100vh; }
+body { margin: 0; font-family: system-ui, 'Segoe UI', Roboto, sans-serif; -webkit-text-size-adjust: 100%; }
+
+#root { width: 100%; min-height: 100vh; min-height: 100dvh; }
 
 ::-webkit-scrollbar { width: 6px; height: 6px; }
 ::-webkit-scrollbar-track { background: transparent; }
@@ -15,9 +17,24 @@ body { margin: 0; font-family: system-ui, 'Segoe UI', Roboto, sans-serif; }
 .data-row:hover { background-color: #f9fafb; cursor: pointer; }
 .data-row.selected { background-color: #eff6ff !important; }
 
+/*
+ * Phones: iOS Safari zooms the page when a focused field's font is < 16px,
+ * and never zooms back — the "doesn't fit the screen" bug. Unlayered, so it
+ * beats Tailwind's text-sm/text-xs utilities on form controls only.
+ */
+@media (max-width: 767px) {
+  input:not([type="checkbox"]):not([type="radio"]), select, textarea { font-size: 16px; }
+}
+
 @layer utilities {
   .pb-safe {
     padding-bottom: env(safe-area-inset-bottom, 0px);
+  }
+  .pb-safe-plus {
+    padding-bottom: calc(1rem + env(safe-area-inset-bottom, 0px));
+  }
+  @media (min-width: 640px) {
+    .pb-safe-plus { padding-bottom: 1.25rem; }
   }
   .pb-nav-safe {
     padding-bottom: calc(4rem + env(safe-area-inset-bottom, 0px));

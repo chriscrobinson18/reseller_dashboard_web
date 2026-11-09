@@ -76,7 +76,7 @@ function KpiCard({ label, value, positive }: { label: string; value: number; pos
   return (
     <div className="bg-white border border-gray-200 rounded-xl p-4">
       <div className="text-xs text-gray-500 font-medium mb-1">{label}</div>
-      <div className={`text-xl font-semibold ${isPositive ? 'text-gray-900' : 'text-red-500'}`}>
+      <div className={`text-lg sm:text-xl font-semibold tabular-nums break-words ${isPositive ? 'text-gray-900' : 'text-red-500'}`}>
         {formatUSD(value)}
       </div>
     </div>
@@ -85,9 +85,9 @@ function KpiCard({ label, value, positive }: { label: string; value: number; pos
 
 function ProfitRow({ label, value, muted }: { label: string; value: number; muted?: boolean }) {
   return (
-    <div className="flex justify-between items-center py-1.5 border-b border-gray-100 last:border-0">
-      <span className={`text-sm ${muted ? 'text-gray-400' : 'text-gray-700'}`}>{label}</span>
-      <span className={`text-sm font-medium tabular-nums ${value < 0 ? 'text-red-500' : muted ? 'text-gray-400' : 'text-gray-900'}`}>
+    <div className="flex justify-between items-center gap-3 py-1.5 border-b border-gray-100 last:border-0">
+      <span className={`text-sm min-w-0 ${muted ? 'text-gray-400' : 'text-gray-700'}`}>{label}</span>
+      <span className={`text-sm font-medium tabular-nums shrink-0 ${value < 0 ? 'text-red-500' : muted ? 'text-gray-400' : 'text-gray-900'}`}>
         {formatUSD(value)}
       </span>
     </div>
@@ -99,17 +99,17 @@ function ScheduleCSection({ title, rows }: { title: string; rows: Array<{ label:
   if (total === 0 && rows.length === 0) return null
   return (
     <div className="mb-4">
-      <div className="flex justify-between items-center mb-1">
-        <span className="text-xs font-semibold text-gray-500 uppercase tracking-wide">{title}</span>
-        <span className="text-sm font-semibold text-gray-900">{formatUSD(total)}</span>
+      <div className="flex justify-between items-center gap-3 mb-1">
+        <span className="text-xs font-semibold text-gray-500 uppercase tracking-wide min-w-0">{title}</span>
+        <span className="text-sm font-semibold text-gray-900 tabular-nums shrink-0">{formatUSD(total)}</span>
       </div>
       {rows.filter(r => r.value !== 0).map(r => (
-        <div key={r.label} className="flex justify-between items-center py-1 border-b border-gray-50">
-          <span className="text-xs text-gray-600">
+        <div key={r.label} className="flex justify-between items-center gap-3 py-1 border-b border-gray-50">
+          <span className="text-xs text-gray-600 min-w-0">
             {r.line && <span className="text-gray-400 mr-1.5">{r.line}</span>}
             {r.label}
           </span>
-          <span className="text-xs font-medium tabular-nums text-gray-800">{formatUSD(r.value)}</span>
+          <span className="text-xs font-medium tabular-nums text-gray-800 shrink-0">{formatUSD(r.value)}</span>
         </div>
       ))}
     </div>
@@ -192,13 +192,13 @@ export default function DashboardPage() {
   }
 
   return (
-    <div className="p-6 space-y-6 max-w-6xl mx-auto">
+    <div className="p-4 md:p-6 space-y-4 md:space-y-6 max-w-6xl mx-auto">
       {/* Header */}
-      <div className="flex items-center justify-between">
+      <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-2">
         <h1 className="text-lg font-semibold text-gray-900">
-          Dashboard — <span className="text-gray-500 font-normal">{PERIOD_LABELS[period]}</span>
+          Dashboard <span className="text-gray-500 font-normal">— {PERIOD_LABELS[period]}</span>
         </h1>
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
           {loading && <span className="text-xs text-gray-400 mr-1">Loading…</span>}
           <button
             onClick={handleExportSummary}
@@ -206,7 +206,7 @@ export default function DashboardPage() {
             title="Download the Schedule C summary (one row per IRS line) for this period"
             className="flex items-center gap-1.5 border border-gray-200 rounded-lg px-3 py-1.5 text-sm font-medium text-gray-700 hover:bg-gray-50 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
           >
-            <Download size={14} /> Summary CSV
+            <Download size={14} /> Summary<span className="hidden sm:inline"> CSV</span>
           </button>
           <button
             onClick={handleExportTransactions}
@@ -214,7 +214,7 @@ export default function DashboardPage() {
             title="Download this period's business transactions as a Schedule C ledger CSV"
             className="flex items-center gap-1.5 border border-gray-200 rounded-lg px-3 py-1.5 text-sm font-medium text-gray-700 hover:bg-gray-50 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
           >
-            <Download size={14} /> Transactions CSV
+            <Download size={14} /> Transactions<span className="hidden sm:inline"> CSV</span>
           </button>
         </div>
       </div>
@@ -233,16 +233,17 @@ export default function DashboardPage() {
       )}
 
       {/* KPI row */}
-      <div className="grid grid-cols-3 gap-4">
+      {/* Phones: Income | Expenses side by side, Net full-width beneath. */}
+      <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 md:gap-4">
         <KpiCard label="Total Income" value={kpis.income} positive />
         <KpiCard label="Total Expenses" value={kpis.expenses} positive={false} />
-        <KpiCard label="Net" value={kpis.net} />
+        <div className="col-span-2 sm:col-span-1"><KpiCard label="Net" value={kpis.net} /></div>
       </div>
 
       {/* Profitability + Schedule C side by side */}
-      <div className="grid grid-cols-2 gap-4">
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
         {/* Profitability card */}
-        <div className="bg-white border border-gray-200 rounded-xl p-5">
+        <div className="bg-white border border-gray-200 rounded-xl p-4 md:p-5">
           <h2 className="text-sm font-semibold text-gray-900 mb-3">Sales Profitability</h2>
           <ProfitRow label="Gross Revenue" value={profitability.revenue} />
           <ProfitRow label="Cost of Goods (COGS)" value={-profitability.cogs} />
@@ -263,7 +264,7 @@ export default function DashboardPage() {
         </div>
 
         {/* Schedule C */}
-        <div className="bg-white border border-gray-200 rounded-xl p-5 overflow-y-auto max-h-72">
+        <div className="bg-white border border-gray-200 rounded-xl p-4 md:p-5 md:overflow-y-auto md:max-h-72">
           <h2 className="text-sm font-semibold text-gray-900 mb-3">Schedule C Breakdown</h2>
           {partI.length > 0 && <ScheduleCSection title="Part I — Income" rows={partI} />}
           {partIII.length > 0 && <ScheduleCSection title="Part III — COGS" rows={partIII} />}
@@ -276,7 +277,7 @@ export default function DashboardPage() {
 
       {/* Monthly chart */}
       {monthlyData.length > 0 && (
-        <div className="bg-white border border-gray-200 rounded-xl p-5">
+        <div className="bg-white border border-gray-200 rounded-xl p-4 md:p-5">
           <h2 className="text-sm font-semibold text-gray-900 mb-4">Monthly Overview</h2>
           <ResponsiveContainer width="100%" height={220}>
             <BarChart data={monthlyData} barGap={2}>

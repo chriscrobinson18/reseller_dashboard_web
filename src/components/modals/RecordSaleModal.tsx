@@ -148,11 +148,11 @@ export default function RecordSaleModal({ open, onClose }: { open: boolean; onCl
             const willOversell = l.item != null && l.quantity > stock
             return (
               <div key={i} className="border border-gray-200 rounded-lg p-3">
-                <div className="grid grid-cols-[1fr_70px_100px_28px] gap-2 items-start">
+                <div className="grid grid-cols-[70px_1fr_28px] sm:grid-cols-[1fr_70px_100px_28px] gap-2 items-start">
                   <button
                     type="button"
                     onClick={() => setPickerOpenIdx(pickerOpenIdx === i ? null : i)}
-                    className={`${inputCls} text-left`}
+                    className={`${inputCls} text-left col-span-3 sm:col-span-1 min-w-0`}
                     aria-label="Select item"
                   >
                     {l.item?.name ?? <span className="text-gray-400">Pick item…</span>}

@@ -272,7 +272,7 @@ function SaleDetail({ sale, netPayoutBySale, onLinkItem, onEdit, onDelete, onPro
         ].map(({ label, value, negative }) => (
           <div key={label} className="bg-gray-50 rounded-lg p-2.5">
             <div className="text-gray-400 mb-0.5">{label}</div>
-            <div className={`font-medium ${negative ? 'text-red-500' : 'text-gray-800'}`}>{value}</div>
+            <div className={`font-medium break-words ${negative ? 'text-red-500' : 'text-gray-800'}`}>{value}</div>
           </div>
         ))}
       </div>
@@ -446,10 +446,10 @@ export default function SalesPage() {
   return (
     <div className="flex h-full">
       <div className="flex-1 flex flex-col overflow-hidden">
-        <div className="p-6 border-b border-gray-200 bg-white space-y-3">
-          <div className="flex items-center justify-between">
+        <div className="p-4 md:p-6 border-b border-gray-200 bg-white space-y-3">
+          <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1">
             <h1 className="text-lg font-semibold text-gray-900">Sales</h1>
-            <div className="flex items-center gap-3 text-sm">
+            <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-sm">
               <span className="text-gray-500">{formatUSD(totalRevenue)} revenue</span>
               {needsLink > 0 && (
                 <span className="bg-amber-100 text-amber-700 px-2 py-0.5 rounded-full text-xs font-medium">
@@ -459,17 +459,17 @@ export default function SalesPage() {
             </div>
           </div>
           <PeriodPicker value={period} onChange={p => { setPeriod(p); setPlatformFilter(null); setReturnFilter('all') }} />
-          <div className="flex items-center gap-2">
+          <div className="grid grid-cols-2 gap-2 md:flex md:items-center">
             <input
               value={search}
               onChange={e => setSearch(e.target.value)}
               placeholder="Search item, order ID, platform, payment…"
-              className="w-64 border border-gray-200 rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-gray-900"
+              className="col-span-2 w-full md:w-64 border border-gray-200 rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-gray-900"
             />
             <select
               value={platformFilter ?? ''}
               onChange={e => setPlatformFilter(e.target.value || null)}
-              className="border border-gray-200 rounded-lg px-2 py-1.5 text-sm text-gray-700 bg-white focus:outline-none focus:ring-2 focus:ring-gray-900"
+              className="min-w-0 border border-gray-200 rounded-lg px-2 py-1.5 text-sm text-gray-700 bg-white focus:outline-none focus:ring-2 focus:ring-gray-900"
             >
               <option value="">All platforms</option>
               {platformOptions.map(p => (
@@ -479,16 +479,16 @@ export default function SalesPage() {
             <select
               value={returnFilter}
               onChange={e => setReturnFilter(e.target.value as 'all' | 'none' | 'has_return')}
-              className="border border-gray-200 rounded-lg px-2 py-1.5 text-sm text-gray-700 bg-white focus:outline-none focus:ring-2 focus:ring-gray-900"
+              className="min-w-0 border border-gray-200 rounded-lg px-2 py-1.5 text-sm text-gray-700 bg-white focus:outline-none focus:ring-2 focus:ring-gray-900"
             >
               <option value="all">All returns</option>
               <option value="none">No returns</option>
               <option value="has_return">Has return</option>
             </select>
-            <div className="flex-1" />
+            <div className="hidden md:block md:flex-1" />
             <button
               onClick={() => setShowRecordSale(true)}
-              className="flex items-center gap-1.5 bg-gray-900 text-white px-3 py-1.5 rounded-lg text-sm font-medium hover:bg-gray-700 transition-colors"
+              className="col-span-2 flex items-center justify-center gap-1.5 bg-gray-900 text-white px-3 py-2 md:py-1.5 rounded-lg text-sm font-medium hover:bg-gray-700 transition-colors"
             >
               <Plus size={14} /> Record Sale
             </button>
@@ -503,27 +503,27 @@ export default function SalesPage() {
           ) : (
             <>
             {shortcutSales.length > 0 && (
-              <div className="mb-4 rounded-lg border border-amber-200 bg-amber-50">
+              <div className="m-3 md:m-0 md:mb-4 rounded-lg border border-amber-200 bg-amber-50">
                 <button
                   onClick={() => setShortcutBannerOpen(o => !o)}
-                  className="flex w-full items-center justify-between px-4 py-3 text-sm font-medium text-amber-800"
+                  className="flex w-full items-center justify-between gap-3 px-4 py-3 text-sm font-medium text-amber-800 text-left"
                 >
-                  <span>⚠️ {shortcutSales.length} sale{shortcutSales.length > 1 ? 's' : ''} need attention — item not linked to inventory</span>
+                  <span className="min-w-0">⚠️ {shortcutSales.length} sale{shortcutSales.length > 1 ? 's' : ''} need attention — item not linked to inventory</span>
                   <span className="text-amber-600">{shortcutBannerOpen ? '▲' : '▼'}</span>
                 </button>
                 {shortcutBannerOpen && (
                   <ul className="border-t border-amber-200 divide-y divide-amber-100">
                     {shortcutSales.map(sale => (
-                      <li key={sale.id} className="flex items-center justify-between px-4 py-2 text-sm text-amber-900">
+                      <li key={sale.id} className="flex items-center justify-between gap-3 px-4 py-2 text-sm text-amber-900">
                         <button
-                          className="flex-1 text-left hover:underline"
+                          className="flex-1 min-w-0 text-left hover:underline break-words"
                           onClick={() => setEditSale(sale)}
                         >
                           {sale.item_name} — {formatUSD(sale.sale_price)} — {formatDate(sale.sold_at)}
                         </button>
                         <button
                           onClick={() => setDeleteSaleTarget(sale)}
-                          className="ml-4 text-xs text-amber-600 hover:text-amber-800"
+                          className="shrink-0 text-xs text-amber-600 hover:text-amber-800"
                         >
                           dismiss
                         </button>
@@ -533,7 +533,72 @@ export default function SalesPage() {
                 )}
               </div>
             )}
-            <table className="w-full text-sm">
+            {/* Phones: one tappable card per sale */}
+            <ul className="md:hidden divide-y divide-gray-100 bg-white">
+              {filtered.map(sale => {
+                const payout = netPayoutFor(sale, netPayoutBySale)
+                const name = sale.items?.name ?? sale.item_name
+                return (
+                  <li
+                    key={sale.id}
+                    className={`px-4 py-3 active:bg-gray-50 ${selected?.id === sale.id ? 'bg-blue-50' : ''}`}
+                    onClick={() => setSelected(sale)}
+                  >
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="min-w-0 flex-1">
+                        <div className="font-medium text-gray-900 text-sm leading-snug line-clamp-2 break-words">
+                          {!sale.items?.name && sale.item_name && '⚠️ '}
+                          {name ?? <span className="text-gray-400">No item linked</span>}
+                        </div>
+                        <div className="mt-0.5 flex flex-wrap items-center gap-x-1.5 gap-y-1 text-xs text-gray-500">
+                          <span className="tabular-nums">{sale.sold_at.slice(0, 10)}</span>
+                          {sale.quantity !== 1 && <span>· Qty {sale.quantity}</span>}
+                          {sale.trade_id ? (
+                            <span
+                              className="px-1.5 py-0.5 text-[10px] font-medium bg-purple-100 text-purple-700 rounded"
+                              onClick={(e) => { e.stopPropagation(); setOpenTradeId(sale.trade_id!) }}
+                            >
+                              Trade
+                            </span>
+                          ) : (
+                            <>
+                              <PlatformBadge platform={sale.platform} />
+                              {sale.bundle_id && (
+                                <span
+                                  className="px-1.5 py-0.5 text-[10px] font-medium bg-blue-100 text-blue-700 rounded"
+                                  onClick={(e) => { e.stopPropagation(); setOpenBundleId(sale.bundle_id!) }}
+                                >
+                                  Bundle
+                                </span>
+                              )}
+                            </>
+                          )}
+                          {/* "OK" on every card is noise on a small screen — only flag problems. */}
+                          {sale.inventory_status !== 'ok' && <StatusBadge status={sale.inventory_status} type="inventory" />}
+                          <StatusBadge status={sale.return_status} type="return" />
+                        </div>
+                        {!sale.item_id && (
+                          <button
+                            onClick={e => { e.stopPropagation(); setLinkSale(sale) }}
+                            className="mt-1 flex items-center gap-1 text-amber-600 text-xs font-medium"
+                          >
+                            <Link2 size={12} /> Link to inventory
+                          </button>
+                        )}
+                      </div>
+                      <div className="shrink-0 text-right">
+                        <div className="text-sm font-semibold tabular-nums text-gray-900">{formatUSD(sale.sale_price)}</div>
+                        <div className={`text-xs tabular-nums ${payout < 0 ? 'text-red-500' : 'text-gray-500'}`}>
+                          {formatUSD(payout)} net
+                        </div>
+                      </div>
+                    </div>
+                  </li>
+                )
+              })}
+            </ul>
+
+            <table className="hidden md:table w-full text-sm">
               <thead className="sticky top-0 bg-gray-50 border-b border-gray-200 z-10">
                 <tr>
                   <th className="text-left px-4 py-2.5 text-xs font-medium text-gray-500 w-24">Date</th>

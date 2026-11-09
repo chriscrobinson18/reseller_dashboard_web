@@ -230,50 +230,65 @@ function BasisBreakdown({ lot, colSpan, indentCls, onDeleteAdjustment }: {
   indentCls: string
   onDeleteAdjustment: (adjustment: LotCostAdjustment) => void
 }) {
+  return (
+    <tr className="bg-blue-50/10 border-b border-blue-50">
+      <td colSpan={colSpan} className={`${indentCls} py-2 pr-4`}>
+        <BasisLines lot={lot} onDeleteAdjustment={onDeleteAdjustment} />
+      </td>
+    </tr>
+  )
+}
+
+/** Body of BasisBreakdown — shared by the desktop table row and the mobile lot card. */
+function BasisLines({ lot, onDeleteAdjustment, alwaysShowDelete }: {
+  lot: InventoryLot
+  onDeleteAdjustment: (adjustment: LotCostAdjustment) => void
+  /** Touch screens have no hover — keep the delete control visible. */
+  alwaysShowDelete?: boolean
+}) {
   const { adjustments, initialUnitCost, totalBasis } = lotBasisOf(lot)
   const purchaseTotal = initialUnitCost * lot.quantity_purchased
 
   return (
-    <tr className="bg-blue-50/10 border-b border-blue-50">
-      <td colSpan={colSpan} className={`${indentCls} py-2 pr-4`}>
-        <div className="text-xs text-gray-600 space-y-1">
-          <div className="font-medium text-gray-700">
-            Basis: <span className="tabular-nums">{formatUSD(totalBasis)}</span>
-            {lot.quantity_purchased > 1 && (
-              <span className="text-gray-400 font-normal">
-                {' '}· {formatUSD(lot.unit_cost)}/unit
+    <div className="text-xs text-gray-600 space-y-1">
+      <div className="font-medium text-gray-700">
+        Basis: <span className="tabular-nums">{formatUSD(totalBasis)}</span>
+        {lot.quantity_purchased > 1 && (
+          <span className="text-gray-400 font-normal">
+            {' '}· {formatUSD(lot.unit_cost)}/unit
+          </span>
+        )}
+      </div>
+      <div className="flex gap-2 text-gray-500">
+        <span className="tabular-nums w-20 shrink-0 text-right">{formatUSD(purchaseTotal)}</span>
+        <span className="min-w-0">Purchase · {formatDate(lot.purchase_date ?? lot.created_at)}</span>
+      </div>
+      {adjustments.map(a => (
+        <div key={a.id} className="flex gap-2 text-gray-500 group/adj items-center">
+          <span className="tabular-nums w-20 shrink-0 text-right">{formatUSD(Number(a.amount))}</span>
+          <span className="min-w-0 flex-1 break-words">
+            {adjustmentLabel(a.adjustment_type)} · {formatDate(a.incurred_on)}
+            {a.grader && ` · ${a.grader}`}
+            {a.grade_received && ` · ${a.grade_received}`}
+            {!a.created_transaction && (
+              <span className="ml-1.5 text-[10px] text-gray-400 bg-gray-100 rounded px-1 py-0.5">
+                linked txn
               </span>
             )}
-          </div>
-          <div className="flex gap-2 text-gray-500">
-            <span className="tabular-nums w-20 text-right">{formatUSD(purchaseTotal)}</span>
-            <span>Purchase · {formatDate(lot.purchase_date ?? lot.created_at)}</span>
-          </div>
-          {adjustments.map(a => (
-            <div key={a.id} className="flex gap-2 text-gray-500 group/adj items-center">
-              <span className="tabular-nums w-20 text-right">{formatUSD(Number(a.amount))}</span>
-              <span>
-                {adjustmentLabel(a.adjustment_type)} · {formatDate(a.incurred_on)}
-                {a.grader && ` · ${a.grader}`}
-                {a.grade_received && ` · ${a.grade_received}`}
-                {!a.created_transaction && (
-                  <span className="ml-1.5 text-[10px] text-gray-400 bg-gray-100 rounded px-1 py-0.5">
-                    linked txn
-                  </span>
-                )}
-              </span>
-              <button
-                onClick={() => onDeleteAdjustment(a)}
-                className="p-0.5 text-gray-300 hover:text-red-500 opacity-0 group-hover/adj:opacity-100 transition-opacity"
-                title="Remove this cost"
-              >
-                <Trash2 size={11} />
-              </button>
-            </div>
-          ))}
+          </span>
+          <button
+            onClick={() => onDeleteAdjustment(a)}
+            className={`p-0.5 shrink-0 text-gray-300 hover:text-red-500 transition-opacity ${
+              alwaysShowDelete ? 'p-1.5 text-gray-400' : 'opacity-0 group-hover/adj:opacity-100'
+            }`}
+            title="Remove this cost"
+            aria-label="Remove this cost"
+          >
+            <Trash2 size={alwaysShowDelete ? 13 : 11} />
+          </button>
         </div>
-      </td>
-    </tr>
+      ))}
+    </div>
   )
 }
 
@@ -299,6 +314,200 @@ function UnitCostCell({ lot, expanded, onToggle, className }: {
         {formatUSD(lot.unit_cost)}
       </button>
     </td>
+  )
+}
+
+// ─── Mobile (phone) views ─────────────────────────────────────────────────────
+// Below md the tables are replaced by cards: the 7-8 column tables were ~750px
+// wide, and their hover-revealed actions were unreachable on touch screens.
+
+function remainingBadgeCls(lot: InventoryLot): string {
+  return lot.quantity_remaining === 0
+    ? 'bg-gray-100 text-gray-400'
+    : lot.quantity_remaining < lot.quantity_purchased
+    ? 'bg-amber-100 text-amber-700'
+    : 'bg-green-100 text-green-700'
+}
+
+interface LotActions {
+  onEditLot: (lot: InventoryLot) => void
+  onDeleteLot: (lot: InventoryLot) => void
+  onTradePillClick: (tradeId: string) => void
+  onBoxPillClick: (boxOpeningId: string) => void
+  onTxClick: (lot: InventoryLot) => void
+  onAddCost: (lot: InventoryLot) => void
+  onDeleteAdjustment: (adjustment: LotCostAdjustment) => void
+  expandedBasis: Set<string>
+  onToggleBasis: (lotId: string) => void
+}
+
+/** One purchase lot as a card. `itemName` set → ledger (By Date) mode. */
+function MobileLotCard({ lot, itemName, valueMode, a }: {
+  lot: InventoryLot
+  itemName?: string
+  /** 'remaining' = value of units left (By Item); 'lot' = full lot cost (By Date). */
+  valueMode: 'remaining' | 'lot'
+  a: LotActions
+}) {
+  const hasAdjustments = (lot.lot_cost_adjustments?.length ?? 0) > 0
+  const basisOpen = a.expandedBasis.has(lot.id) && hasAdjustments
+  const value = valueMode === 'lot'
+    ? lot.quantity_purchased * lot.unit_cost
+    : lot.quantity_remaining * lot.unit_cost
+
+  return (
+    <div className="rounded-lg border border-gray-200 bg-white px-3 py-2.5">
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0 flex-1">
+          {itemName && <div className="text-sm font-medium text-gray-900 break-words">{itemName}</div>}
+          <div className="flex flex-wrap items-center gap-x-1.5 gap-y-1 text-xs text-gray-500">
+            <span>{formatDate(lotDate(lot))}</span>
+            {lot.trade_id && (
+              <button
+                onClick={() => a.onTradePillClick(lot.trade_id!)}
+                className="px-1.5 py-0.5 rounded text-[10px] font-medium bg-purple-100 text-purple-700"
+              >
+                Trade
+              </button>
+            )}
+            {lot.box_opening_id && (
+              <button
+                onClick={() => a.onBoxPillClick(lot.box_opening_id!)}
+                className="px-1.5 py-0.5 rounded text-[10px] font-medium bg-teal-100 text-teal-700"
+              >
+                Breakdown
+              </button>
+            )}
+          </div>
+        </div>
+        <div className="shrink-0 text-right">
+          <div className="text-sm font-semibold tabular-nums text-gray-900">{formatUSD(value)}</div>
+          <div className="text-[11px] text-gray-400">{valueMode === 'lot' ? 'lot cost' : 'value left'}</div>
+        </div>
+      </div>
+
+      <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-gray-600">
+        <span>
+          <span className={`font-medium px-1.5 py-0.5 rounded ${remainingBadgeCls(lot)}`}>{lot.quantity_remaining}</span>
+          <span className="text-gray-400"> / {lot.quantity_purchased} left</span>
+        </span>
+        {hasAdjustments ? (
+          <button
+            onClick={() => a.onToggleBasis(lot.id)}
+            className="inline-flex items-center gap-0.5 tabular-nums text-gray-700"
+          >
+            {basisOpen ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
+            {formatUSD(lot.unit_cost)}/unit
+          </button>
+        ) : (
+          <span className="tabular-nums">{formatUSD(lot.unit_cost)}/unit</span>
+        )}
+        <button
+          onClick={() => a.onTxClick(lot)}
+          className={lot.transaction_id ? 'text-blue-600' : 'text-gray-400 italic'}
+        >
+          {lotLinkLabel(lot)}
+        </button>
+      </div>
+
+      {basisOpen && (
+        <div className="mt-2 pt-2 border-t border-gray-100">
+          <BasisLines lot={lot} onDeleteAdjustment={a.onDeleteAdjustment} alwaysShowDelete />
+        </div>
+      )}
+
+      <div className="mt-2 pt-2 border-t border-gray-100 flex items-center justify-end gap-1 text-xs">
+        <button onClick={() => a.onAddCost(lot)} className="flex items-center gap-1 px-2 py-1.5 rounded-md text-gray-600 active:bg-gray-100">
+          <Receipt size={13} /> Add cost
+        </button>
+        <button onClick={() => a.onEditLot(lot)} className="flex items-center gap-1 px-2 py-1.5 rounded-md text-gray-600 active:bg-gray-100">
+          <Pencil size={13} /> Edit
+        </button>
+        <button onClick={() => a.onDeleteLot(lot)} className="flex items-center gap-1 px-2 py-1.5 rounded-md text-red-500 active:bg-red-50">
+          <Trash2 size={13} /> Delete
+        </button>
+      </div>
+    </div>
+  )
+}
+
+function MobileItemList({ items, expandedIds, onToggleExpand, onEditItem, onDeleteItem, onAddLot, lotActions }: {
+  items: ItemWithLots[]
+  expandedIds: Set<string>
+  onToggleExpand: (id: string) => void
+  onEditItem: (item: ItemWithLots) => void
+  onDeleteItem: (item: ItemWithLots) => void
+  onAddLot: (item: ItemWithLots) => void
+  lotActions: (itemName: string) => LotActions
+}) {
+  return (
+    <ul className="divide-y divide-gray-100 bg-white">
+      {items.map(item => {
+        const lots = item.inventory_lots ?? []
+        const summary = getItemSummary(lots)
+        const isExpanded = expandedIds.has(item.id)
+        return (
+          <li key={item.id} className={isExpanded ? 'bg-blue-50/30' : ''}>
+            <button
+              type="button"
+              data-item-card
+              onClick={() => onToggleExpand(item.id)}
+              className="w-full text-left px-4 py-3 active:bg-gray-50"
+              aria-expanded={isExpanded}
+            >
+              <div className="flex items-start justify-between gap-3">
+                <div className="min-w-0 flex-1">
+                  <div className="font-medium text-gray-900 text-sm leading-snug break-words">{item.name}</div>
+                  <div className="mt-0.5 text-xs text-gray-500">
+                    {item.category || 'Uncategorized'}
+                    {' · '}
+                    {summary.unitsInStock === 0
+                      ? <span className="text-gray-400">Sold out</span>
+                      : <span className="text-gray-700 font-medium">{summary.unitsInStock} in stock</span>}
+                    {' · '}{lots.length} {lots.length === 1 ? 'lot' : 'lots'}
+                  </div>
+                </div>
+                <div className="shrink-0 flex items-start gap-1.5">
+                  <div className="text-right">
+                    <div className="text-sm font-semibold tabular-nums text-gray-900">{formatUSD(summary.totalValue)}</div>
+                    {lots.length > 0 && (
+                      <div className="text-[11px] text-gray-400 tabular-nums">avg {formatUSD(summary.avgCost)}</div>
+                    )}
+                  </div>
+                  <span className="text-gray-400 pt-0.5">
+                    {isExpanded ? <ChevronDown size={16} /> : <ChevronRight size={16} />}
+                  </span>
+                </div>
+              </div>
+            </button>
+            {isExpanded && (
+              <div className="px-3 pb-3 space-y-2">
+                <div className="flex items-center gap-1 text-xs">
+                  <button onClick={() => onEditItem(item)} className="flex items-center gap-1 px-2 py-1.5 rounded-md text-gray-600 active:bg-gray-100">
+                    <Pencil size={13} /> Edit item
+                  </button>
+                  <button onClick={() => onDeleteItem(item)} className="flex items-center gap-1 px-2 py-1.5 rounded-md text-red-500 active:bg-red-50">
+                    <Trash2 size={13} /> Delete item
+                  </button>
+                </div>
+                {lots.length === 0 && (
+                  <div className="text-xs text-gray-400 px-1">No inventory lots yet.</div>
+                )}
+                {lots.map(lot => (
+                  <MobileLotCard key={lot.id} lot={lot} valueMode="remaining" a={lotActions(item.name)} />
+                ))}
+                <button
+                  onClick={() => onAddLot(item)}
+                  className="w-full flex items-center justify-center gap-1.5 rounded-lg border border-dashed border-blue-200 py-2 text-xs font-medium text-blue-600 active:bg-blue-50"
+                >
+                  <Plus size={13} /> Add purchase lot
+                </button>
+              </div>
+            )}
+          </li>
+        )
+      })}
+    </ul>
   )
 }
 
@@ -535,6 +744,21 @@ export default function InventoryPage() {
     return { totalUnits, totalValue, itemCount: items.length }
   }, [items])
 
+  /** Lot callbacks for the mobile cards, bound to the lot's item name. */
+  function lotActionsFor(itemName: string): LotActions {
+    return {
+      onEditLot: setEditLot,
+      onDeleteLot: setDeleteLotTarget,
+      onTradePillClick: setOpenTradeId,
+      onBoxPillClick: setOpenBoxOpeningId,
+      onTxClick: lot => setTxLot({ lot, itemName }),
+      onAddCost: lot => setAddCostFor({ lot, itemName }),
+      onDeleteAdjustment: setDeleteAdjTarget,
+      expandedBasis,
+      onToggleBasis: toggleBasis,
+    }
+  }
+
   function toggleExpand(id: string) {
     setExpandedIds(prev => {
       const next = new Set(prev)
@@ -547,27 +771,27 @@ export default function InventoryPage() {
   return (
     <div className="flex flex-col h-full">
       {/* Header */}
-      <div className="p-6 border-b border-gray-200 bg-white space-y-3">
-        <div className="flex items-center justify-between">
+      <div className="p-4 md:p-6 border-b border-gray-200 bg-white space-y-3">
+        <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-1">
           <h1 className="text-lg font-semibold text-gray-900">Inventory</h1>
-          <div className="flex items-center gap-4 text-sm text-gray-500">
+          <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-sm text-gray-500">
             <span><strong className="text-gray-900">{totals.itemCount}</strong> items</span>
-            <span><strong className="text-gray-900">{totals.totalUnits}</strong> units in stock</span>
-            <span className="font-semibold text-gray-900">{formatUSD(totals.totalValue)} value</span>
+            <span><strong className="text-gray-900">{totals.totalUnits}</strong> in stock</span>
+            <span className="font-semibold text-gray-900 tabular-nums">{formatUSD(totals.totalValue)}<span className="font-normal text-gray-500"> value</span></span>
           </div>
         </div>
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-2">
+        <div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
+          <div className="flex flex-wrap items-center gap-2">
             <input
               value={search}
               onChange={e => setSearch(e.target.value)}
               placeholder="Search items…"
-              className="w-64 border border-gray-200 rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-gray-900"
+              className="w-full md:w-64 border border-gray-200 rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-gray-900"
             />
             <button
               type="button"
               onClick={() => setInStockOnly(v => !v)}
-              className={`border rounded-lg px-3 py-1.5 text-xs font-medium transition-colors ${
+              className={`border rounded-lg px-3 py-1.5 text-xs font-medium whitespace-nowrap transition-colors ${
                 inStockOnly
                   ? 'bg-gray-900 border-gray-900 text-white'
                   : 'border-gray-200 text-gray-600 hover:border-gray-400'
@@ -580,7 +804,7 @@ export default function InventoryPage() {
                 <button
                   key={v}
                   onClick={() => setView(v)}
-                  className={`px-2.5 py-1 rounded-md text-xs font-medium transition-colors ${
+                  className={`px-2.5 py-1 rounded-md text-xs font-medium whitespace-nowrap transition-colors ${
                     view === v ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500 hover:text-gray-700'
                   }`}
                 >
@@ -589,24 +813,25 @@ export default function InventoryPage() {
               ))}
             </div>
           </div>
-          <div className="flex items-center gap-2">
+          {/* Phones: three equal buttons with short labels; md+: original row. */}
+          <div className="grid grid-cols-3 gap-2 md:flex md:items-center">
             <button
               onClick={() => setShowRecordTrade(true)}
-              className="flex items-center gap-1.5 bg-gray-900 text-white px-3 py-1.5 rounded-lg text-sm font-medium hover:bg-gray-700 transition-colors"
+              className="flex items-center justify-center gap-1.5 bg-gray-900 text-white px-2 md:px-3 py-2 md:py-1.5 rounded-lg text-sm font-medium hover:bg-gray-700 transition-colors whitespace-nowrap"
             >
-              <ArrowLeftRight size={14} /> Record Trade
+              <ArrowLeftRight size={14} /> <span className="md:hidden">Trade</span><span className="hidden md:inline">Record Trade</span>
             </button>
             <button
               onClick={() => setShowOpenBox(true)}
-              className="flex items-center gap-1.5 bg-gray-900 text-white px-3 py-1.5 rounded-lg text-sm font-medium hover:bg-gray-700 transition-colors"
+              className="flex items-center justify-center gap-1.5 bg-gray-900 text-white px-2 md:px-3 py-2 md:py-1.5 rounded-lg text-sm font-medium hover:bg-gray-700 transition-colors whitespace-nowrap"
             >
-              <PackageOpen size={14} /> Breakdown Inventory
+              <PackageOpen size={14} /> <span className="md:hidden">Breakdown</span><span className="hidden md:inline">Breakdown Inventory</span>
             </button>
             <button
               onClick={() => setShowAddItem(true)}
-              className="flex items-center gap-1.5 bg-gray-900 text-white px-3 py-1.5 rounded-lg text-sm font-medium hover:bg-gray-700 transition-colors"
+              className="flex items-center justify-center gap-1.5 bg-gray-900 text-white px-2 md:px-3 py-2 md:py-1.5 rounded-lg text-sm font-medium hover:bg-gray-700 transition-colors whitespace-nowrap"
             >
-              <Plus size={14} /> Add Item
+              <Plus size={14} /> <span className="md:hidden">Item</span><span className="hidden md:inline">Add Item</span>
             </button>
           </div>
         </div>
@@ -614,12 +839,12 @@ export default function InventoryPage() {
 
       {/* Incomplete breakdowns banner */}
       {incompleteBreakdowns.length > 0 && (
-        <div className="mb-4 rounded-lg border border-amber-200 bg-amber-50">
+        <div className="m-3 md:m-0 md:mb-4 rounded-lg border border-amber-200 bg-amber-50">
           <button
             onClick={() => setBreakdownBannerOpen(o => !o)}
-            className="flex w-full items-center justify-between px-4 py-3 text-sm font-medium text-amber-800"
+            className="flex w-full items-center justify-between gap-3 px-4 py-3 text-sm font-medium text-amber-800 text-left"
           >
-            <span>
+            <span className="min-w-0">
               ⚠️ {incompleteBreakdowns.length} breakdown{incompleteBreakdowns.length > 1 ? 's' : ''} need completion — source item not linked
             </span>
             <span className="text-amber-600">{breakdownBannerOpen ? '▲' : '▼'}</span>
@@ -627,11 +852,11 @@ export default function InventoryPage() {
           {breakdownBannerOpen && (
             <ul className="border-t border-amber-200 divide-y divide-amber-100">
               {incompleteBreakdowns.map(b => (
-                <li key={b.id} className="flex items-center justify-between px-4 py-2 text-sm text-amber-900">
-                  <span className="flex-1">
+                <li key={b.id} className="flex flex-wrap md:flex-nowrap items-center justify-between gap-x-3 gap-y-1 px-4 py-2 text-sm text-amber-900">
+                  <span className="basis-full md:basis-auto md:flex-1 min-w-0 break-words">
                     {b.box_name} — {b.quantity} unit{b.quantity > 1 ? 's' : ''} — {formatDate(b.opened_at)}
                   </span>
-                  <span className="ml-4 text-xs text-amber-600 italic mr-3">
+                  <span className="text-xs text-amber-600 italic">
                     Use "Breakdown Inventory" to complete
                   </span>
                   <button
@@ -662,6 +887,13 @@ export default function InventoryPage() {
               {search ? 'No lots on the matching items.' : 'No purchase lots yet. Add one from an item in the By Item view.'}
             </div>
           ) : (
+            <>
+            <div className="md:hidden p-3 space-y-2">
+              {ledgerRows.map(({ lot, itemName }) => (
+                <MobileLotCard key={lot.id} lot={lot} itemName={itemName} valueMode="lot" a={lotActionsFor(itemName)} />
+              ))}
+            </div>
+            <div className="hidden md:block">
             <LotLedger
               rows={ledgerRows}
               onEditLot={setEditLot}
@@ -677,9 +909,23 @@ export default function InventoryPage() {
               expandedBasis={expandedBasis}
               onToggleBasis={toggleBasis}
             />
+            </div>
+            </>
           )
         ) : (
-          <table className="w-full text-sm">
+          <>
+          <div className="md:hidden">
+            <MobileItemList
+              items={filtered}
+              expandedIds={expandedIds}
+              onToggleExpand={toggleExpand}
+              onEditItem={setEditItem}
+              onDeleteItem={setDeleteItemTarget}
+              onAddLot={setAddLotFor}
+              lotActions={lotActionsFor}
+            />
+          </div>
+          <table className="hidden md:table w-full text-sm">
             <thead className="sticky top-0 bg-gray-50 border-b border-gray-200 z-10">
               <tr>
                 <th className="text-left px-4 py-2.5 text-xs font-medium text-gray-500">Item</th>
@@ -765,6 +1011,7 @@ export default function InventoryPage() {
               })}
             </tbody>
           </table>
+          </>
         )}
       </div>
 

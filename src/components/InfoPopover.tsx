@@ -44,7 +44,8 @@ export default function InfoPopover({ children, label = 'More info', width = 'w-
       </button>
       {open && (
         <div
-          className={`absolute right-0 top-full mt-1 ${width} bg-white border border-gray-200 rounded-lg shadow-lg p-4 text-xs text-gray-700 max-h-[400px] overflow-y-auto z-[60]`}
+          // Phones: pinned to the viewport (inset-x-4) so it can't spill off either edge.
+          className={`fixed inset-x-4 top-24 sm:absolute sm:inset-x-auto sm:right-0 sm:top-full sm:mt-1 ${width} max-w-[calc(100vw-2rem)] bg-white border border-gray-200 rounded-lg shadow-lg p-4 text-xs text-gray-700 max-h-[400px] overflow-y-auto z-[60]`}
           role="dialog"
           aria-label={label}
         >
