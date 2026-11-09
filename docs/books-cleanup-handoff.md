@@ -55,13 +55,31 @@ Scratchpad backups and analysis scripts from earlier sessions are **gone** with 
 |---|---|
 | Sales-based Schedule C income (`src/lib/salesIncome.ts`, `isSaleDerivedTransaction`, Dashboard + both CSV exports, trade income legs) | Built, tested, committed. Takes effect when the branch is merged (Vercel deploys `main`). |
 | Part III, traditional method (`src/lib/partIII.ts`, `PartIIICard`, Summary CSV Part III for "Last Year") | Built, tested, committed. **Migration `supabase/migrations/20261109150000_inventory_valuations.sql` NOT applied**; apply it (with approval) before merging, or the Part III card errors. |
-| Year-End Tie-Out (step 4) | **In progress.** See below. |
+| Year-End Tie-Out (step 4) | **In progress:** lib + tests done, dry-run done; Dashboard card and docs not built. See below. |
 
-Test suite: `npx vitest run` (106 passing at handoff). Pre-existing lint errors in `CSVGroupDetailSlideOver.tsx` and `SettingsPage.tsx` aren't from this work.
+Test suite: `npx vitest run` (129 passing at handoff). Pre-existing lint errors in `CSVGroupDetailSlideOver.tsx` and `SettingsPage.tsx` aren't from this work.
 
 ## Next: Year-End Tie-Out (step 4)
 
-**Status:** `src/lib/tieOut.ts` is written and type-checks, but it is **untested, not run against real data, and not wired into any UI.**
+**Status (updated 2026-11-09, later session):** `src/lib/tieOut.ts` is **unit-tested** (`src/lib/__tests__/tieOut.test.ts`) and was **dry-run read-only on 2025 and 2026**. Sales totals matched an independent SQL sum exactly, and deposits matched too. Not yet wired into any UI. **Paused** while the owner imports the remaining TCGplayer, Amazon and eBay data; rerun the dry run after that.
+
+Changes made after the dry run:
+- Trade sales (`trade_id` set) are skipped: they are non-cash and never deposited.
+- `compareEbaySources(sales, csv, year)` keeps only orders attributed to the tax year. Without this, the ±45-day CSV window produced mostly false "only in report" orders.
+- Earnings-side sale lines are summed per order.
+
+Dry-run findings (no amounts here):
+- Amazon has no 2026 sales or CSV rows at all.
+- TCGplayer has 2025 sales but no 2025 TCGplayer deposits. Find where those payouts landed (possibly a wallet).
+- Wallet (PayPal / Cash App) and grading-company settlement deposits have no platform sales, as expected until Phase 3.
+- eBay and TCGplayer flag October–November 2026 as expected.
+- In the eBay comparison, most mismatches are shipping labels (the CSV under-reports them), as expected.
+- Manual sales show no deposits, because their money arrives through wallets / P2P.
+
+**Import safety (checked for the owner, 2026-11-09):**
+- eBay Order Earnings and TCGplayer re-uploads go through `_shared/salesImport.ts`: no duplicates, and only money / description fields refresh.
+- eBay and Amazon Transaction Report rows are insert-only on `(user_id, csv_transaction_id)`.
+- **Amazon is the exception:** after the import, Settings runs `sync_csv_orders_to_sales`, which rewrites every Amazon sale (`inventory_status`, `refunded_quantity`, return status), **un-deletes** soft-deleted sales, and soft-deletes orders missing from the CSV rows. The recommended fix (needs a deploy, so owner approval first) is to move it onto `upsertImportedSales`.
 
 **Purpose:** prove every sale is recorded. The owner's words: settlements are "insurance that all sales are recorded".
 

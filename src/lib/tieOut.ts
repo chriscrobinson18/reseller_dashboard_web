@@ -1,7 +1,4 @@
 /**
- * STATUS (2026-11-09): work in progress. Type-checks; NOT yet unit-tested,
- * dry-run on real data, or wired into a UI. See docs/books-cleanup-handoff.md.
- *
  * Year-End Tie-Out — completeness insurance for sales-based income
  * (owner decision 2026-11-09; docs/bookkeeping-routine.md).
  *
@@ -17,6 +14,8 @@
  *     every one must eventually have matching recorded sales (owner rule).
  *  3. compareEbaySources: per eBay order, Order Earnings (`sales`) vs the
  *     Transaction Report (`csv_import` rows), so re-imports can be targeted.
+ *
+ * Tests: src/lib/__tests__/tieOut.test.ts. UI: components/TieOutCard.tsx.
  */
 import { monthKey } from './utils'
 
@@ -35,6 +34,8 @@ export interface TieOutSale {
   refunded_amount?: number | null
   net_payout?: number | null
   deleted_at?: string | null
+  /** Given side of a trade: non-cash, never deposited, so skipped. */
+  trade_id?: string | null
 }
 
 export interface TieOutDeposit {
@@ -87,7 +88,7 @@ export function computeTieOut(sales: TieOutSale[], deposits: TieOutDeposit[]): T
     return mm
   }
   for (const s of sales) {
-    if (s.deleted_at) continue
+    if (s.deleted_at || s.trade_id) continue
     const e = get((s.platform || 'unassigned').toLowerCase())
     const net = saleNet(s)
     e.saleCount++
@@ -191,18 +192,25 @@ export interface EbayComparison {
 }
 
 /**
+ * `year` (optional) limits the result to that tax year: an order counts when
+ * its Order Earnings sale is dated in the year, or, if it has no sale, when its
+ * first Transaction Report row is. Fetch both sides with a margin of a few
+ * weeks around the year so orders that straddle New Year still pair up.
+ *
  * Transaction Report rows per order: `payout` positives = gross, `payout`
  * negatives / `returns_allowances` = refunds, `commissions_fees` +
  * `advertising` = fees (promoted listings are a sale fee), `shipping_postage`
  * = labels. A field differs when |earnings − report| ≥ $0.01.
  */
-export function compareEbaySources(sales: EbaySaleInput[], csvRows: EbayCsvRowInput[]): EbayComparison {
+export function compareEbaySources(sales: EbaySaleInput[], csvRows: EbayCsvRowInput[], year?: number): EbayComparison {
+  const inYear = (d: string) => year == null || d.slice(0, 4) === String(year)
   type Agg = { date: string; gross: number; fees: number; shipping: number; refunds: number }
   const rep = new Map<string, Agg>()
   for (const r of csvRows) {
     const order = (r.notes ?? '').trim()
     if (!order) continue
     const a = rep.get(order) ?? { date: r.date, gross: 0, fees: 0, shipping: 0, refunds: 0 }
+    if (r.date < a.date) a.date = r.date
     const amt = num(r.amount)
     switch (r.schedule_c_category) {
       case 'payout': if (amt >= 0) a.gross += amt; else a.refunds += -amt; break
@@ -213,11 +221,22 @@ export function compareEbaySources(sales: EbaySaleInput[], csvRows: EbayCsvRowIn
     }
     rep.set(order, a)
   }
-  const earn = new Map<string, EbaySaleInput>()
-  for (const s of sales) if (!s.deleted_at && s.external_order_id) earn.set(s.external_order_id, s)
+  // Summed per order, in case an order is ever stored as several sale lines.
+  const earn = new Map<string, { sold_at: string; sale_price: number; fees: number; shipping_cost: number; refunded_amount: number }>()
+  for (const s of sales) {
+    if (s.deleted_at || !s.external_order_id) continue
+    const e = earn.get(s.external_order_id)
+    if (!e) {
+      earn.set(s.external_order_id, { sold_at: s.sold_at, sale_price: num(s.sale_price), fees: num(s.fees), shipping_cost: num(s.shipping_cost), refunded_amount: num(s.refunded_amount) })
+    } else {
+      e.sale_price += num(s.sale_price); e.fees += num(s.fees); e.shipping_cost += num(s.shipping_cost); e.refunded_amount += num(s.refunded_amount)
+      if (s.sold_at < e.sold_at) e.sold_at = s.sold_at
+    }
+  }
 
   const out: EbayComparison = { ordersCompared: 0, matching: 0, mismatched: [], onlyInEarnings: [], onlyInReport: [] }
   for (const [order, s] of earn) {
+    if (!inYear(s.sold_at)) continue
     const a = rep.get(order)
     if (!a) { out.onlyInEarnings.push(order); continue }
     out.ordersCompared++
@@ -231,7 +250,7 @@ export function compareEbaySources(sales: EbaySaleInput[], csvRows: EbayCsvRowIn
     if (diff.length) out.mismatched.push({ order, date: s.sold_at.slice(0, 10), fields: diff })
     else out.matching++
   }
-  for (const order of rep.keys()) if (!earn.has(order)) out.onlyInReport.push(order)
+  for (const [order, a] of rep) if (!earn.has(order) && inYear(a.date)) out.onlyInReport.push(order)
   out.mismatched.sort((x, y) => x.date.localeCompare(y.date))
   return out
 }
