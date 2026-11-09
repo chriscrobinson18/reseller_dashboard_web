@@ -172,8 +172,8 @@ export default function RecordTradeModal({ open, onClose }: Props) {
         <div className="space-y-2">
           {given.map((g, i) => (
             <div key={i} className="border border-gray-200 rounded-lg p-3">
-              <div className="grid grid-cols-[1fr_70px_90px_28px] gap-2 items-start">
-                <div>
+              <div className="grid grid-cols-[70px_1fr_28px] sm:grid-cols-[1fr_70px_90px_28px] gap-2 items-start">
+                <div className="col-span-3 sm:col-span-1 min-w-0">
                   {/* Fix 4: aria-label on given-side picker trigger */}
                   <button type="button" onClick={() => setPickerOpenIdx({ side: 'given', idx: i })} className={`${inputCls} text-left`} aria-label="Select item to give">
                     {g.itemName ?? <span className="text-gray-400">Pick item with stock…</span>}
@@ -216,8 +216,8 @@ export default function RecordTradeModal({ open, onClose }: Props) {
         <div className="space-y-2">
           {received.map((r, i) => (
             <div key={i} className="border border-gray-200 rounded-lg p-3">
-              <div className="grid grid-cols-[1fr_70px_90px_28px] gap-2 items-start">
-                <div>
+              <div className="grid grid-cols-[70px_1fr_28px] sm:grid-cols-[1fr_70px_90px_28px] gap-2 items-start">
+                <div className="col-span-3 sm:col-span-1 min-w-0">
                   {/* Fix 3: inline input when isNew, otherwise picker trigger */}
                   {r.isNew ? (
                     <input

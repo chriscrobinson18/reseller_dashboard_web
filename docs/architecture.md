@@ -15,7 +15,8 @@
 
 - Single `QueryClient` (`staleTime: 2min`, `retry: 1`) for the whole app.
 - Auth state via `supabase.auth.getSession()` + `onAuthStateChange` subscription, held in local `useState<Session | null | undefined>` (`undefined` = still loading).
-- Unauthenticated → only `/login` is reachable. Authenticated → `Layout` wraps the four main routes: `/dashboard`, `/sales`, `/inventory`, `/expenses`. No nested routes, no route-level code splitting.
+- Unauthenticated → only `/login` is reachable. Authenticated → `Layout` wraps the main routes: `/dashboard`, `/sales`, `/bundles`, `/inventory`, `/trades`, `/breakdowns`, `/expenses`, `/settings`. No nested routes, no route-level code splitting.
+- `Layout` shows a sidebar at `md`+ and a bottom tab bar below `md`. Responsive rules are in [mobile-layout.md](mobile-layout.md).
 
 ## File layout
 

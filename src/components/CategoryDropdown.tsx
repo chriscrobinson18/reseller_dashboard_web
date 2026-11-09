@@ -34,7 +34,7 @@ export default function CategoryDropdown({ current, onSelect, onManage, hideClea
   const excludedBuiltIns = CATEGORIES.filter(c => c.isExcluded)
 
   return (
-    <div className="bg-white border border-gray-200 rounded-xl shadow-xl py-1 overflow-y-auto max-h-72 w-64">
+    <div className="bg-white border border-gray-200 rounded-xl shadow-xl py-1 overflow-y-auto max-h-72 w-64 max-w-[calc(100vw-2rem)]">
       {!hideClear && (
         <div
           className="px-3 py-1.5 text-xs text-gray-400 hover:bg-gray-50 cursor-pointer"

@@ -5,6 +5,7 @@ Knowledge base for the Reseller Dashboard web app, meant to be read by humans an
 - [architecture.md](architecture.md) — stack, app shell, routing, state/data-fetching conventions, file layout, test infra
 - [supabase-schema.md](supabase-schema.md) — tables, columns, RLS, edge functions, RPCs, what's NOT in this repo
 - [categories.md](categories.md) — the 21 Schedule C categories, tax flags (`isExcluded`, `mealsHalf`), the `bucketTransaction` helper, known correctness gaps
+- [mobile-layout.md](mobile-layout.md) — phone layout rules: 5-tab nav + More sheet, tables→cards below `md`, bottom-sheet modals, no-horizontal-scroll contract
 - [data-flows.md](data-flows.md) — cross-cutting business logic: `bucketTransaction`, record/edit/delete sale, FIFO COGS, returns
 - features/
   - [dashboard.md](features/dashboard.md)

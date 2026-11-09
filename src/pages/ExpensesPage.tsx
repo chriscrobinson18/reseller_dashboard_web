@@ -1,11 +1,11 @@
-import { useState, useMemo } from 'react'
+import { useState, useMemo, useEffect } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { Search, Filter, ChevronDown, Plus, Pencil, Trash2, Tag, X, ExternalLink, ArrowUp, ArrowDown } from 'lucide-react'
 import { supabase } from '../lib/supabase'
 import { getPeriodRange, type PeriodPreset } from '../lib/periods'
 import { resolveCategory } from '../lib/categories'
 import { parseSearchTerms, matchesSearch } from '../lib/transactionSearch'
-import { formatUSD, formatDate } from '../lib/utils'
+import { formatUSD, formatDate, formatShortDate } from '../lib/utils'
 import { updateTransaction, deleteTransaction } from '../lib/mutations'
 import PeriodPicker from '../components/PeriodPicker'
 import CategoryBadge from '../components/CategoryBadge'
@@ -490,6 +490,8 @@ export default function ExpensesPage() {
   const [openTradeId, setOpenTradeId] = useState<string | null>(null)
   const [showManage, setShowManage] = useState(false)
   const [showCatFilter, setShowCatFilter] = useState(false)
+  // Phones only: filter controls collapse behind a "Filters" toggle (md+ always shows them).
+  const [showFiltersMobile, setShowFiltersMobile] = useState(false)
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
   const [showBulkCat, setShowBulkCat] = useState(false)
   const [sortField, setSortField] = useState<'date' | 'amount' | 'merchant'>('date')
@@ -602,6 +604,20 @@ export default function ExpensesPage() {
     }
   }
 
+  useEffect(() => {
+    if (!ddTxId) return
+    // Ignore scrolling inside the picker's own list.
+    const close = (e: Event) => {
+      if (e.target instanceof Element && e.target.closest('[data-cat-dd]')) return
+      setDdTxId(null)
+    }
+    document.addEventListener('scroll', close, true)
+    return () => document.removeEventListener('scroll', close, true)
+  }, [ddTxId])
+
+  const ddTx = ddTxId ? sorted.find(t => t.id === ddTxId) ?? null : null
+  const activeFilterCount = [catFilter, dirFilter !== 'all', sourceFilter !== 'all', accountFilter, showSaleLinked].filter(Boolean).length
+
   const allSelected = selectable.length > 0 && selectable.every(t => selectedIds.has(t.id))
   const someSelected = selectedIds.size > 0
 
@@ -630,35 +646,42 @@ export default function ExpensesPage() {
   function openDropdown(txId: string, e: React.MouseEvent) {
     e.stopPropagation()
     const rect = (e.target as HTMLElement).getBoundingClientRect()
-    document.documentElement.style.setProperty('--dd-top', `${rect.bottom + window.scrollY + 4}px`)
-    document.documentElement.style.setProperty('--dd-left', `${rect.left}px`)
+    // Dropdown is w-64 (256px) × max-h-72 (288px). Clamp into the viewport so it
+    // never spills off the right edge on phones, and open upward near the bottom.
+    const DD_W = 256, DD_H = 288, GAP = 8
+    const left = Math.max(GAP, Math.min(rect.left, window.innerWidth - DD_W - GAP))
+    const top = rect.bottom + 4 + DD_H > window.innerHeight
+      ? Math.max(GAP, rect.top - 4 - DD_H)
+      : rect.bottom + 4
+    document.documentElement.style.setProperty('--dd-top', `${top + window.scrollY}px`)
+    document.documentElement.style.setProperty('--dd-left', `${left}px`)
     setDdTxId(txId === ddTxId ? null : txId)
   }
 
   return (
-    <div className="flex h-full">
+    <div className="flex md:h-full">
       {/* Main content */}
-      <div className="relative flex-1 flex flex-col overflow-hidden">
-        <div className="p-6 border-b border-gray-200 bg-white space-y-3">
-          <div className="flex items-center justify-between">
+      <div className="relative flex-1 min-w-0 flex flex-col md:overflow-hidden">
+        <div className="p-4 md:p-6 border-b border-gray-200 bg-white space-y-3">
+          <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1">
             <h1 className="text-lg font-semibold text-gray-900">Expenses</h1>
-            <div className="flex items-center gap-3 text-sm text-gray-500">
+            <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-sm text-gray-500">
               {uncategorized > 0 && (
                 <button
                   type="button"
                   onClick={() => setCatFilter(UNCATEGORIZED_SENTINEL)}
-                  className="bg-amber-100 text-amber-700 px-2 py-0.5 rounded-full text-xs font-medium hover:bg-amber-200 transition-colors cursor-pointer"
+                  className="bg-amber-100 text-amber-700 px-2 py-0.5 rounded-full text-xs font-medium hover:bg-amber-200 transition-colors cursor-pointer whitespace-nowrap"
                 >
                   {uncategorized} uncategorized
                 </button>
               )}
-              <span className="text-green-600 font-medium">{formatUSD(income)} in</span>
-              <span className="text-red-500 font-medium">{formatUSD(expenses)} out</span>
+              <span className="text-green-600 font-medium tabular-nums whitespace-nowrap">{formatUSD(income)} in</span>
+              <span className="text-red-500 font-medium tabular-nums whitespace-nowrap">{formatUSD(expenses)} out</span>
             </div>
           </div>
           <PeriodPicker value={period} onChange={setPeriod} />
-          <div className="flex items-center gap-2">
-            <div className="relative flex-1">
+          <div className="flex flex-wrap md:flex-nowrap items-center gap-2">
+            <div className="relative flex-1 min-w-0 basis-full md:basis-auto order-1">
               <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
               <input
                 value={search}
@@ -667,11 +690,24 @@ export default function ExpensesPage() {
                 className="w-full pl-8 pr-3 py-1.5 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-gray-900"
               />
             </div>
-            <div className="relative">
+            {/* Phones: Filters toggle + Add on one row under the search box. */}
+            <button
+              type="button"
+              onClick={() => setShowFiltersMobile(v => !v)}
+              aria-expanded={showFiltersMobile}
+              className={`md:hidden order-2 flex-1 flex items-center justify-center gap-1.5 border rounded-lg px-3 py-2 text-sm font-medium ${
+                showFiltersMobile || activeFilterCount > 0 ? 'border-gray-900 text-gray-900' : 'border-gray-200 text-gray-600'
+              }`}
+            >
+              <Filter size={14} /> Filters{activeFilterCount > 0 && ` (${activeFilterCount})`}
+              <ChevronDown size={14} className={`transition-transform ${showFiltersMobile ? 'rotate-180' : ''}`} />
+            </button>
+            <div className={`${showFiltersMobile ? 'grid' : 'hidden'} order-3 basis-full grid-cols-2 gap-2 md:order-2 md:basis-auto md:flex md:items-center md:gap-2`}>
+            <div className="relative min-w-0 col-span-2 md:col-span-1">
               <button
                 type="button"
                 onClick={() => setShowCatFilter(s => !s)}
-                className="border border-gray-200 rounded-lg px-2 py-1.5 text-sm text-gray-700 bg-white flex items-center gap-1 min-w-[10rem]"
+                className="w-full border border-gray-200 rounded-lg px-2 py-1.5 text-sm text-gray-700 bg-white flex items-center gap-1 md:min-w-[10rem]"
               >
                 <span className="truncate">
                   {catFilter === UNCATEGORIZED_SENTINEL
@@ -683,7 +719,7 @@ export default function ExpensesPage() {
                 <ChevronDown size={12} className="ml-auto text-gray-400 shrink-0" />
               </button>
               {showCatFilter && (
-                <div className="absolute right-0 top-full mt-1 z-50">
+                <div className="absolute left-0 md:left-auto md:right-0 top-full mt-1 z-50">
                   <CategoryDropdown
                     current={catFilter}
                     onSelect={(v) => { setCatFilter(v); setShowCatFilter(false) }}
@@ -696,7 +732,7 @@ export default function ExpensesPage() {
             <select
               value={dirFilter}
               onChange={e => setDirFilter(e.target.value as 'all' | 'income' | 'expense')}
-              className="border border-gray-200 rounded-lg px-2 py-1.5 text-sm text-gray-700 bg-white focus:outline-none focus:ring-2 focus:ring-gray-900"
+              className="min-w-0 border border-gray-200 rounded-lg px-2 py-1.5 text-sm text-gray-700 bg-white focus:outline-none focus:ring-2 focus:ring-gray-900"
             >
               <option value="all">All directions</option>
               <option value="income">Income</option>
@@ -705,7 +741,7 @@ export default function ExpensesPage() {
             <select
               value={sourceFilter}
               onChange={e => setSourceFilter(e.target.value as 'all' | 'plaid' | 'manual')}
-              className="border border-gray-200 rounded-lg px-2 py-1.5 text-sm text-gray-700 bg-white focus:outline-none focus:ring-2 focus:ring-gray-900"
+              className="min-w-0 border border-gray-200 rounded-lg px-2 py-1.5 text-sm text-gray-700 bg-white focus:outline-none focus:ring-2 focus:ring-gray-900"
             >
               <option value="all">All sources</option>
               <option value="plaid">Bank (Plaid)</option>
@@ -715,24 +751,42 @@ export default function ExpensesPage() {
               value={accountFilter ?? ''}
               onChange={e => setAccountFilter(e.target.value || null)}
               disabled={isLoading}
-              className="border border-gray-200 rounded-lg px-2 py-1.5 text-sm text-gray-700 bg-white focus:outline-none focus:ring-2 focus:ring-gray-900 disabled:opacity-50"
+              className="min-w-0 border border-gray-200 rounded-lg px-2 py-1.5 text-sm text-gray-700 bg-white focus:outline-none focus:ring-2 focus:ring-gray-900 disabled:opacity-50"
             >
               <option value="">All accounts</option>
               {accountOptions.map(({ id, label }) => (
                 <option key={id} value={id}>{label}</option>
               ))}
             </select>
+            {/* Phones have no sortable column headers — sort lives here instead. */}
+            <select
+              value={`${sortField}:${sortDir}`}
+              onChange={e => {
+                const [f, d] = e.target.value.split(':') as ['date' | 'amount' | 'merchant', 'asc' | 'desc']
+                setSortField(f); setSortDir(d)
+              }}
+              aria-label="Sort"
+              className="md:hidden min-w-0 border border-gray-200 rounded-lg px-2 py-1.5 text-sm text-gray-700 bg-white focus:outline-none focus:ring-2 focus:ring-gray-900"
+            >
+              <option value="date:desc">Newest first</option>
+              <option value="date:asc">Oldest first</option>
+              <option value="amount:desc">Amount: high → low</option>
+              <option value="amount:asc">Amount: low → high</option>
+              <option value="merchant:asc">Merchant A–Z</option>
+              <option value="merchant:desc">Merchant Z–A</option>
+            </select>
             <button
               onClick={() => setShowSaleLinked(!showSaleLinked)}
-              className={`flex items-center gap-1.5 border rounded-lg px-3 py-1.5 text-xs font-medium transition-colors ${
+              className={`flex items-center justify-center gap-1.5 border rounded-lg px-3 py-1.5 text-xs font-medium whitespace-nowrap transition-colors ${
                 showSaleLinked ? 'bg-indigo-50 border-indigo-300 text-indigo-700' : 'border-gray-200 text-gray-600 hover:border-gray-400'
               }`}
             >
               <Filter size={12} /> Sale rows
             </button>
+            </div>
             <button
               onClick={() => setShowAddTx(true)}
-              className="flex items-center gap-1.5 bg-gray-900 text-white px-3 py-1.5 rounded-lg text-xs font-medium hover:bg-gray-700 transition-colors whitespace-nowrap"
+              className="order-2 md:order-3 flex items-center justify-center gap-1.5 bg-gray-900 text-white px-4 md:px-3 py-2 md:py-1.5 rounded-lg text-sm md:text-xs font-medium hover:bg-gray-700 transition-colors whitespace-nowrap"
             >
               <Plus size={13} /> Add
             </button>
@@ -740,13 +794,82 @@ export default function ExpensesPage() {
         </div>
 
         {/* Table */}
-        <div className="flex-1 overflow-y-auto" onClick={() => setDdTxId(null)}>
+        <div className="md:flex-1 md:overflow-y-auto" onClick={() => setDdTxId(null)}>
           {isLoading ? (
             <div className="p-8 text-center text-gray-400 text-sm">Loading transactions…</div>
           ) : filtered.length === 0 ? (
             <div className="p-8 text-center text-gray-400 text-sm">No transactions found.</div>
           ) : (
-            <table className="w-full text-sm">
+            <>
+            {/* Phones: dense two-line rows (~56px) so ~10 fit on screen.
+                Line 1: merchant · amount. Line 2: category badge (tap → picker),
+                short date, account. Notes/non-cash/settlement live in the detail
+                panel; checkbox stays for bulk categorize. */}
+            <ul className="md:hidden divide-y divide-gray-100 bg-white">
+              {sorted.map(tx => {
+                const isExpense = tx.amount < 0
+                return (
+                  <li
+                    key={tx.id}
+                    className={`flex items-center gap-2.5 pl-3 pr-4 py-2 active:bg-gray-50 ${selected?.id === tx.id ? 'bg-blue-50' : selectedIds.has(tx.id) ? 'bg-gray-50' : ''}`}
+                    onClick={() => setSelectedId(tx.id)}
+                  >
+                    <label className="-my-2 py-2 pl-1 pr-0.5 shrink-0 self-stretch flex items-center" onClick={e => e.stopPropagation()}>
+                      <input
+                        type="checkbox"
+                        checked={selectedIds.has(tx.id)}
+                        onChange={() => toggleRow(tx.id)}
+                        disabled={!!tx.trade_id}
+                        aria-label="Select transaction"
+                        className="w-4 h-4 accent-gray-900 disabled:opacity-40"
+                      />
+                    </label>
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-baseline justify-between gap-2">
+                        <div className="min-w-0 flex-1 text-sm font-medium text-gray-900 truncate">
+                          {tx.merchant || <span className="text-gray-400">—</span>}
+                        </div>
+                        <div className={`shrink-0 text-sm font-semibold tabular-nums ${isExpense ? 'text-red-500' : 'text-green-600'}`}>
+                          {isExpense ? '-' : '+'}{formatUSD(Math.abs(tx.amount))}
+                        </div>
+                      </div>
+                      <div className="mt-0.5 flex items-center gap-1.5 text-[11px] text-gray-500 min-w-0">
+                        <span className="shrink-0" onClick={e => e.stopPropagation()}>
+                          <CategoryBadge
+                            size="xs"
+                            value={tx.schedule_c_category}
+                            onClick={tx.trade_id ? undefined : e => openDropdown(tx.id, e)}
+                          />
+                        </span>
+                        <span className="shrink-0 tabular-nums">{formatShortDate(tx.date)}</span>
+                        <span className="truncate">· {tx.account_display || tx.platform || '—'}</span>
+                      </div>
+                    </div>
+                  </li>
+                )
+              })}
+            </ul>
+            {/* One floating category picker for the mobile list (desktop renders its own per row). */}
+            {ddTx && !ddTx.trade_id && (
+              <div
+                data-cat-dd
+                className="md:hidden fixed z-50"
+                style={{ top: 'var(--dd-top)', left: 'var(--dd-left)' }}
+                onMouseDown={e => e.preventDefault()}
+                onClick={e => e.stopPropagation()}
+              >
+                <CategoryDropdown
+                  current={ddTx.schedule_c_category}
+                  onSelect={(v) => {
+                    updateCategoryMutation.mutate({ id: ddTx.id, cat: v })
+                    setDdTxId(null)
+                  }}
+                  onManage={() => { setDdTxId(null); setShowManage(true) }}
+                />
+              </div>
+            )}
+
+            <table className="hidden md:table w-full text-sm">
               <thead className="sticky top-0 bg-gray-50 border-b border-gray-200 z-10">
                 <tr>
                   <th className="px-4 py-2.5 w-10">
@@ -812,7 +935,8 @@ export default function ExpensesPage() {
                         />
                         {!tx.trade_id && ddTxId === tx.id && (
                           <div
-                            className="fixed z-50"
+                            data-cat-dd
+                            className="hidden md:block fixed z-50"
                             style={{ top: 'var(--dd-top)', left: 'var(--dd-left)' }}
                             onMouseDown={e => e.preventDefault()}
                           >
@@ -840,6 +964,7 @@ export default function ExpensesPage() {
                 })}
               </tbody>
             </table>
+            </>
           )}
         </div>
 
@@ -849,7 +974,7 @@ export default function ExpensesPage() {
 
         {/* Bulk action bar */}
         {someSelected && (
-          <div className="absolute bottom-6 left-1/2 -translate-x-1/2 z-40">
+          <div className="fixed bottom-[calc(4.75rem+env(safe-area-inset-bottom,0px))] md:absolute md:bottom-6 left-1/2 -translate-x-1/2 z-40 max-w-[calc(100%-1.5rem)]">
             <div className="flex items-center gap-3 bg-gray-900 text-white rounded-full shadow-xl pl-4 pr-2 py-2">
               <span className="text-sm font-medium whitespace-nowrap">{selectedIds.size} selected</span>
               <div className="relative">

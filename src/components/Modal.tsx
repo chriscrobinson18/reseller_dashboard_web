@@ -19,16 +19,17 @@ export default function Modal({ open, onClose, title, children, width = 'max-w-m
   if (!open) return null
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+    // Phones: bottom sheet (full width, thumb-reachable actions). sm+: centered card.
+    <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center sm:p-4">
       <div className="absolute inset-0 bg-black/30" onClick={onClose} />
-      <div className={`relative bg-white rounded-2xl shadow-xl w-full ${width} max-h-[90vh] flex flex-col`}>
-        <div className="flex items-center justify-between px-5 py-3.5 border-b border-gray-200">
-          <h2 className="font-semibold text-gray-900 text-sm">{title}</h2>
-          <button onClick={onClose} className="text-gray-400 hover:text-gray-600 p-1 rounded">
-            <X size={16} />
+      <div className={`relative bg-white rounded-t-2xl sm:rounded-2xl shadow-xl w-full ${width} max-h-[92dvh] sm:max-h-[90vh] flex flex-col min-w-0`}>
+        <div className="flex items-center justify-between gap-3 px-5 py-3.5 border-b border-gray-200">
+          <h2 className="font-semibold text-gray-900 text-sm min-w-0 truncate">{title}</h2>
+          <button onClick={onClose} className="text-gray-400 hover:text-gray-600 p-1.5 -mr-1.5 rounded shrink-0" aria-label="Close">
+            <X size={18} />
           </button>
         </div>
-        <div className="p-5 overflow-y-auto">{children}</div>
+        <div className="p-4 sm:p-5 pb-safe-plus overflow-y-auto overflow-x-hidden">{children}</div>
       </div>
     </div>
   )

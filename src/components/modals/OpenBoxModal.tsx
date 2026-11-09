@@ -220,7 +220,7 @@ export default function OpenBoxModal({ open, onClose, onStarted }: Props) {
         </Field>
 
         {sourceLot && (
-          <div className="grid grid-cols-3 gap-3">
+          <div className="grid grid-cols-2 sm:grid-cols-3 gap-x-3">
             <Field label="Quantity (Break down only — Start opens 1)">
               <input
                 type="number" min="1" max={sourceLot.quantity_remaining} step="1" value={quantity}
@@ -276,8 +276,8 @@ export default function OpenBoxModal({ open, onClose, onStarted }: Props) {
         <div className="space-y-2">
           {cards.map((c, i) => (
             <div key={i} className="border border-gray-200 rounded-lg p-3">
-              <div className="grid grid-cols-[1fr_100px_100px_28px] gap-2 items-start">
-                <div>
+              <div className="grid grid-cols-[1fr_1fr_28px] sm:grid-cols-[1fr_100px_100px_28px] gap-2 items-start">
+                <div className="col-span-3 sm:col-span-1 min-w-0">
                   {c.isNew ? (
                     <input
                       type="text"

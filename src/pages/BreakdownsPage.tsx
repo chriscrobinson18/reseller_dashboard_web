@@ -16,12 +16,12 @@ export default function BreakdownsPage() {
   return (
     <div className="flex flex-col h-full">
       {/* Header */}
-      <div className="p-6 border-b border-gray-200 bg-white">
+      <div className="p-4 md:p-6 border-b border-gray-200 bg-white">
         <h1 className="text-lg font-semibold text-gray-900">Breakdowns</h1>
       </div>
 
       {/* Content */}
-      <div className="flex-1 overflow-y-auto p-4 space-y-3">
+      <div className="flex-1 overflow-y-auto p-3 md:p-4 space-y-3">
         {isLoading ? (
           <div className="p-8 text-center text-gray-400 text-sm">Loading…</div>
         ) : isError ? (
@@ -39,10 +39,10 @@ export default function BreakdownsPage() {
             >
               {/* Card header */}
               <div className="px-4 py-3 flex items-start justify-between gap-3">
-                <div>
-                  <div className="flex items-center gap-2">
-                    <span className="font-medium text-gray-900">{b.box_name}</span>
-                    <span className="text-xs text-gray-400">{formatDate(b.opened_at)}</span>
+                <div className="min-w-0">
+                  <div className="flex flex-wrap items-baseline gap-x-2">
+                    <span className="font-medium text-gray-900 break-words">{b.box_name}</span>
+                    <span className="text-xs text-gray-400 whitespace-nowrap">{formatDate(b.opened_at)}</span>
                   </div>
                   <div className="text-sm text-gray-500 mt-0.5">
                     {b.box_cost !== null ? formatUSD(b.box_cost) : '—'}
@@ -64,9 +64,9 @@ export default function BreakdownsPage() {
                   <div className="py-1 text-sm text-gray-400 italic">No pulls yet</div>
                 ) : (
                   b.lots.map(lot => (
-                    <div key={lot.id} className="flex items-center justify-between py-1">
-                      <span className="text-sm text-gray-700">{lot.items?.name ?? '—'}</span>
-                      <span className="text-sm tabular-nums text-gray-600">{formatUSD(lot.unit_cost)}</span>
+                    <div key={lot.id} className="flex items-center justify-between gap-3 py-1">
+                      <span className="text-sm text-gray-700 min-w-0 break-words">{lot.items?.name ?? '—'}</span>
+                      <span className="text-sm tabular-nums text-gray-600 shrink-0">{formatUSD(lot.unit_cost)}</span>
                     </div>
                   ))
                 )}
@@ -76,9 +76,9 @@ export default function BreakdownsPage() {
               {b.status === 'open' && b.remainingBasis !== null && (
                 <>
                   <div className="border-t border-gray-100" />
-                  <div className="px-4 py-2 flex items-center justify-between">
+                  <div className="px-4 py-2 flex items-center justify-between gap-3">
                     <span className="text-xs text-gray-500">Pool remaining</span>
-                    <span className={`text-sm tabular-nums font-medium ${b.remainingBasis < 0.01 ? 'text-green-600' : 'text-gray-700'}`}>
+                    <span className={`text-sm tabular-nums font-medium text-right ${b.remainingBasis < 0.01 ? 'text-green-600' : 'text-gray-700'}`}>
                       {formatUSD(b.remainingBasis)} of {formatUSD(b.box_cost!)}
                     </span>
                   </div>

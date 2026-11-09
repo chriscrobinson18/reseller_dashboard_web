@@ -116,8 +116,8 @@ function EditBundleForm({ bundleId, data, onClose, qc }: {
       <div className="space-y-2 mb-3">
         {lineStates.map((l, i) => (
           <div key={l.id} className="border border-gray-200 rounded-lg p-3">
-            <div className="grid grid-cols-[1fr_70px_100px] gap-2 items-start">
-              <div className={`${inputCls} bg-gray-50 text-gray-700 flex items-center`}>{l.itemName}</div>
+            <div className="grid grid-cols-[70px_1fr] sm:grid-cols-[1fr_70px_100px] gap-2 items-start">
+              <div className={`${inputCls} bg-gray-50 text-gray-700 flex items-center col-span-2 sm:col-span-1 min-w-0`}>{l.itemName}</div>
               <input
                 type="number" min="1" step="1" value={l.quantity} title="Quantity"
                 onChange={e => updateLine(i, { quantity: e.target.value })}
