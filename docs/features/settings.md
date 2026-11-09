@@ -142,9 +142,17 @@ that used to be listed as pending are now shipped:
 A "Marketplace CSV Import" section (after Custom Categories) has four platform cards — eBay, Amazon, Mercari, TCGPlayer — each with an "Import" button (CSV for the first three; JSON for TCGPlayer). Selecting a file triggers a two-step flow:
 
 1. **`import_marketplace_csv` edge function (v16)** — parses the CSV and upserts rows into `transactions` with `source='csv_import'`, `platform=<platform>`, and `csv_group_id` linking rows that belong to the same settlement period
-2. **`sync_csv_orders_to_sales` edge function (v1)** — groups those transactions by order ref (`notes` field) and upserts `sales` rows with `source='ebay'|'amazon'|'csv_import'`, `external_order_id=<orderRef>`, `item_id=null` (unlinked)
+2. **`sync_csv_orders_to_sales` edge function (v5, Amazon / Mercari; eBay is skipped because Order Earnings writes `sales` directly)** — groups those transactions by order ref (`notes` field) and writes `sales` rows with `source='amazon'|'csv_import'`, `external_order_id=<orderRef>`, `item_id=null` (unlinked). Since v5 (2026-11-09) the writes go through `_shared/salesImport.ts`, the same re-import-safe path as eBay Order Earnings and TCGplayer:
+   - new orders are inserted in full
+   - existing live sales get only money / description fields refreshed (price, fees, shipping, net, date, name, quantity); return status is refreshed only when no in-app return exists
+   - soft-deleted sales stay deleted; `inventory_status`, `refunded_quantity`, item / bundle / trade links are never touched
+   - sales whose order no longer appears in the CSV rows are **reported** (`orphans`), never deleted
 
-A result banner shows rows imported and sales created/updated.
+   Money semantics are unchanged from v4: `sale_price` = gross − refunds, so Amazon refunds are netted into Line 1 rather than shown on Line 2 (follow-up in TASKS.md).
+
+**Re-uploading is safe on every import card:** Transaction Report rows are insert-only on `(user_id, csv_transaction_id)` (existing rows, including re-categorized ones, are skipped), and every path that writes `sales` dedupes on `(user_id, external_order_id)`.
+
+A result banner shows rows imported and sales created/updated; since v5 it also shows deleted sales left deleted, failed rows and orphaned sales.
 
 ### TCGPlayer
 

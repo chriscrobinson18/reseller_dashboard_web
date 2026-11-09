@@ -284,6 +284,12 @@ export type CSVSaleSyncResult = {
   created: number
   updated: number
   removed: number
+  /** sync_csv_orders_to_sales v5+: soft-deleted sales left deleted. */
+  skipped_deleted?: number
+  /** v5+: rows the upsert failed on. */
+  failed?: number
+  /** v5+: live sales whose order no longer appears in the CSV rows (reported, never deleted). */
+  orphans?: number
 }
 
 export type TcgPlayerImportResult = {

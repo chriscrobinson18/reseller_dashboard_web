@@ -727,6 +727,13 @@ function CSVImportCard({ platform: _platform, label, description, state, inputRe
                 {state.syncResult.created > 0 && state.syncResult.updated > 0 && ', '}
                 {state.syncResult.updated > 0 && `${state.syncResult.updated} updated`}
                 {state.syncResult.created === 0 && state.syncResult.updated === 0 && 'Sales already up to date'}
+                {!!state.syncResult.skipped_deleted && `; ${state.syncResult.skipped_deleted} deleted sales left deleted`}
+              </div>
+            )}
+            {state.phase === 'done' && (!!state.syncResult.failed || !!state.syncResult.orphans) && (
+              <div className="text-amber-700">
+                {!!state.syncResult.failed && `${state.syncResult.failed} orders failed to save — try the upload again. `}
+                {!!state.syncResult.orphans && `${state.syncResult.orphans} sales no longer match any imported order (kept, not deleted).`}
               </div>
             )}
           </div>

@@ -174,3 +174,20 @@ describe('sales-based income (2026-11-09)', () => {
     ])
   })
 })
+
+describe('Total Income KPI matches Schedule C Part I (P0 regression)', () => {
+  it('KPI income = Line 1 − Line 2 from the breakdown, with sales, unlinked payouts, settlements and sale-derived rows mixed', () => {
+    const txs = [
+      tx({ id: 'p', amount: 400, schedule_c_category: 'payout' }),                       // unlinked deposit still tagged income
+      tx({ id: 'cb', amount: -25, schedule_c_category: 'payout' }),                      // chargeback
+      tx({ id: 'st', amount: 900, schedule_c_category: 'settlement', record_type: 'settlement' }), // never income
+      tx({ id: 'sd', amount: 300, schedule_c_category: 'payout', related_sale_id: 's1' }), // sale-derived → counted via SALES
+      tx({ id: 'ex', amount: -60, schedule_c_category: 'supplies' }),
+    ]
+    const k = computeKPIs(txs, [], SALES)
+    const sc = computeScheduleC(txs, [], SALES)
+    const partI = (sc.payout ?? 0) + (sc.returns_allowances ?? 0)
+    expect(k.income).toBe(partI)
+    expect(k.income).toBe(400 - 25 + SALES.grossReceipts - SALES.returns) // 1275, computed a second way
+  })
+})

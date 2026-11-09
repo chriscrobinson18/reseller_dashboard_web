@@ -1,4 +1,18 @@
-// sync_csv_orders_to_sales v4
+// sync_csv_orders_to_sales v5 (2026-11-09)
+// Re-import safe: writes go through _shared/salesImport.ts (the same path as
+// eBay Order Earnings and TCGplayer). Re-running the sync after an Amazon /
+// Mercari CSV upload now:
+//   - inserts new orders in full;
+//   - refreshes only money/description fields on existing live sales;
+//   - refreshes return_status only when no in-app `returns` row exists;
+//   - NEVER un-deletes a soft-deleted sale (v4 cleared deleted_at);
+//   - NEVER resets inventory_status / refunded_quantity (v4 wrote 'ok' / 0);
+//   - NEVER soft-deletes sales whose order is missing from the CSV rows
+//     (v4 did); they are only counted in `orphans` for review.
+// Money semantics are unchanged from v4 (sale_price = gross − refunds).
+// Client is now service-role (the shared helper requires it); every query is
+// filtered by the caller's user_id.
+// Prior: sync_csv_orders_to_sales v4
 // Fix: fees use signed arithmetic (entry.fees -= amount) so positive fee reversals
 //      (e.g. Amazon DR Refund fee_reversal transactions) reduce fees rather than inflating them.
 // Prior: sync_csv_orders_to_sales v3
@@ -9,6 +23,7 @@
 //   3. return_status used invalid 'none' — writes null per DB constraint
 import { serve } from "https://deno.land/std@0.224.0/http/server.ts"
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2"
+import { upsertImportedSales } from "../_shared/salesImport.ts"
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -42,13 +57,15 @@ serve(async (req) => {
     const authHeader = req.headers.get("Authorization")
     if (!authHeader) return json(401, { error: "Unauthorized" })
 
+    // Service-role client (as in import_marketplace_csv / import_tcgplayer_orders,
+    // and as _shared/salesImport.ts requires); the caller is identified from
+    // their JWT and every query below is scoped by user_id.
     const supabase = createClient(
       Deno.env.get("SUPABASE_URL")!,
       Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!,
-      { global: { headers: { Authorization: authHeader } } },
     )
-
-    const { data: { user }, error: authError } = await supabase.auth.getUser()
+    const token = authHeader.replace(/^Bearer\s+/i, "")
+    const { data: { user }, error: authError } = await supabase.auth.getUser(token)
     if (authError || !user) return json(401, { error: "Unauthorized" })
 
     const body = await req.json()
@@ -127,29 +144,9 @@ serve(async (req) => {
       return json(200, { created: 0, updated: 0, removed: 0 })
     }
 
-    // ── 4. Fetch existing csv-sourced sales for this platform ─────────────────
+    // ── 4. Build one full insert payload per order ───────────────────────────
     const source = sourceForPlatform(platform)
-    const { data: existingSales, error: salesErr } = await supabase
-      .from("sales")
-      .select("id, external_order_id, deleted_at")
-      .eq("user_id", user.id)
-      .eq("source", source)
-      .eq("platform", platform)
-      .not("external_order_id", "is", null)
-
-    if (salesErr) return json(500, { error: salesErr.message })
-
-    // Build a safe Map (no crash on duplicate external_order_id)
-    const existingMap = new Map<string, { id: string; deleted_at: string | null }>()
-    for (const s of (existingSales ?? [])) {
-      if (s.external_order_id && !existingMap.has(s.external_order_id)) {
-        existingMap.set(s.external_order_id, { id: s.id, deleted_at: s.deleted_at })
-      }
-    }
-
-    // ── 5. Upsert ─────────────────────────────────────────────────────────────
-    let created = 0, updated = 0, removed = 0
-
+    const rowsOut: (Record<string, unknown> & { external_order_id: string })[] = []
     for (const [ref, entry] of ordersToSync) {
       const salePrice = entry.grossRevenue - entry.refundedAmount
       const netPayout = salePrice - entry.fees - entry.shippingCost
@@ -157,59 +154,43 @@ serve(async (req) => {
         entry.refundedAmount === 0 ? "none"
         : entry.refundedAmount >= entry.grossRevenue ? "full"
         : "partial"
-
-      const saleData = {
+      rowsOut.push({
+        user_id: user.id,
+        platform,
+        source,
+        external_order_id: ref,
+        item_id: null,
+        item_name: entry.productName ?? null,
+        quantity: 1,
         sale_price: salePrice,
         fees: entry.fees,
         shipping_cost: entry.shippingCost,
         net_payout: netPayout,
         return_status: returnStatus,
         sold_at: entry.date,
-        inventory_status: 'ok',
+        // Insert-only: upsertImportedSales never writes these on an existing sale.
+        inventory_status: "ok",
         refunded_quantity: 0,
-      }
-
-      const existing = existingMap.get(ref)
-      if (existing) {
-        // Update (and restore if soft-deleted)
-        const updatePayload: Record<string, unknown> = { ...saleData }
-        if (existing.deleted_at !== null) updatePayload.deleted_at = null
-        const { error } = await supabase
-          .from("sales")
-          .update(updatePayload)
-          .eq("id", existing.id)
-        if (error) console.error("Update error:", error.message)
-        else updated++
-      } else {
-        // Insert
-        const { error } = await supabase.from("sales").insert({
-          user_id: user.id,
-          platform,
-          source,
-          external_order_id: ref,
-          item_id: null,
-          item_name: entry.productName ?? null,
-          quantity: 1,
-          ...saleData,
-        })
-        if (error) console.error("Insert error:", error.message)
-        else created++
-      }
+      })
     }
 
-    // ── 6. Soft-delete orphans (order no longer in CSV) ───────────────────────
-    for (const [ref, existing] of existingMap) {
-      if (!ordersToSync.has(ref) && existing.deleted_at === null) {
-        const { error } = await supabase
-          .from("sales")
-          .update({ deleted_at: new Date().toISOString() })
-          .eq("id", existing.id)
-        if (error) console.error("Soft-delete error:", error.message)
-        else removed++
-      }
-    }
+    // ── 5. Safe upsert (insert new, backfill existing, skip deleted) ──────────
+    const r = await upsertImportedSales(supabase, user.id, rowsOut)
 
-    return json(200, { created, updated, removed })
+    // ── 6. Report (never delete) live sales whose order is no longer in the CSV rows
+    const { data: existingSales, error: salesErr } = await supabase
+      .from("sales")
+      .select("external_order_id")
+      .eq("user_id", user.id)
+      .eq("source", source)
+      .eq("platform", platform)
+      .is("deleted_at", null)
+      .not("external_order_id", "is", null)
+    if (salesErr) return json(500, { error: salesErr.message })
+    const orphans = (existingSales ?? []).filter(s => !ordersToSync.has(s.external_order_id)).length
+
+    const created = r.inserted, updated = r.updated, removed = 0
+    return json(200, { created, updated, removed, skipped_deleted: r.skipped_deleted, failed: r.failed, orphans })
 
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : String(err)
