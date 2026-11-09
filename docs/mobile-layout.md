@@ -24,7 +24,7 @@ Every data table renders twice: a `md:hidden` card list and a `hidden md:table` 
 | Page | Phone card shows |
 | --- | --- |
 | Sales | item name (2-line clamp), date · platform · Trade/Bundle pills · non-OK inventory status · return status, price + net payout, "Link to inventory" when unlinked |
-| Expenses | checkbox (bulk select), merchant, signed amount, date · account, non-cash/settlement tags, category badge (tap → category picker) |
+| Expenses | Dense two-line rows (~59px): checkbox · merchant · signed amount, then category badge (tap → picker) · short date · account. Notes, non-cash and settlement tags are only in the detail panel |
 | Inventory — By Item | item name, category · units in stock · lot count, value + avg cost. Tap to expand into edit/delete-item actions, lot cards, and "Add purchase lot" |
 | Inventory — By Date | `MobileLotCard` with item name, full lot cost |
 | Bundles | platform · item count, date, order ID (`break-all`), net payout |
@@ -33,6 +33,7 @@ Every data table renders twice: a `md:hidden` card list and a `hidden md:table` 
 Other phone-specific behavior:
 
 - **Row actions always visible.** The desktop tables reveal edit/delete/add-cost on hover, which doesn't exist on touch screens. `MobileLotCard` and the expanded item card always show those buttons, and `BasisLines` takes `alwaysShowDelete`.
+- **Expenses scrolls as one page on phones.** The header (period, search, filters) scrolls away, so about 11–12 rows fit on screen versus about 7 under a fixed header. From `md` up the header stays fixed and only the table scrolls. Because the page scrolls this way, the bulk-action bar is `fixed` above the tab bar on phones. The floating category picker closes on any scroll outside itself (`data-cat-dd`), so it never drifts away from its row.
 - **Expenses filters** collapse behind a **Filters (n)** toggle, where n counts active filters. Phones get a sort `<select>` in that panel because they have no sortable column headers.
 - **Headers** use `p-4 md:p-6` and `flex-wrap`. Search inputs are full width. Inventory's three actions become a 3-column grid with short labels (Trade / Breakdown / Item).
 - **Dashboard:** KPI grid is 2 columns (Net spans full width) and becomes 3 columns from `sm` up. Profitability and Schedule C cards stack (their side-by-side layout starts at `md`). The Schedule C card isn't height-capped on phones, so there's no nested scroll.
