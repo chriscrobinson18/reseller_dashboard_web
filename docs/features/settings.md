@@ -179,8 +179,10 @@ Tampermonkey installed, clicking it triggers the install dialog automatically.
 - `quantity` is the sum of `products[].quantity` (minimum 1).
 - Canceled orders are skipped. `refundStatus` maps to `return_status` (`full` /
   `partial` / `none`).
-- Re-import safe: upsert on `(user_id, external_order_id)`.
-- Response: `{ platform, received, sales_upserted, skipped, failed }` — `received`
+- Buyer-paid shipping (`shippingAmount`) is stored as `shipping_charged` (income), not `shipping_cost` (2026-11-09).
+- Re-import safe and backfilling (2026-11-09, `_shared/salesImport.ts`): new orders are inserted, existing sales get their TCGplayer money fields refreshed, deleted sales stay deleted, and inventory/return fields are never reset. The same rule applies to eBay Order Earnings imports.
+- Known gap: partial/full refund **amounts** aren't stored (`refunds[]` is ignored), only `return_status`.
+- Response: `{ platform, received, sales_upserted, inserted, updated, skipped, skipped_deleted, failed }` — `received`
   is the total orders in the payload; `failed` counts batch upsert errors (surfaced
   as "N skipped" in the UI alongside canceled orders).
 - No settlement/payout matching (TCGPlayer pays Mon/Thu but exposes no payout ID).
