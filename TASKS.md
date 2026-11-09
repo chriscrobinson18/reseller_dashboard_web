@@ -62,6 +62,7 @@ _Started 2026-11-09. Scope: Schedule C accuracy for tax years 2025 (amendment) a
 - [x] Legacy iOS category tags (`proxies`, `automation_software`, `cook_group`, `memberships`, `equipment`, `disbursement`) re-tagged onto real Schedule C lines; custom category "Software & Subscriptions" (Line 27a)
 - [x] Credit-card payments (`LOAN_PAYMENTS`) → `transfer`: backfilled, plus a sync rule
 - [x] PayPal / Cash App wallet cash-outs → `settlement` (sync rule + existing rows); Venmo kept as `transfer`
+- [x] Custom category **"Memberships"** (Line 27a): warehouse-club and retailer memberships used for inventory buying, split out of "Software & Subscriptions" and cost of goods. Membership **refunds** use the same category so they net against the fee. Merchants that sell both goods and memberships under one merchant ID get no category rule.
 - [x] Personal cards removed: sync disabled per account, their transactions deleted (full backup kept privately)
 
 **Phases:**
