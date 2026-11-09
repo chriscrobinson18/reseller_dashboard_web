@@ -323,3 +323,16 @@ export interface FindOrphansResult {
   total_plaid_transactions: number
   warnings: string[]
 }
+
+/** Year-end inventory value for Schedule C Part III (traditional method).
+ *  One row per tax year; beginning inventory = the prior year's row. */
+export interface InventoryValuation {
+  id: string
+  user_id: string
+  tax_year: number
+  ending_inventory: number
+  method: 'count' | 'estimate' | 'lots' | 'filed_return'
+  notes: string | null
+  created_at: string
+  updated_at: string
+}

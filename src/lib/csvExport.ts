@@ -4,6 +4,14 @@ import {
   saleIncomeParts, emptySalesIncome,
   type SaleIncomeInput, type BundleIncomeInput, type SalesIncomeTotals,
 } from './salesIncome'
+import { computePartIII, type InventoryValuationRow, type PartIII } from './partIII'
+
+/** Full-tax-year Part III inputs (traditional method). Only pass for a
+ *  calendar-year period: Part III is never period-scoped. */
+export interface PartIIIOptions {
+  taxYear: number
+  valuations: InventoryValuationRow[]
+}
 
 // ─── Generic CSV helpers ──────────────────────────────────────────────────────
 
@@ -177,7 +185,9 @@ export interface ScheduleCSummary {
   grossReceipts: number     // Line 1 — Part I income excluding returns_allowances
   returns: number           // Line 2 — returns & allowances (positive magnitude)
   netReceipts: number       // Line 3 = Line 1 − Line 2
-  cogs: number              // Line 4 — Part III (cost_of_goods transactions)
+  cogs: number              // Line 4 — Part III Line 42 when partIII given, else purchases
+  purchases: number         // Part III Line 36 — cost_of_goods transactions (positive)
+  partIII: PartIII | null   // traditional-method detail (null = purchases-only basis)
   grossProfit: number       // Line 5 = Line 3 − Line 4
   grossIncome: number       // Line 7 (no other-income modeled, = Line 5)
   expensesByLine: Record<string, number>  // Part II line → positive magnitude (nonzero only)
@@ -212,6 +222,7 @@ export function computeScheduleCSummary(
   transactions: Transaction[],
   customs: CustomCategory[],
   sales: SalesIncomeTotals = emptySalesIncome(),
+  partIIIOpts?: PartIIIOptions,
 ): ScheduleCSummary {
   const perLine: Record<string, number> = {}  // signed sums keyed by scheduleLine
   let returnsSigned = 0
@@ -248,7 +259,9 @@ export function computeScheduleCSummary(
   const grossReceipts = perLine['Part I'] ?? 0
   const returns = Math.abs(returnsSigned)
   const netReceipts = grossReceipts - returns
-  const cogs = Math.abs(perLine['Part III'] ?? 0)
+  const purchases = Math.abs(perLine['Part III'] ?? 0)
+  const partIII = partIIIOpts ? computePartIII(partIIIOpts.taxYear, purchases, partIIIOpts.valuations) : null
+  const cogs = partIII ? partIII.cogs : purchases
   const grossProfit = netReceipts - cogs
   const grossIncome = grossProfit
 
@@ -267,7 +280,7 @@ export function computeScheduleCSummary(
   const netProfit = tentativeProfit - homeOffice
 
   return {
-    grossReceipts, returns, netReceipts, cogs, grossProfit, grossIncome,
+    grossReceipts, returns, netReceipts, cogs, purchases, partIII, grossProfit, grossIncome,
     expensesByLine, totalExpenses, tentativeProfit, homeOffice, netProfit,
     uncategorizedNet, uncategorizedCount,
   }
@@ -282,8 +295,9 @@ export function buildScheduleCSummaryCSV(
   customs: CustomCategory[],
   periodLabel: string,
   sales: SalesIncomeTotals = emptySalesIncome(),
+  partIIIOpts?: PartIIIOptions,
 ): string {
-  const s = computeScheduleCSummary(transactions, customs, sales)
+  const s = computeScheduleCSummary(transactions, customs, sales, partIIIOpts)
   const money = (n: number) => n.toFixed(2)
 
   const rows: (string | number)[][] = [
@@ -306,11 +320,23 @@ export function buildScheduleCSummaryCSV(
   if (s.uncategorizedCount > 0) {
     rows.push(['—', `Uncategorized — NOT included above (${s.uncategorizedCount} txns)`, money(s.uncategorizedNet)])
   }
+  if (s.partIII) {
+    const p = s.partIII
+    rows.push([])
+    rows.push(['Part III', `Cost of goods sold — tax year ${p.taxYear}`, ''])
+    rows.push(['35', `Inventory at beginning of year${p.beginningSet ? '' : ' — NOT SET (treated as 0)'}`, money(p.beginningInventory)])
+    rows.push(['36', 'Purchases', money(p.purchases)])
+    rows.push(['40', 'Add lines 35 through 39', money(p.line40)])
+    rows.push(['41', `Inventory at end of year${p.endingSet ? '' : ' — NOT SET (treated as 0)'}`, money(p.endingInventory)])
+    rows.push(['42', 'Cost of goods sold (Line 40 − Line 41) → Line 4', money(p.cogs)])
+  }
 
   const header = [
     ['Schedule C Summary'],
     ['Period', periodLabel],
-    ['Basis', 'Cash — COGS (Line 4) is inventory purchases in the period, not FIFO cost of items sold'],
+    s.partIII
+      ? ['Basis', `Traditional inventory method (§471) — Line 4 = Part III Line 42 (beginning + purchases − ending)${s.partIII.complete ? '' : ' — INCOMPLETE: inventory value(s) not set'}`]
+      : ['Basis', 'Purchases only — Line 4 is inventory purchases in the period (Part III inventory values apply to a full tax year; export "Last Year" to include them)'],
     ['Income', `From recorded sales (Sales tab): ${sales.saleCount} sales. Bank deposits from marketplaces are settlements, not income`],
     [],
     ['Line', 'Description', 'Amount'],

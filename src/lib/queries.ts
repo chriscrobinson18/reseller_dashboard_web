@@ -1,6 +1,6 @@
 import { useQuery } from '@tanstack/react-query'
 import { supabase } from './supabase'
-import type { Item, InventoryLot, Trade, SaleBundle, PlaidItem, PlaidAccount, Transaction, BoxOpening, CSVGroup } from './types'
+import type { Item, InventoryLot, Trade, SaleBundle, PlaidItem, PlaidAccount, Transaction, BoxOpening, CSVGroup, InventoryValuation } from './types'
 import type { CustomCategory } from './categories'
 import { customCategoryValue } from './categories'
 import type { ColorKey } from './categoryPalette'
@@ -528,6 +528,23 @@ export function useCSVGroups(platform: string) {
         .order('date', { ascending: false })
       if (error) throw error
       return buildCSVGroups((data ?? []) as Transaction[], platform)
+    },
+  })
+}
+
+// ─── Inventory valuations (Schedule C Part III, traditional method) ─────────
+
+/** All stored year-end inventory values, oldest first. See src/lib/partIII.ts. */
+export function useInventoryValuations() {
+  return useQuery({
+    queryKey: ['inventory_valuations'],
+    queryFn: async (): Promise<InventoryValuation[]> => {
+      const { data, error } = await supabase
+        .from('inventory_valuations')
+        .select('*')
+        .order('tax_year')
+      if (error) throw error
+      return (data ?? []).map(r => ({ ...r, ending_inventory: Number(r.ending_inventory) })) as InventoryValuation[]
     },
   })
 }

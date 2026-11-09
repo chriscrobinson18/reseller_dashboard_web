@@ -7,7 +7,8 @@ import {
 import { supabase } from '../lib/supabase'
 import { getPeriodRange, PERIOD_LABELS, type PeriodPreset } from '../lib/periods'
 import { CATEGORIES, resolveCategory, type CustomCategory, type CategoryDef } from '../lib/categories'
-import { useCustomCategories } from '../lib/queries'
+import { useCustomCategories, useInventoryValuations } from '../lib/queries'
+import PartIIICard from '../components/PartIIICard'
 import { computeScheduleC, computeKPIs, computeMonthlyChart } from '../lib/scheduleCMath'
 import { computeSalesIncome, computeSalesIncomeByMonth, type BundleIncomeInput } from '../lib/salesIncome'
 import { formatUSD } from '../lib/utils'
@@ -155,6 +156,7 @@ export default function DashboardPage() {
   })
 
   const { data: customs = [] } = useCustomCategories()
+  const { data: valuations = [] } = useInventoryValuations()
 
   // Income comes from the Sales tab (2026-11-09) — see src/lib/salesIncome.ts.
   const salesIncome = useMemo(() => computeSalesIncome(sales, bundles), [sales, bundles])
@@ -214,7 +216,13 @@ export default function DashboardPage() {
   function handleExportSummary() {
     downloadCSV(
       `schedule-c-summary-${periodSlug}.csv`,
-      buildScheduleCSummaryCSV(transactions, customs, PERIOD_LABELS[period], salesIncome),
+      buildScheduleCSummaryCSV(
+        transactions, customs, PERIOD_LABELS[period], salesIncome,
+        // Part III applies only to a full tax year (never period-scoped).
+        period === 'last_year' && range.start
+          ? { taxYear: Number(range.start.slice(0, 4)), valuations }
+          : undefined,
+      ),
     )
   }
 
@@ -301,6 +309,9 @@ export default function DashboardPage() {
           )}
         </div>
       </div>
+
+      {/* Part III — full tax year, independent of the period picker */}
+      <PartIIICard customs={customs} />
 
       {/* Monthly chart */}
       {monthlyData.length > 0 && (

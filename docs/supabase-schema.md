@@ -235,9 +235,11 @@ One row per linked Plaid Item (institution). `plaid_accounts` is the per-account
 | `status` (`'active' \| 'login_required' \| 'error'`) | Health of the Plaid connection. Defaults to `'active'`. Written by `plaid_sync_transactions` on `ITEM_LOGIN_REQUIRED` and reset by `plaid_exchange_token` on update-mode success. Web client reads this to drive the "Reconnect needed" badge in Settings; treats the column as `'active'` if missing. |
 | `error_message` | Optional human-readable Plaid error string, shown as a tooltip on the status badge. |
 
+### `inventory_valuations`
+Added 2026-11-09 (migration `20261109150000_inventory_valuations.sql`). Year-end inventory value per tax year for Schedule C Part III (traditional method). Columns: `user_id`, `tax_year` (unique per user), `ending_inventory` (numeric ≥ 0), `method` (`count` / `estimate` / `lots` / `filed_return`), `notes`, timestamps. Owner-scoped RLS (select/insert/update/delete on `auth.uid() = user_id`). Beginning inventory is the prior year's row, never stored separately. Read by `useInventoryValuations`, written by `saveInventoryValuation` / `deleteInventoryValuation`.
+
 ## Tables referenced but not yet built on (per TASKS.md)
 - `category_rules` (planned — merchant auto-categorization)
-- `inventory_valuations` (planned — Beginning/Ending inventory for Part III, must NOT be period-scoped)
 - `tax_profiles` (planned — Schedule C header fields, home office sqft, vehicle method)
 - `marketplace_connections` (exists per TASKS.md note "verify RLS on access_token/refresh_token is service-role-only" — unconfirmed)
 

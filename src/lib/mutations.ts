@@ -2219,3 +2219,46 @@ export async function deleteDuplicateTransactions(ids: string[]): Promise<void> 
     if (error) throw error
   }
 }
+
+// ─── Inventory valuations (Schedule C Part III, traditional method) ─────────
+
+export interface InventoryValuationInput {
+  taxYear: number
+  endingInventory: number
+  method: 'count' | 'estimate' | 'lots' | 'filed_return'
+  notes?: string | null
+}
+
+/**
+ * Create or replace the year-end inventory value for one tax year (one row
+ * per user + year; the prior year's row is the next year's beginning
+ * inventory). See src/lib/partIII.ts and docs/features/dashboard.md.
+ */
+export async function saveInventoryValuation(input: InventoryValuationInput): Promise<void> {
+  const { taxYear, endingInventory, method } = input
+  if (!Number.isInteger(taxYear) || taxYear < 2000 || taxYear > 2100) throw new Error('Invalid tax year')
+  if (!Number.isFinite(endingInventory) || endingInventory < 0) throw new Error('Inventory value must be zero or more')
+  const user_id = await getUserId()
+  const { error } = await supabase
+    .from('inventory_valuations')
+    .upsert({
+      user_id,
+      tax_year: taxYear,
+      ending_inventory: Math.round(endingInventory * 100) / 100,
+      method,
+      notes: input.notes?.trim() || null,
+      updated_at: new Date().toISOString(),
+    }, { onConflict: 'user_id,tax_year' })
+  if (error) throw error
+}
+
+/** Remove a stored year-end value (the year reverts to "not set"). */
+export async function deleteInventoryValuation(taxYear: number): Promise<void> {
+  const user_id = await getUserId()
+  const { error } = await supabase
+    .from('inventory_valuations')
+    .delete()
+    .eq('user_id', user_id)
+    .eq('tax_year', taxYear)
+  if (error) throw error
+}

@@ -300,3 +300,25 @@ describe('trades under sales-based income', () => {
     expect(s.grossProfit).toBe(0)
   })
 })
+
+describe('Part III in the summary (traditional method)', () => {
+  const purchases = [tx({ amount: -9000, schedule_c_category: 'cost_of_goods' })]
+  it('Line 4 = Part III Line 42 when a tax year + valuations are given', () => {
+    const s = computeScheduleCSummary(purchases, [], undefined, { taxYear: 2025, valuations: [{ tax_year: 2024, ending_inventory: 1000 }, { tax_year: 2025, ending_inventory: 4000 }] })
+    expect(s.purchases).toBe(9000)
+    expect(s.cogs).toBe(6000)
+    expect(s.partIII?.complete).toBe(true)
+  })
+  it('without Part III options, Line 4 stays purchases (period-scoped exports)', () => {
+    const s = computeScheduleCSummary(purchases, [])
+    expect([s.cogs, s.partIII]).toEqual([9000, null])
+  })
+  it('CSV prints Part III lines and flags a missing value', () => {
+    const csv = buildScheduleCSummaryCSV(purchases, [], 'Last Year', undefined, { taxYear: 2025, valuations: [{ tax_year: 2025, ending_inventory: 4000 }] })
+    expect(csv).toContain('Traditional inventory method')
+    expect(csv).toContain('INCOMPLETE')
+    expect(csv).toContain('35,Inventory at beginning of year — NOT SET (treated as 0),0.00')
+    expect(csv).toContain('42,Cost of goods sold (Line 40 − Line 41) → Line 4,5000.00')
+    expect(csv).toContain('4,Cost of goods sold,5000.00')
+  })
+})

@@ -49,18 +49,22 @@ The "form" view — one row per IRS Schedule C line with net profit at the botto
 - All money math here is duplicated from (or duplicated *into*) `SalesPage.tsx` and `ExpensesPage.tsx` — check [data-flows.md](../data-flows.md) before "fixing" a calculation only here.
 - This page has zero loading-state granularity beyond a single "Loading…" text next to the title; `loadingTx || loadingSales` gates nothing else (the page renders with empty arrays while loading, which can flash `$0.00` cards).
 
-## Part III (Cost of Goods Sold) and inventory valuation — important constraint
+## Part III (Cost of Goods Sold) — traditional method (built 2026-11-09)
 
-The Sales Profitability card on the dashboard is **period-scoped**: it computes COGS by summing `inventory_movements.quantity × inventory_lots.unit_cost` for sales in the selected period. This is correct for "how profitable was Q1?" answers.
+Owner decision 2026-11-09: **traditional §471 inventory method.** The **Part III card** ([`PartIIICard.tsx`](../../src/components/PartIIICard.tsx)) has its own tax-year selector and is **independent of the period picker**: Part III is always a full tax year.
 
-**The Schedule C Part III line is different.** The IRS formula is:
+| Line | Source |
+|---|---|
+| 35 beginning inventory | `inventory_valuations` row for **tax_year − 1** (never stored separately, so it can't disagree with the prior year's ending) |
+| 36 purchases | `cost_of_goods` transactions in the year, using exactly the Summary CSV's rules (`computeScheduleCSummary(...).purchases`) |
+| 40 | 35 + 36 (lines 37–39 unused) |
+| 41 ending inventory | `inventory_valuations` row for the tax year |
+| 42 cost of goods sold | 40 − 41 → Schedule C **Line 4** |
 
-```
-COGS = Beginning Inventory + Purchases − Ending Inventory
-```
+Math: [`src/lib/partIII.ts`](../../src/lib/partIII.ts) (`computePartIII`). Values are entered per year in the card (`saveInventoryValuation` in mutations.ts; method = physical count / estimate / from inventory lots / from filed return, plus notes for the preparer). For the first tracked year, enter the prior year's ending value from the filed return (e.g. 2024's for 2025's beginning).
 
-All three inputs are **full-tax-year values regardless of any dashboard period filter**. Beginning Inventory is what was on hand on Jan 1; Ending is what's on hand on Dec 31; Purchases is the year's `cost_of_goods` transaction total.
+**Lot-based suggestion:** `inventoryOnHandAsOf(lots, movements, 'yyyy-12-31')` values lots acquired by that date (`purchase_date`, else `created_at`) at today's `unit_cost`, adding back units depleted by sales dated after it. It only counts lots that were entered, so it's offered as a starting point ("Use lot-based figure"), never applied automatically.
 
-The planned `inventory_valuations(user_id, tax_year, beginning_inventory, ending_inventory)` table stores Beginning/Ending. A future "Part III card" on the dashboard must read from this table, NOT extend the period-scoped `computeProfitability` function.
+**Summary CSV:** when the export period is **Last Year** (a full calendar year), `buildScheduleCSummaryCSV` receives `{ taxYear, valuations }`: Line 4 = Line 42, the Part III lines are printed, and the header states the traditional basis (and flags "INCOMPLETE" if a value is missing). Any other period exports purchases only, with a header note, because Part III is never period-scoped.
 
-P0 item 2: do not reuse `computeProfitability` for the Schedule C Part III line. If you do, switching the dashboard to a "Last 30 Days" period will silently compute the WRONG COGS for the tax year.
+**The Sales Profitability card stays period-scoped FIFO** (`computeProfitability`) and must never feed Line 4 — switching the period would silently change a tax-year figure.
