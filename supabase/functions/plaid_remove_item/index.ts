@@ -6,7 +6,7 @@
 // Calls Plaid /item/remove, then deletes the row from plaid_items.
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts"
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2"
-import { Configuration, PlaidApi, PlaidEnvironments } from "npm:plaid@latest"
+import { Configuration, PlaidApi, PlaidEnvironments } from "npm:plaid@47.0.0"
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',

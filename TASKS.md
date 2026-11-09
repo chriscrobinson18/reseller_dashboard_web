@@ -73,7 +73,9 @@ _Started 2026-11-09. Scope: Schedule C accuracy for tax years 2025 (amendment) a
 - [ ] **Phase 6: Close each year.** Schedule C totals per line for 2025 and 2026, compared with the filed 2025 return → hand to tax preparer for the 1040-X decision.
 
 **Code follow-ups found during cleanup:**
-- [ ] **Deploy `plaid_sync_transactions`** (card-payment rule, wallet settlement rule): `supabase functions deploy plaid_sync_transactions --project-ref qmizmnbzergqbpgyqseg`
+- [x] **Deployed `plaid_sync_transactions` v46** (2026-11-09): card-payment rule + wallet settlement rule, rebuilt on top of the *live* v35 source (the repo copy was missing v35's `category_rules` sync step, so a deploy from the repo would have silently removed it). Byte-identical to the repo after deploy; JWT verification kept on.
+- [x] **Pinned `npm:plaid@47.0.0`** in all 4 Plaid functions (was `@latest`). plaid@51 (2026-11-06) removed `Configuration` / `PlaidApi` / `PlaidEnvironments`, so **any** redeploy on `@latest` fails at load and breaks bank sync. Versions 47, 48 and 50 type-check clean.
+- [ ] **Before deploying `find_plaid_orphans`, `plaid_exchange_token` or `plaid_remove_item`:** download the live source first (`supabase functions download <name>`) and diff it against the repo. The repo has drifted from production at least once (see above).
 - [ ] **P0: `classifySettlement` tags *any* incoming "eBay" credit as a settlement**, including refunds on credit cards. It should only match payouts into checking accounts (deposits), not card credits.
 - [ ] **P0: Dashboard "Total Income" leaves out sale-linked and CSV-import income** (it counts only deposits tagged `payout`). Under the sales-based model it will trend toward $0 even though the Schedule C export is correct. Make the card match the export.
 - [ ] Settlement ↔ sale linking UI: **deferred** (bookkeeping control, not required for Schedule C).
