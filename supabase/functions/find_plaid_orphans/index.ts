@@ -1,7 +1,8 @@
-// find_plaid_orphans v1
-// Pulls canonical transaction IDs from Plaid /transactions/get for each active
-// plaid_item, compares against DB rows, and returns orphaned rows whose
-// plaid_transaction_id doesn't exist in Plaid's response.
+// find_plaid_orphans v4
+// v4: revert date filter — scan all rows regardless of age for consistency
+//     (prior passes already deleted pre-2-year orphans without the filter).
+// v3: filter out DB rows older than the Plaid query window (reverted).
+// v2: paginate DB query to avoid PostgREST 1000-row default cap.
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts"
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2"
 import { Configuration, PlaidApi, PlaidEnvironments } from "npm:plaid@47.0.0"
