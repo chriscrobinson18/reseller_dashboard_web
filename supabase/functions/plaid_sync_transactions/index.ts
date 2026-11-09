@@ -102,6 +102,23 @@ function classifySettlement(
   if (/\bdepop\b/i.test(merchant))
     return { record_type: 'settlement', platform: 'depop', schedule_c_category: 'settlement' }
 
+  // Wallet cash-outs: moving your own PayPal / Venmo / Cash App balance to the
+  // bank. Income is earned when the buyer pays into the wallet, not here, so
+  // these are disbursements like a marketplace payout — same model as eBay:
+  // income comes from the recorded sale, the bank deposit is a settlement.
+  // Zelle is excluded on purpose: it's a direct buyer payment with no wallet
+  // in between, so it is NOT reclassified here (it still falls through to the
+  // PFC map below — TRANSFER_IN → transfer). Pending a per-channel
+  // deposits-vs-recorded-sales reconciliation before deciding its treatment.
+  if (!/\bzelle\b/i.test(merchant)) {
+    if (/paypal/i.test(merchant))
+      return { record_type: 'settlement', platform: 'paypal', schedule_c_category: 'settlement' }
+    if (/^venmo\b/i.test(merchant) || /ORIG CO NAME:\s*venmo/i.test(merchant))
+      return { record_type: 'settlement', platform: 'venmo', schedule_c_category: 'settlement' }
+    if (/cash ?app/i.test(merchant))
+      return { record_type: 'settlement', platform: 'cashapp', schedule_c_category: 'settlement' }
+  }
+
   return null
 }
 
