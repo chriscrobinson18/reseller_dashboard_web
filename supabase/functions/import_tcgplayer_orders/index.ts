@@ -1,9 +1,17 @@
 // supabase/functions/import_tcgplayer_orders/index.ts
+// v2 (2026-11-09) — buyer-paid shipping is written to `shipping_charged`
+//   (income), not `shipping_cost` (which means seller-paid postage
+//   everywhere else). TCGplayer sellers buy postage separately, so
+//   `shipping_cost` stays null. net_payout = sale_price − fees + shipping_charged.
+//   Re-imports go through _shared/salesImport.ts: they backfill money fields
+//   on existing sales but never un-delete a sale or reset inventory/return
+//   fields.
 // v1 — Import TCGPlayer orders from Tampermonkey export JSON.
 // Upserts directly into `sales` table (same as eBay Order Earnings path).
 // Skips Canceled orders. Maps refundStatus → return_status.
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts"
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2"
+import { upsertImportedSales } from "../_shared/salesImport.ts"
 
 const BATCH = 200
 
@@ -53,7 +61,7 @@ serve(async (req) => {
     const orders: TcgOrder[] = body.orders
     if (!Array.isArray(orders)) return json(400, { error: 'Body must be { orders: TcgOrder[] }' })
 
-    const salesRows: Record<string, unknown>[] = []
+    const salesRows: (Record<string, unknown> & { external_order_id: string })[] = []
     let skipped = 0
 
     for (const o of orders) {
@@ -78,7 +86,8 @@ serve(async (req) => {
         item_name: itemName,
         quantity: totalQty,
         sale_price: o.productAmount,
-        shipping_cost: o.shippingAmount,
+        shipping_cost: null,
+        shipping_charged: o.shippingAmount,
         fees: o.feeAmount,
         net_payout: o.netAmount,
         return_status: returnStatus,
@@ -89,22 +98,15 @@ serve(async (req) => {
       })
     }
 
-    let upserted = 0
-    let failed = 0
-    for (let i = 0; i < salesRows.length; i += BATCH) {
-      const batch = salesRows.slice(i, i + BATCH)
-      const { error } = await supabase
-        .from('sales')
-        .upsert(batch, { onConflict: 'user_id,external_order_id' })
-      if (error) {
-        console.error('Sales upsert error:', error)
-        failed += batch.length
-      } else {
-        upserted += batch.length
-      }
-    }
+    const r = await upsertImportedSales(supabase, user.id, salesRows, BATCH)
 
-    return json(200, { platform: 'tcgplayer', received: orders.length, sales_upserted: upserted, skipped, failed })
+    return json(200, {
+      platform: 'tcgplayer', received: orders.length,
+      // sales_upserted kept for existing clients: inserted + updated.
+      sales_upserted: r.inserted + r.updated,
+      inserted: r.inserted, updated: r.updated,
+      skipped, skipped_deleted: r.skipped_deleted, failed: r.failed,
+    })
   } catch (error: unknown) {
     console.error('Import error:', error)
     return json(500, { error: error instanceof Error ? error.message : 'Unknown error' })

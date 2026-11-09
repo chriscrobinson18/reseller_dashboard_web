@@ -1,4 +1,12 @@
-// import_marketplace_csv v20
+// import_marketplace_csv v21 (2026-11-09)
+// Fix: eBay Order Earnings re-imports now BACKFILL instead of clobbering, via
+//      ../_shared/salesImport.ts. New orders are inserted; existing live sales
+//      get only eBay-sourced money/description fields refreshed; refund fields
+//      only when no in-app return exists; soft-deleted sales are skipped (a
+//      re-import never un-deletes); inventory_status / refunded_quantity are
+//      never reset on an existing sale. Response adds inserted / updated /
+//      skipped_deleted / failed (sales_upserted = inserted + updated).
+// Prior: import_marketplace_csv v20
 // Add: Amazon Date Range Transaction Report parser (amz_dr_* keys). Auto-detected
 //      from header: has 'settlement id' + 'transaction status'. Enables Settlement
 //      Status for Amazon and captures per-order shipping label costs. Deferred rows
@@ -35,6 +43,7 @@
 //      but NOT 'product sales' (distinguishes TV from SR which has both).
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts"
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2"
+import { upsertImportedSales } from "../_shared/salesImport.ts"
 
 function parseCSV(text: string): string[][] {
   const rows: string[][] = []
@@ -736,19 +745,15 @@ serve(async (req) => {
         })
       }
 
-      let salesUpserted = 0
-      for (let i = 0; i < salesRows.length; i += BATCH) {
-        const { error, count } = await supabase.from('sales')
-          .upsert(salesRows.slice(i, i + BATCH), { onConflict: 'user_id,external_order_id' })
-        if (error) console.error('Sales upsert error:', error)
-        else salesUpserted += salesRows.slice(i, i + BATCH).length
-      }
+      const imp = await upsertImportedSales(supabase, user.id, salesRows, BATCH)
 
       return json(200, {
         success: true, platform: 'ebay_order_earnings',
         rows_parsed: rowsParsed, rows_skipped: rowsSkipped,
         skipped_breakdown: skippedTypes,
-        sales_upserted: salesUpserted,
+        sales_upserted: imp.inserted + imp.updated,
+        inserted: imp.inserted, updated: imp.updated,
+        skipped_deleted: imp.skipped_deleted, failed: imp.failed,
       })
 
     } else {

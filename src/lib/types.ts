@@ -53,7 +53,14 @@ export interface Sale {
   quantity: number
   sale_price: number
   fees: number
+  /** Seller-paid postage deducted by the platform (eBay "Shipping labels"). Expense. */
   shipping_cost?: number
+  /**
+   * Shipping the BUYER paid the seller, when the platform reports it apart from
+   * the item price (TCGplayer). Income, Schedule C Line 1. eBay's gross already
+   * includes it inside sale_price, so eBay leaves this null.
+   */
+  shipping_charged?: number | null
   /** Itemized fee breakdown from eBay Order Earnings. Null for non-eBay sales. */
   fee_breakdown?: Record<string, number> | null
   /** Discount amount from eBay Order Earnings. Null when no discount. */
