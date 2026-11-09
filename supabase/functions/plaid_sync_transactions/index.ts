@@ -1,4 +1,8 @@
-// plaid_sync_transactions v36
+// plaid_sync_transactions v37
+// v37: classifySettlement only fires for credits on checking/savings-style
+// depository accounts (Plaid account type + subtype passed in from the
+// transactionsSync `accounts` list). Card credits (marketplace refunds) fall
+// through to category rules / the PFC map instead of being tagged settlement.
 // v36: LOAN_PAYMENTS → transfer in the PFC fallback; PayPal / Cash App wallet
 // cash-outs classified as settlements (Venmo stays transfer — personal-only).
 // Pinned npm:plaid@47.0.0 (was @latest): plaid@51 removed Configuration /
@@ -77,17 +81,41 @@ const PFC_TO_SCHEDULE_C: Record<string, string> = {
 }
 
 /**
+ * Bank-account subtypes a marketplace payout or wallet cash-out can land in.
+ * Plaid `type` must also be 'depository'. Credit cards ('credit'), loans,
+ * investment accounts and wallet-style depository subtypes ('paypal',
+ * 'prepaid', 'cd', 'hsa', …) are excluded on purpose.
+ */
+const SETTLEMENT_SUBTYPES = new Set(['checking', 'savings', 'money market', 'cash management'])
+
+type AccountKind = { type: string | null; subtype: string | null }
+
+function isSettlementAccount(kind: AccountKind | undefined): boolean {
+  return kind?.type === 'depository' && SETTLEMENT_SUBTYPES.has(kind.subtype ?? '')
+}
+
+/**
  * Classify a Plaid transaction as a marketplace settlement.
- * Only positive credits (plaidAmount < 0) from known marketplace sources qualify.
- * Purchases/debits on eBay/Amazon are expenses, not settlements.
+ * Only credits (plaidAmount < 0) from known marketplace sources that land in a
+ * checking/savings-style deposit account qualify. Purchases/debits on
+ * eBay/Amazon are expenses, not settlements.
+ *
+ * v37: credits on credit cards (eBay/Amazon/PayPal refunds of a purchase) are
+ * NOT settlements. Before v37 any matching credit was tagged `settlement`,
+ * which excluded the refund from Schedule C while the original purchase stayed
+ * deducted (overstated expenses). They now fall through to category rules /
+ * the PFC map like any other card row. An unknown account (missing from the
+ * account map) fails closed: not a settlement.
  *
  * Plaid amount sign convention: positive = debit (money out), negative = credit (money in).
  */
 function classifySettlement(
   merchant: string | null,
-  plaidAmount: number
+  plaidAmount: number,
+  account: AccountKind | undefined,
 ): { record_type: string; platform: string; schedule_c_category: string } | null {
   if (!merchant || plaidAmount >= 0) return null
+  if (!isSettlementAccount(account)) return null
 
   if (merchant === 'eBay' || /ORIG CO NAME:eBay/i.test(merchant))
     return { record_type: 'settlement', platform: 'ebay', schedule_c_category: 'settlement' }
@@ -148,9 +176,22 @@ function buildAccountMap(accounts: any[]): Record<string, string> {
   return map
 }
 
-function buildRow(tx: any, userId: string, accountMap: Record<string, string>) {
+function buildAccountKindMap(accounts: any[]): Record<string, AccountKind> {
+  const map: Record<string, AccountKind> = {}
+  for (const acct of accounts) {
+    map[acct.account_id] = { type: acct.type ?? null, subtype: acct.subtype ?? null }
+  }
+  return map
+}
+
+function buildRow(
+  tx: any,
+  userId: string,
+  accountMap: Record<string, string>,
+  accountKinds: Record<string, AccountKind>,
+) {
   const merchant = tx.merchant_name || tx.name
-  const settlement = classifySettlement(merchant, tx.amount)
+  const settlement = classifySettlement(merchant, tx.amount, accountKinds[tx.account_id])
   const loc = tx.location ?? {}
   const pfc = tx.personal_finance_category ?? {}
   return {
@@ -291,6 +332,7 @@ serve(async (req) => {
         let modifiedTx: any[] = []
         let removedTx: any[] = []
         let accountMap: Record<string, string> = {}
+        let accountKinds: Record<string, AccountKind> = {}
         let hasMore = true
 
         while (hasMore) {
@@ -302,6 +344,7 @@ serve(async (req) => {
 
           if (!Object.keys(accountMap).length) {
             accountMap = buildAccountMap(resp.data.accounts)
+            accountKinds = buildAccountKindMap(resp.data.accounts)
           }
 
           const filterFn = enabledSet ? (tx: any) => enabledSet.has(tx.account_id) : () => true
@@ -341,7 +384,7 @@ serve(async (req) => {
                 .eq('user_id', user.id)
                 .maybeSingle()
 
-              const renamed = buildRow(tx, user.id, accountMap)
+              const renamed = buildRow(tx, user.id, accountMap, accountKinds)
               // Only mark the pending id as "consumed" if the rename/delete
               // actually succeeded. On failure we fall through to freshAdds so
               // the new posted row gets inserted normally and the stale
@@ -376,7 +419,7 @@ serve(async (req) => {
 
         // ── existing added insertion (unchanged behavior, freshAdds only) ──
         if (freshAdds.length > 0) {
-          const rows = freshAdds.map((tx: any) => buildRow(tx, user.id, accountMap))
+          const rows = freshAdds.map((tx: any) => buildRow(tx, user.id, accountMap, accountKinds))
           const settlements = rows.filter((r) => r.record_type === 'settlement').length
           totalSettlements += settlements
           if (settlements > 0) console.log(`Item ${item.item_id}: ${settlements} settlements detected`)
@@ -441,7 +484,7 @@ serve(async (req) => {
         //
         // User-editable fields are excluded from the SET clause via
         // plaidMetadataFields.
-        const refreshRows = addedTx.map((tx: any) => buildRow(tx, user.id, accountMap))
+        const refreshRows = addedTx.map((tx: any) => buildRow(tx, user.id, accountMap, accountKinds))
         for (const r of refreshRows) {
           const { error: metaErr } = await supabase
             .from('transactions')
@@ -453,7 +496,7 @@ serve(async (req) => {
 
         // ── existing modified path (unchanged) ──
         if (modifiedTx.length > 0) {
-          const rows = modifiedTx.map((tx: any) => buildRow(tx, user.id, accountMap))
+          const rows = modifiedTx.map((tx: any) => buildRow(tx, user.id, accountMap, accountKinds))
           for (let i = 0; i < rows.length; i += BATCH) {
             const { error } = await supabase
               .from('transactions')
