@@ -37,3 +37,7 @@ supabase functions deploy <function_name>
 ```
 
 When a fix lands in `index.ts`, deploy before committing so the live function and the committed source stay in sync.
+
+Before deploying, download the live source (`supabase functions download <name>`) and diff it against the repo: production has drifted from the repo before.
+
+**Shared code:** `_shared/plaidSync.ts` holds the Plaid per-item sync used by both `plaid_sync_transactions` (on-demand) and `plaid_sync_scheduled` (daily cron). The CLI bundles `../_shared` imports into each function at deploy time, so after changing it **redeploy both** (`plaid_sync_scheduled` with `--no-verify-jwt`, since the cron call has no user JWT).
