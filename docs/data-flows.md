@@ -139,7 +139,7 @@ See [`docs/superpowers/specs/2026-06-23-trades-design.md`](superpowers/specs/202
 
 A barter trade creates:
 - 1 `trades` row
-- N given-side `sales` rows (FIFO-depletes inventory via the `record_sale` edge function; no `createSaleTransactions` call — income is covered by the trade's bundled income transaction)
+- N given-side `sales` rows (FIFO-depletes inventory via the `record_sale` edge function; no `createSaleTransactions` call). **Since 2026-11-09 (sales-based income) these sales carry the trade's income on Schedule C** (Line 1 at FMV); the trade's income transactions (positive `trade_id` rows: non-cash income + boot received, which sum to the given-side sales) are treated as sale-derived and skipped by `isSaleDerivedTransaction`. The COGS legs below still count, so every worked example's net is unchanged.
 - M `inventory_lots` rows for received-side items (basis = allocated FMV per line)
 - 2 non-cash `transactions` rows (income + COGS, always a wash; `is_non_cash = true`)
 - 0 or 1 cash boot `transaction` row (`is_non_cash = false`; only when `cash_boot ≠ 0`)

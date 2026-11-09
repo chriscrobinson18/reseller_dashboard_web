@@ -287,3 +287,16 @@ describe('net-zero pairs (aligned with the Dashboard, 2026-11-09)', () => {
     expect(s.expensesByLine['Line 22']).toBe(40)
   })
 })
+
+describe('trades under sales-based income', () => {
+  it('pure swap nets to zero: FMV sale income vs the trade COGS leg; trade income leg not double counted', () => {
+    const txs = [
+      tx({ amount: 3000, schedule_c_category: 'payout', trade_id: 'tr1', is_non_cash: true }),
+      tx({ amount: -3000, schedule_c_category: 'cost_of_goods', trade_id: 'tr1', is_non_cash: true }),
+    ]
+    const s = computeScheduleCSummary(txs, [], computeSalesIncome([sale({ sale_price: 3000, fees: 0, shipping_cost: 0, platform: 'trade' })]))
+    expect(s.grossReceipts).toBe(3000)
+    expect(s.cogs).toBe(3000)
+    expect(s.grossProfit).toBe(0)
+  })
+})

@@ -63,6 +63,13 @@ describe('bucketTransaction', () => {
     expect(result.bucket).toBeNull()
   })
 
+  it('filters a trade income leg (given-side sales carry it) but keeps the trade COGS leg', () => {
+    expect(bucketTransaction(tx({ trade_id: 'tr1', amount: 3000, schedule_c_category: 'payout' }), []).bucket).toBeNull()
+    const cogs = bucketTransaction(tx({ trade_id: 'tr1', amount: -3000, schedule_c_category: 'cost_of_goods' }), [])
+    expect(cogs.bucket).toBe('cogs')
+    expect(cogs.signedAmount).toBe(-3000)
+  })
+
   it('filters csv_import transactions', () => {
     const result = bucketTransaction(tx({ source: 'csv_import' }), [])
     expect(result.bucket).toBeNull()

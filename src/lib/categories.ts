@@ -141,12 +141,20 @@ export type ScheduleCBucket = 'income' | 'expense' | 'cogs' | null
  * that Record Sale (`related_sale_id`), bundles (`related_bundle_id`) and
  * marketplace CSV imports (`source = 'csv_import'`) create for the same money
  * are audit detail only and must never be counted on Schedule C as well.
+ *
+ * Trades: `recordTrade` writes given-side `sales` at FMV AND income
+ * transactions (non-cash income + any cash boot received) whose sum equals
+ * those sales. The income legs (`trade_id`, amount > 0) are therefore
+ * sale-derived; the trade's cost-of-goods legs (amount < 0: the non-cash COGS
+ * wash and any boot paid) are not, so a pure swap still nets to zero.
+ *
  * Shared by bucketTransaction and the CSV exports so they can't drift.
  */
 export function isSaleDerivedTransaction(
-  t: Pick<Transaction, 'related_sale_id' | 'related_bundle_id' | 'source'>,
+  t: Pick<Transaction, 'related_sale_id' | 'related_bundle_id' | 'source' | 'trade_id' | 'amount'>,
 ): boolean {
   return !!t.related_sale_id || !!t.related_bundle_id || t.source === 'csv_import'
+    || (!!t.trade_id && t.amount > 0)
 }
 
 export interface BucketedAmount {
