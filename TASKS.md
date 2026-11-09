@@ -68,6 +68,10 @@ _Started 2026-11-09. Scope: Schedule C accuracy for tax years 2025 (amendment) a
 - [x] Custom category **"Tech & Dev Tools"** (Line 27a): AI assistants, cloud hosting, bank-data API fees and design tools used to build and run the business's own software (this app). Deliberately **not** named "R&D": research-expense rules (§174 / §174A) are a separate tax regime, and these are ordinary subscription costs. Split out of "Software & Subscriptions", which keeps sourcing bots, proxies and cook groups.
 - [x] Personal cards removed: sync disabled per account, their transactions deleted (full backup kept privately)
 
+**Decided 2026-11-09 (owner):**
+- **Income is computed from the Sales tab** (`sales` rows: gross on Line 1, refunds on Line 2, fees on Line 10, platform-deducted shipping as an expense), not from bank deposits or CSV payout rows. Settlement deposits are **insurance**: the year-end tie-out compares them to recorded sales to prove every sale is recorded.
+- **Inventory method: traditional (§471)**, i.e. Part III = beginning inventory + purchases − ending inventory, with year-end inventory values per tax year. This resolves the P2 method blocker below.
+
 **Phases:**
 - [x] **Phase 1: Categorize spending.** _Done 2026-11-09._ Every 2025–26 transaction on business accounts has a category; batched by merchant group with owner approval per batch, undo backups kept privately. Category rules created for repeat merchants that have a merchant ID and a single category (mixed merchants, which sell both goods and memberships or supplies, get none). Card refunds the sync had mislabeled as settlements, or marketplace refunds tagged as income, were re-tagged to net against the purchase category. Same date + amount + merchant rows kept as genuine repeat charges. New custom categories: Memberships, Credit Card Rewards, Tech & Dev Tools. One known gap: marketplace deposits whose sales aren't recorded yet (see the policy and import items below, and Phase 3).
 - [ ] **Phase 3 carry-over:** one non-marketplace sale (a grading-company sale, October 2025) has its deposit tagged `settlement` with no sale recorded; record it with the retroactive sales load.
@@ -176,7 +180,7 @@ _Daily-workflow features mobile has that web doesn't yet. Ordered by how often t
 
 _Same priority tier as mobile's P2 — port once the core workflow above is solid._
 
-- [ ] **⚠️ BLOCKER: decide the inventory accounting method before building any Part III card** — the docs currently assert **two mutually exclusive methods**, and the choice determines whether the next item should be built at all:
+- [x] **~~BLOCKER~~ Decided 2026-11-09: traditional §471.** _Build `inventory_valuations` (next item) and rewrite the box-opening spec's NIMS premise._ Original note: **decide the inventory accounting method before building any Part III card** — the docs currently assert **two mutually exclusive methods**, and the choice determines whether the next item should be built at all:
   - [`docs/features/dashboard.md`](docs/features/dashboard.md) documents the **§471 capitalize** model — `COGS = Beginning + Purchases − Ending`, which *requires* per-tax-year inventory valuations.
   - The box-opening spec states NIMS **§471(c)** was adopted — deduct at the later of paid-or-sold, which **needs no inventory valuation at all**. That's the simplification §471(c) buys.
 
