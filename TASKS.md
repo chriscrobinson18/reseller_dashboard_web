@@ -50,6 +50,8 @@ _Created: June 23, 2026. Source of truth for porting the iOS app's feature set t
 
 ## 🧹 Books Cleanup — 2025 amended return + 2026 filing
 
+> **New session? Start with [`docs/books-cleanup-handoff.md`](docs/books-cleanup-handoff.md)** (working rules, decisions, live vs. branch state, next step).
+
 _Started 2026-11-09. Scope: Schedule C accuracy for tax years 2025 (amendment) and 2026 (filing); 2024 is out of scope. Per-item sale ↔ inventory linking is **not** required for past years. This repo is public, so no amounts, merchant names or account numbers go here; data snapshots and undo backups are kept privately, never in git._
 
 **Accounting model (decided):**
@@ -102,7 +104,7 @@ _Started 2026-11-09. Scope: Schedule C accuracy for tax years 2025 (amendment) a
 - [ ] **Owner rule: every income-tagged deposit must have matching sales.** Remaining `payout` deposits (P2P, auction house, wallet cash-outs, distributor payments) stay counted as income until their sales are recorded; then re-tag them `settlement`. The year-end tie-out lists every such deposit.
 - [ ] **Step 3: Part III, traditional method** — code done 2026-11-09 (branch); **migration `20261109150000_inventory_valuations.sql` not yet applied**. Then enter year-end values: 2024 ending (from the filed return), 2025 ending, 2026 ending.
 - [ ] **TCGplayer refund amounts:** the order import ignores `refunds[]`, so refunded TCGplayer orders have `return_status` but no `refunded_amount`.
-- [ ] **Step 4: Year-End Tie-Out table (build before Phase 2).** Include an **eBay consistency check**: per order, Order Earnings (`sales`) vs Transaction Report (`csv_import` rows) for price, fees, shipping and refunds, plus orders present on only one side, so re-imports can be targeted. Read-only Dashboard section: per platform per year, sales gross / fees / shipping / refunds / net (from `sales`) vs. `settlement` deposits for that platform, with the difference. Replaces per-deposit settlement ↔ sale linking, which was dropped: not required by preparers, too costly to maintain. See [`docs/bookkeeping-routine.md`](docs/bookkeeping-routine.md). Rule until then: only re-tag a marketplace deposit from income to `settlement` once its sales are known to be recorded.
+- [ ] **Step 4: Year-End Tie-Out table (build before Phase 2).** _In progress: `src/lib/tieOut.ts` written (untested, not wired); remaining steps in the handoff doc._ Include an **eBay consistency check**: per order, Order Earnings (`sales`) vs Transaction Report (`csv_import` rows) for price, fees, shipping and refunds, plus orders present on only one side, so re-imports can be targeted. Read-only Dashboard section: per platform per year, sales gross / fees / shipping / refunds / net (from `sales`) vs. `settlement` deposits for that platform, with the difference. Replaces per-deposit settlement ↔ sale linking, which was dropped: not required by preparers, too costly to maintain. See [`docs/bookkeeping-routine.md`](docs/bookkeeping-routine.md). Rule until then: only re-tag a marketplace deposit from income to `settlement` once its sales are known to be recorded.
 
 ---
 

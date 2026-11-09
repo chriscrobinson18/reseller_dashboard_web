@@ -6,6 +6,7 @@ Knowledge base for the Reseller Dashboard web app, meant to be read by humans an
 - [supabase-schema.md](supabase-schema.md) — tables, columns, RLS, edge functions, RPCs, what's NOT in this repo
 - [categories.md](categories.md) — the 21 Schedule C categories, tax flags (`isExcluded`, `mealsHalf`), the `bucketTransaction` helper, known correctness gaps
 - [mobile-layout.md](mobile-layout.md) — phone layout rules: 5-tab nav + More sheet, tables→cards below `md`, bottom-sheet modals, no-horizontal-scroll contract
+- **[books-cleanup-handoff.md](books-cleanup-handoff.md) — start here for the 2025–26 books cleanup: rules, decisions, what's live vs. on the branch, next steps (Year-End Tie-Out)**
 - [bookkeeping-routine.md](bookkeeping-routine.md) — monthly routine, year-end platform tie-out, what goes to the tax preparer (why per-deposit settlement linking isn't required)
 - [data-flows.md](data-flows.md) — cross-cutting business logic: `bucketTransaction`, record/edit/delete sale, FIFO COGS, returns
 - features/
