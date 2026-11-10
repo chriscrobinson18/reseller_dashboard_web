@@ -78,6 +78,14 @@ Dry-run findings (no amounts here):
 - In the eBay comparison, most mismatches are shipping labels (the CSV under-reports them), as expected.
 - Manual sales show no deposits, because their money arrives through wallets / P2P.
 
+**Tie-out rerun after the owner's imports (2026-11-10, read-only):**
+- TCGplayer through 2026-11, Amazon 2025–26 and eBay through 2026-11 are imported.
+- eBay 2026, TCGplayer 2026 and both eBay years are within tolerance.
+- Amazon 2026 is just over tolerance; Amazon 2025 and early-2025 eBay show January timing from December 2024.
+- Every eBay 2026 order is on both sides. In 2025, a few dozen orders have no Transaction Report rows (clustered in May, July and November), so those report files are probably missing.
+- What's still unexplained is outside the marketplaces: PayPal / Cash App settlement deposits and `payout` deposits that still need sales (Phase 3).
+- **2025 TCGplayer payouts:** none in any linked account. The owner believes they went to the **closed Chase account ••1722** (see TASKS.md); statements requested offline.
+
 **Import safety (checked for the owner, 2026-11-09):**
 - eBay Order Earnings and TCGplayer re-uploads go through `_shared/salesImport.ts`: no duplicates, and only money / description fields refresh.
 - eBay and Amazon Transaction Report rows are insert-only on `(user_id, csv_transaction_id)`.
