@@ -54,7 +54,7 @@ Scratchpad backups and analysis scripts from earlier sessions are **gone** with 
 The whole branch was fast-forwarded to `main` (Vercel deploys `main`):
 - **Sales-based Schedule C income:** `src/lib/salesIncome.ts`, `isSaleDerivedTransaction`, Dashboard and both CSV exports, trade income legs. Dashboard "Total Income" = Schedule C Line 1 − Line 2 (regression test).
 - **Part III, traditional method:** `partIII.ts`, `PartIIICard`, Summary CSV. Migration `20261109150000_inventory_valuations.sql` **applied** (RLS on, 4 owner policies; table empty until the owner enters year-end values).
-- **`sync_csv_orders_to_sales` v5** (deploy version 9, JWT on, byte-identical to repo): Amazon / Mercari sync is re-import safe. Amazon sales backed up privately before the deploy.
+- **`sync_csv_orders_to_sales` v6** (deploy version 10, 2026-11-10, JWT on, byte-identical to repo): Amazon / Mercari sync is re-import safe (v5) and sums postage signed (v6). Amazon sales backed up privately before the deploy.
 - **Tie-out library + tests:** on `main` but not wired into any UI yet (step 4 still in progress, see below).
 
 Branch `claude/books-cleanup-phase1` stays the working branch; fast-forward `main` when the owner approves a release.
