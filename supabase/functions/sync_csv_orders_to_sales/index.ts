@@ -1,4 +1,8 @@
-// sync_csv_orders_to_sales v5 (2026-11-09)
+// sync_csv_orders_to_sales v6 (2026-11-10)
+// Fix: shipping_postage rows are summed signed (a positive postage refund /
+//      credit now reduces shipping_cost; v1–v5 added it as more postage).
+//      Per-order math moved to _shared/csvOrderAggregate.ts (unit-tested).
+// Prior: sync_csv_orders_to_sales v5 (2026-11-09)
 // Re-import safe: writes go through _shared/salesImport.ts (the same path as
 // eBay Order Earnings and TCGplayer). Re-running the sync after an Amazon /
 // Mercari CSV upload now:
@@ -24,6 +28,7 @@
 import { serve } from "https://deno.land/std@0.224.0/http/server.ts"
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2"
 import { upsertImportedSales } from "../_shared/salesImport.ts"
+import { aggregateCsvOrders, csvOrderSaleFields, type CsvOrderEntry } from "../_shared/csvOrderAggregate.ts"
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -37,10 +42,6 @@ function json(status: number, body: unknown) {
     headers: { ...corsHeaders, "Content-Type": "application/json" },
   })
 }
-
-const SKIP_CATEGORIES = new Set([
-  "transfer", "balance_adjustment", "taxes_licenses", "settlement",
-])
 
 // Map platform string to the sales.source value allowed by the DB constraint:
 //   'manual' | 'amazon' | 'ebay' | 'tcgplayer' | 'csv_import' | 'trade'
@@ -90,52 +91,11 @@ serve(async (req) => {
 
     if (fetchErr) return json(500, { error: fetchErr.message })
 
-    // ── 2. Group by orderRef (notes field) ────────────────────────────────────
-    interface OrderEntry {
-      grossRevenue: number
-      refundedAmount: number
-      fees: number
-      shippingCost: number
-      date: string
-      productName: string | null
-    }
-
-    const orderMap = new Map<string, OrderEntry>()
-
-    for (const tx of (rows ?? [])) {
-      const ref = tx.notes as string | null
-      if (!ref || ref === "" || ref === "--") continue
-      if (SKIP_CATEGORIES.has(tx.schedule_c_category as string)) continue
-
-      const entry: OrderEntry = orderMap.get(ref) ?? {
-        grossRevenue: 0, refundedAmount: 0, fees: 0,
-        shippingCost: 0, date: tx.date, productName: null,
-      }
-
-      const amount = Number(tx.amount)
-      const cat = tx.schedule_c_category as string
-
-      if (cat === "payout") {
-        if (amount > 0) {
-          entry.grossRevenue += amount
-          // Keep the earliest payout date as the sale date
-          if (tx.date < entry.date) entry.date = tx.date
-          if (!entry.productName && tx.merchant) entry.productName = tx.merchant
-        } else {
-          entry.refundedAmount += Math.abs(amount)
-        }
-      } else if (cat === "commissions_fees") {
-        // Signed: negative = fee cost, positive = fee reversal (e.g. on returns)
-        entry.fees -= amount
-      } else if (cat === "shipping_postage") {
-        entry.shippingCost += Math.abs(amount)
-      }
-
-      orderMap.set(ref, entry)
-    }
+    // ── 2. Group by orderRef (notes field) — _shared/csvOrderAggregate.ts ────
+    const orderMap = aggregateCsvOrders(rows ?? [])
 
     // ── 3. Keep only orders with gross revenue ────────────────────────────────
-    const ordersToSync = new Map<string, OrderEntry>()
+    const ordersToSync = new Map<string, CsvOrderEntry>()
     for (const [ref, entry] of orderMap) {
       if (entry.grossRevenue > 0) ordersToSync.set(ref, entry)
     }
@@ -148,12 +108,6 @@ serve(async (req) => {
     const source = sourceForPlatform(platform)
     const rowsOut: (Record<string, unknown> & { external_order_id: string })[] = []
     for (const [ref, entry] of ordersToSync) {
-      const salePrice = entry.grossRevenue - entry.refundedAmount
-      const netPayout = salePrice - entry.fees - entry.shippingCost
-      const returnStatus =
-        entry.refundedAmount === 0 ? "none"
-        : entry.refundedAmount >= entry.grossRevenue ? "full"
-        : "partial"
       rowsOut.push({
         user_id: user.id,
         platform,
@@ -162,11 +116,7 @@ serve(async (req) => {
         item_id: null,
         item_name: entry.productName ?? null,
         quantity: 1,
-        sale_price: salePrice,
-        fees: entry.fees,
-        shipping_cost: entry.shippingCost,
-        net_payout: netPayout,
-        return_status: returnStatus,
+        ...csvOrderSaleFields(entry),
         sold_at: entry.date,
         // Insert-only: upsertImportedSales never writes these on an existing sale.
         inventory_status: "ok",
