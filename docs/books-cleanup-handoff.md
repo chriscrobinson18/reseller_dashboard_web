@@ -34,7 +34,7 @@ Scratchpad backups and analysis scripts from earlier sessions are **gone** with 
 |---|---|
 | Income | **From the Sales tab only** (`sales` rows). Bank deposits never carry income once their sales exist. |
 | Marketplace deposits (eBay, Amazon, TCGplayer) | Always `settlement`. Income for a month whose sales aren't imported yet is missing until the import happens. |
-| Other income-tagged deposits | Each must eventually have matching recorded sales, then becomes `settlement`. Until then it stays `payout` (counted) so nothing disappears. |
+| Other income-tagged deposits | **Changed 2026-11-10 (owner):** every deposit is `settlement` / `transfer` / `personal`, never income. All remaining `payout` deposits were re-tagged `settlement` with a `platform` label (or `transfer` for own money), even before their sales exist, so the Tie-Out card flags them. Income is understated until Phase 3 records the sales. |
 | Settlements | **Insurance only:** the year-end tie-out proves every sale is recorded. Per-deposit linking was dropped (not required by preparers). |
 | Inventory method | **Traditional (§471):** Part III = beginning + purchases − ending, with stored year-end values. |
 | eBay fees | Promoted-listing fees are sale fees (Line 10), already inside `sales.fees` from Order Earnings. |
