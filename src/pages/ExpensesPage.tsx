@@ -22,19 +22,22 @@ import { useSearchParams } from 'react-router-dom'
 import { useTrade, useCustomCategories } from '../lib/queries'
 import CategoryDropdown, { UNCATEGORIZED_SENTINEL } from '../components/CategoryDropdown'
 import type { Transaction } from '../lib/types'
+import { fetchAllRows } from '../lib/fetchAll'
 
 // ─── Data ────────────────────────────────────────────────────────────────────
 
+// Paged: PostgREST silently caps each response at 1000 rows (src/lib/fetchAll.ts).
 async function fetchTransactions(start: string | null, end: string | null): Promise<Transaction[]> {
-  let q = supabase
-    .from('transactions')
-    .select('*')
-    .order('date', { ascending: false })
-  if (start) q = q.gte('date', start)
-  if (end) q = q.lte('date', end)
-  const { data, error } = await q.limit(5000)
-  if (error) throw error
-  return data ?? []
+  return fetchAllRows<Transaction>((from, to) => {
+    let q = supabase
+      .from('transactions')
+      .select('*')
+      .order('date', { ascending: false })
+      .order('id')
+    if (start) q = q.gte('date', start)
+    if (end) q = q.lte('date', end)
+    return q.range(from, to)
+  })
 }
 
 async function updateCategory(id: string, category: string | null) {

@@ -4,9 +4,11 @@ Read-only overview page. No mutations — purely fetches `transactions` + `sales
 
 ## Data fetched
 
-- `fetchTransactions(start, end)` — all columns, `.limit(5000)`, ordered by `date desc`. Local to this file (not shared with `ExpensesPage`'s identical-looking copy — see [architecture.md](../architecture.md) "Inconsistency to be aware of").
+> **Row cap (fixed 2026-11-10):** Supabase (PostgREST) returns at most **1000 rows per request** (`max_rows`), silently, whatever `.limit()` asks for. Every list fetch here now pages through [`fetchAllRows`](../../src/lib/fetchAll.ts) with a stable `…, id` order. Before the fix, a period with more than 1000 transactions (e.g. a full 2025 year, about 2,100 rows) only showed its most recent 1000, so the KPIs, Schedule C Breakdown, Part III purchases and both CSV exports for long periods were understated. Use `fetchAllRows` for any new list query that can exceed 1000 rows.
+
+- `fetchTransactions(start, end)` — all columns, paged (`fetchAllRows`), ordered by `date desc, id`. Local to this file (not shared with `ExpensesPage`'s identical-looking copy — see [architecture.md](../architecture.md) "Inconsistency to be aware of").
 - `fetchBundles(start, end)` — `sale_bundles` (fees, shipping_cost, sold_at…) in the period, non-deleted; bundle order-level fees/shipping count once.
-- `fetchSales(start, end)` — joins `items(id,name,category)` and `inventory_movements(id,quantity,inventory_lots(unit_cost,item_id))`, `.limit(2000)`, excludes soft-deleted.
+- `fetchSales(start, end)` — joins `items(id,name,category)` and `inventory_movements(id,quantity,inventory_lots(unit_cost,item_id))`, paged, excludes soft-deleted.
 
 ## Derived sections (each a pure function over the fetched arrays — see [data-flows.md](../data-flows.md) for the shared exclusion-filter logic these all use)
 
@@ -68,3 +70,29 @@ Math: [`src/lib/partIII.ts`](../../src/lib/partIII.ts) (`computePartIII`). Value
 **Summary CSV:** when the export period is **Last Year** (a full calendar year), `buildScheduleCSummaryCSV` receives `{ taxYear, valuations }`: Line 4 = Line 42, the Part III lines are printed, and the header states the traditional basis (and flags "INCOMPLETE" if a value is missing). Any other period exports purchases only, with a header note, because Part III is never period-scoped.
 
 **The Sales Profitability card stays period-scoped FIFO** (`computeProfitability`) and must never feed Line 4 — switching the period would silently change a tax-year figure.
+
+## Year-End Tie-Out (built 2026-11-10)
+
+`TieOutCard` ([`src/components/TieOutCard.tsx`](../../src/components/TieOutCard.tsx)), below the Part III card. **Read-only completeness insurance** for sales-based income (owner decision 2026-11-09): if every sale is recorded, each platform's settlement deposits roughly equal the net of its recorded sales.
+
+- **Own tax-year selector** (2025 → current year, defaults to the current year), **never period-scoped**, like Part III.
+- **Data** ([`src/lib/tieOutData.ts`](../../src/lib/tieOutData.ts), all paged with `fetchAllRows`; takes the Supabase client as a parameter so the same queries can be run outside the browser):
+  - the year's non-deleted sales
+  - settlement deposits: `record_type = 'settlement'` or category `settlement`, amount > 0, source not `csv_import`
+  - income-tagged (`payout`) deposits
+  - eBay Order Earnings sales and eBay Transaction Report rows (`csv_import`), each fetched **±45 days** around the year so orders that straddle New Year pair up
+- **Math** ([`src/lib/tieOut.ts`](../../src/lib/tieOut.ts), tests in `src/lib/__tests__/tieOut.test.ts`):
+  - **Platform table** (`computeTieOut`): per platform, sales count / net (each sale's stored `net_payout`, because platform formulas differ) vs settlement deposits, and deposits − sales net. Trade sales are skipped (non-cash). Flags:
+    - deposits with no recorded sales
+    - months with deposits but no sales
+    - a difference above the larger of $50 or 5% of sales net
+
+    Tap a platform for its months (rows with deposits but no sales are highlighted).
+  - **Deposits still counted as income** (`incomeDepositsNeedingSales`): positive `payout` bank deposits not linked to a sale, bundle, trade or net-zero pair. The owner rule: each needs matching sales recorded, then gets re-tagged `settlement`.
+  - **eBay: Order Earnings vs Transaction Report** (`compareEbaySources(…, year)`): per order, gross / fees (incl. advertising) / labels / refunds, plus orders present on only one side. Orders are kept for the year by the Order Earnings sale date (report-only orders by their first report row). Order Earnings is authoritative for income; differences point to report files worth re-importing.
+- **Layout:** table from `md` up, stacked cards on phones (see [mobile-layout.md](../mobile-layout.md)); the two lists are collapsible.
+- **Limits:**
+  - Manual sales have no deposit platform, so they can't be matched to wallet / P2P deposits automatically.
+  - Wallet cash-outs (PayPal, Cash App) show as "deposits with no recorded sales" until Phase 3 records their sales.
+  - Amazon refunds are netted into `sale_price` by the Amazon sync (TASKS.md).
+

@@ -9,39 +9,45 @@ import { getPeriodRange, PERIOD_LABELS, type PeriodPreset } from '../lib/periods
 import { CATEGORIES, resolveCategory, type CustomCategory, type CategoryDef } from '../lib/categories'
 import { useCustomCategories, useInventoryValuations } from '../lib/queries'
 import PartIIICard from '../components/PartIIICard'
+import TieOutCard from '../components/TieOutCard'
 import { computeScheduleC, computeKPIs, computeMonthlyChart } from '../lib/scheduleCMath'
 import { computeSalesIncome, computeSalesIncomeByMonth, type BundleIncomeInput } from '../lib/salesIncome'
 import { formatUSD } from '../lib/utils'
 import { buildScheduleCTransactionsCSV, buildScheduleCSummaryCSV, downloadCSV } from '../lib/csvExport'
 import { Download } from 'lucide-react'
 import PeriodPicker from '../components/PeriodPicker'
+import { fetchAllRows } from '../lib/fetchAll'
 import type { Transaction, Sale } from '../lib/types'
 
 // ─── Data fetching ────────────────────────────────────────────────────────────
 
+// All list fetches page through fetchAllRows: PostgREST silently caps each
+// response at 1000 rows, and a tax year has more transactions than that.
 async function fetchTransactions(start: string | null, end: string | null): Promise<Transaction[]> {
-  let q = supabase
-    .from('transactions')
-    .select('*')
-    .order('date', { ascending: false })
-  if (start) q = q.gte('date', start)
-  if (end) q = q.lte('date', end)
-  const { data, error } = await q.limit(5000)
-  if (error) throw error
-  return data ?? []
+  return fetchAllRows<Transaction>((from, to) => {
+    let q = supabase
+      .from('transactions')
+      .select('*')
+      .order('date', { ascending: false })
+      .order('id')
+    if (start) q = q.gte('date', start)
+    if (end) q = q.lte('date', end)
+    return q.range(from, to)
+  })
 }
 
 async function fetchSales(start: string | null, end: string | null): Promise<Sale[]> {
-  let q = supabase
-    .from('sales')
-    .select('*, items(id,name,category), inventory_movements(id,quantity,inventory_lots(unit_cost,item_id))')
-    .is('deleted_at', null)
-    .order('sold_at', { ascending: false })
-  if (start) q = q.gte('sold_at', start + 'T00:00:00Z')
-  if (end) q = q.lte('sold_at', end + 'T23:59:59Z')
-  const { data, error } = await q.limit(2000)
-  if (error) throw error
-  return data ?? []
+  return fetchAllRows<Sale>((from, to) => {
+    let q = supabase
+      .from('sales')
+      .select('*, items(id,name,category), inventory_movements(id,quantity,inventory_lots(unit_cost,item_id))')
+      .is('deleted_at', null)
+      .order('sold_at', { ascending: false })
+      .order('id')
+    if (start) q = q.gte('sold_at', start + 'T00:00:00Z')
+    if (end) q = q.lte('sold_at', end + 'T23:59:59Z')
+    return q.range(from, to)
+  })
 }
 
 type BundleRow = BundleIncomeInput & { id: string; platform: string | null; external_order_id: string | null }
@@ -49,15 +55,16 @@ type BundleRow = BundleIncomeInput & { id: string; platform: string | null; exte
 /** Order-level fees/shipping live on sale_bundles (lines store 0); fetched so
  *  sales-based income counts them once. Same sold_at period filter as sales. */
 async function fetchBundles(start: string | null, end: string | null): Promise<BundleRow[]> {
-  let q = supabase
-    .from('sale_bundles')
-    .select('id, sold_at, fees, shipping_cost, platform, external_order_id, deleted_at')
-    .is('deleted_at', null)
-  if (start) q = q.gte('sold_at', start + 'T00:00:00Z')
-  if (end) q = q.lte('sold_at', end + 'T23:59:59Z')
-  const { data, error } = await q.limit(2000)
-  if (error) throw error
-  return (data ?? []) as BundleRow[]
+  return fetchAllRows<BundleRow>((from, to) => {
+    let q = supabase
+      .from('sale_bundles')
+      .select('id, sold_at, fees, shipping_cost, platform, external_order_id, deleted_at')
+      .is('deleted_at', null)
+      .order('id')
+    if (start) q = q.gte('sold_at', start + 'T00:00:00Z')
+    if (end) q = q.lte('sold_at', end + 'T23:59:59Z')
+    return q.range(from, to)
+  })
 }
 
 // ─── Computation helpers ──────────────────────────────────────────────────────
@@ -312,6 +319,9 @@ export default function DashboardPage() {
 
       {/* Part III — full tax year, independent of the period picker */}
       <PartIIICard customs={customs} />
+
+      {/* Year-End Tie-Out — full tax year, independent of the period picker */}
+      <TieOutCard />
 
       {/* Monthly chart */}
       {monthlyData.length > 0 && (

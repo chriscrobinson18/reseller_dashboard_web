@@ -120,6 +120,13 @@ Dry-run findings (no amounts here):
 4. **Docs:** add a "Year-End Tie-Out" section to `docs/features/dashboard.md`; update the tooling note in `bookkeeping-routine.md` and the step-4 item in TASKS.md.
 5. Then ask the owner about Phase 2. (Inventory migration applied and branch merged on 2026-11-09.)
 
+## 2026-11-10: tie-out card built, row-cap bug fixed (branch, awaiting release)
+
+- **Year-End Tie-Out card** is done (`TieOutCard`, `tieOutData.ts`).
+- **P0 found while building it:** PostgREST caps responses at 1000 rows, so every year-scale view was silently truncated. Fixed with `fetchAllRows`.
+- Both are on `claude/books-cleanup-phase1`. Fast-forward `main` once the owner approves the release.
+- After release, **re-export any Summary / Transactions CSVs** made for long periods.
+
 ## After the tie-out
 
 - **Owner's data load (before filing):** all sales for all years (P2P / cash / auction / Whatnot / Facebook, plus the remaining marketplace months) and inventory lots. Then year-end inventory values (2024 from the filed return, 2025, 2026).

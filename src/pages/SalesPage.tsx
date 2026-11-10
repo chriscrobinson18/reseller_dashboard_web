@@ -16,6 +16,7 @@ import ProcessReturnModal from '../components/modals/ProcessReturnModal'
 import { saleProfit } from '../lib/saleProfit'
 import { paymentMethodLabel } from '../lib/paymentMethods'
 import type { Sale } from '../lib/types'
+import { fetchAllRows } from '../lib/fetchAll'
 import TradeDetailSlideOver from '../components/TradeDetailSlideOver'
 
 const FEE_LABELS: Record<string, string> = {
@@ -35,20 +36,22 @@ async function fetchSales(start: string | null, end: string | null): Promise<{
   sales: Sale[]
   netPayoutBySale: Record<string, number>
 }> {
-  let q = supabase
-    .from('sales')
-    .select(`
-      *,
-      items(id, name, category),
-      inventory_movements(id, quantity, inventory_lots(unit_cost, item_id))
-    `)
-    .is('deleted_at', null)
-    .order('sold_at', { ascending: false })
-  if (start) q = q.gte('sold_at', start + 'T00:00:00Z')
-  if (end) q = q.lte('sold_at', end + 'T23:59:59Z')
-  const { data, error } = await q.limit(2000)
-  if (error) throw error
-  const sales = data ?? []
+  // Paged: PostgREST silently caps each response at 1000 rows (src/lib/fetchAll.ts).
+  const sales = await fetchAllRows<Sale>((from, to) => {
+    let q = supabase
+      .from('sales')
+      .select(`
+        *,
+        items(id, name, category),
+        inventory_movements(id, quantity, inventory_lots(unit_cost, item_id))
+      `)
+      .is('deleted_at', null)
+      .order('sold_at', { ascending: false })
+      .order('id')
+    if (start) q = q.gte('sold_at', start + 'T00:00:00Z')
+    if (end) q = q.lte('sold_at', end + 'T23:59:59Z')
+    return q.range(from, to)
+  })
 
   // Net payout = sum of every transaction linked to the sale (payout, fees,
   // shipping, refund, return-shipping) — the true cash impact, including
@@ -57,12 +60,13 @@ async function fetchSales(start: string | null, end: string | null): Promise<{
   const saleIds = sales.map(s => s.id)
   let netPayoutBySale: Record<string, number> = {}
   if (saleIds.length > 0) {
-    const { data: txns, error: txErr } = await supabase
+    const txns = await fetchAllRows<{ related_sale_id: string | null; amount: number }>((from, to) => supabase
       .from('transactions')
       .select('related_sale_id, amount')
       .in('related_sale_id', saleIds)
-    if (txErr) throw txErr
-    netPayoutBySale = (txns ?? []).reduce((acc, t) => {
+      .order('id')
+      .range(from, to))
+    netPayoutBySale = txns.reduce((acc, t) => {
       acc[t.related_sale_id!] = (acc[t.related_sale_id!] ?? 0) + t.amount
       return acc
     }, {} as Record<string, number>)

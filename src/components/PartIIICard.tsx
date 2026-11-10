@@ -1,6 +1,7 @@
 import { useMemo, useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { supabase } from '../lib/supabase'
+import { fetchAllRows } from '../lib/fetchAll'
 import { formatUSD } from '../lib/utils'
 import { useInventoryValuations } from '../lib/queries'
 import { saveInventoryValuation, type InventoryValuationInput } from '../lib/mutations'
@@ -26,31 +27,32 @@ const METHOD_LABELS: Record<InventoryValuationInput['method'], string> = {
   filed_return: 'From filed return',
 }
 
+// Paged: PostgREST silently caps each response at 1000 rows (src/lib/fetchAll.ts);
+// a tax year has more transactions than that.
 async function fetchYearTransactions(year: number): Promise<Transaction[]> {
-  const { data, error } = await supabase
+  return fetchAllRows<Transaction>((from, to) => supabase
     .from('transactions')
     .select('*')
     .gte('date', `${year}-01-01`)
     .lte('date', `${year}-12-31`)
-    .limit(5000)
-  if (error) throw error
-  return data ?? []
+    .order('id')
+    .range(from, to))
 }
 
 async function fetchLotData(): Promise<{ lots: LotForValuation[]; movements: MovementForValuation[] }> {
-  const [lotsRes, movRes] = await Promise.all([
-    supabase.from('inventory_lots')
+  type MovRow = { inventory_lot_id: string; quantity: number; sales: { sold_at: string; deleted_at: string | null } | { sold_at: string; deleted_at: string | null }[] | null }
+  const [lots, movRows] = await Promise.all([
+    fetchAllRows<LotForValuation>((from, to) => supabase.from('inventory_lots')
       .select('id, quantity_remaining, unit_cost, purchase_date, created_at, deleted_at')
       .is('deleted_at', null)
-      .limit(10000),
-    supabase.from('inventory_movements')
-      .select('inventory_lot_id, quantity, sales(sold_at, deleted_at)')
-      .limit(20000),
+      .order('id')
+      .range(from, to)),
+    fetchAllRows<MovRow>((from, to) => supabase.from('inventory_movements')
+      .select('id, inventory_lot_id, quantity, sales(sold_at, deleted_at)')
+      .order('id')
+      .range(from, to)),
   ])
-  if (lotsRes.error) throw lotsRes.error
-  if (movRes.error) throw movRes.error
-  type MovRow = { inventory_lot_id: string; quantity: number; sales: { sold_at: string; deleted_at: string | null } | { sold_at: string; deleted_at: string | null }[] | null }
-  const movements: MovementForValuation[] = ((movRes.data ?? []) as MovRow[]).map(m => {
+  const movements: MovementForValuation[] = movRows.map(m => {
     const sale = Array.isArray(m.sales) ? m.sales[0] : m.sales
     return {
       inventory_lot_id: m.inventory_lot_id,
@@ -58,7 +60,7 @@ async function fetchLotData(): Promise<{ lots: LotForValuation[]; movements: Mov
       sold_at: sale && !sale.deleted_at ? sale.sold_at : null,
     }
   })
-  return { lots: (lotsRes.data ?? []) as LotForValuation[], movements }
+  return { lots, movements }
 }
 
 function Row({ line, label, value, strong, warn }: { line: string; label: string; value: number; strong?: boolean; warn?: string }) {

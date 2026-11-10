@@ -43,6 +43,11 @@ Per-deposit linking that already exists (eBay / Amazon CSV auto-match in Setting
 - Credit card rewards: reduce expenses (current setup: "Credit Card Rewards", Line 27a) or exclude?
 - After closing 2025: amend (1040-X) or not?
 
-## Planned tooling
+## Tooling
 
-A read-only **Year-End Tie-Out** table on the Dashboard (platform × year: sales gross, fees, refunds, net, deposits, difference), built before Phase 2. Tracked in TASKS.md.
+The read-only **Year-End Tie-Out** card on the Dashboard (built 2026-11-10) covers steps 2–3 above, per tax year:
+- platform table of sales net vs settlement deposits, with month drill-down and flags
+- the list of deposits still counted as income
+- the eBay Order Earnings vs Transaction Report check
+
+See [features/dashboard.md](features/dashboard.md#year-end-tie-out-built-2026-11-10).
