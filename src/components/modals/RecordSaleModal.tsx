@@ -7,8 +7,9 @@ import { recordSale, recordBundleSale, todayStr } from '../../lib/mutations'
 import { itemUnitsInStock, type ItemWithLots } from '../../lib/queries'
 import { formatUSD } from '../../lib/utils'
 import { PAYMENT_METHODS } from '../../lib/paymentMethods'
+import { SALE_PLATFORMS } from '../../lib/salePlatforms'
 
-const PLATFORMS = ['ebay', 'amazon', 'tcgplayer', 'mercari', 'stockx', 'goat', 'whatnot', 'facebook marketplace', 'facebook groups', 'discord', 'manual']
+const PLATFORMS = SALE_PLATFORMS
 
 interface Line {
   item: ItemWithLots | null

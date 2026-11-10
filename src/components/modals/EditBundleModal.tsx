@@ -5,8 +5,9 @@ import { updateBundleSale } from '../../lib/mutations'
 import { useBundle } from '../../lib/queries'
 import { formatUSD } from '../../lib/utils'
 import { PAYMENT_METHODS } from '../../lib/paymentMethods'
+import { SALE_PLATFORMS } from '../../lib/salePlatforms'
 
-const PLATFORMS = ['ebay', 'amazon', 'tcgplayer', 'mercari', 'stockx', 'goat', 'whatnot', 'facebook marketplace', 'facebook groups', 'discord', 'manual']
+const PLATFORMS = SALE_PLATFORMS
 
 interface LineState {
   id: string
