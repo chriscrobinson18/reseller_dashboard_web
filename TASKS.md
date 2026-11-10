@@ -110,7 +110,7 @@ _Started 2026-11-09. Scope: Schedule C accuracy for tax years 2025 (amendment) a
 - [ ] **TCGplayer refund amounts:** the order import ignores `refunds[]`, so refunded TCGplayer orders have `return_status` but no `refunded_amount`.
 
 **Open data issues — health check 2026-11-10 (read-only; owner approval before any write):**
-- [ ] **Re-export CSVs made before the row-cap fix** (owner). Any Summary / Transactions CSV for a period over 1000 transactions (e.g. a full year) exported before 2026-11-10 understated expenses; re-export anything already given to a preparer.
+- [x] **Re-export CSVs made before the row-cap fix** _(closed 2026-11-10: the owner had made no exports, so nothing to replace)._ Any Summary / Transactions CSV for a period over 1000 transactions (e.g. a full year) exported before 2026-11-10 understated expenses; re-export anything already given to a preparer.
 - [ ] **Check the Tie-Out card layout** on a phone (no sideways scroll at 320–430px) and on desktop. It wasn't checked visually because the session can't sign in.
 - [ ] **Tie-out flags to resolve:**
   - **PayPal / Cash App cash-outs** tagged `settlement` with no recorded sales: income is missing until their sales are recorded (Phase 3).
