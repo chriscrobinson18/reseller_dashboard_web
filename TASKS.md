@@ -116,6 +116,7 @@ _Started 2026-11-09. Scope: Schedule C accuracy for tax years 2025 (amendment) a
   - Topps Vault multi-order drops: only the **delivered** orders got lots; the cancelled orders were never charged or were refunded.
   - Bad World (GBP orders): the USD charge is allocated by the GBP price ratio, since FX makes a to-the-cent match impossible.
 - [ ] **2025 cost-of-goods charges → lots:** same process, next.
+  - **Matching rule (owner, 2026-11-12):** create lots only when each item's subtotal can be read or derived from the email (a foreign-currency order counts, because its prices still give the ratio). Otherwise skip, and the charge stays visible under Expenses → **"Cost of goods without lots"**. Example skipped: two Secret Lair orders (Jan 2026) whose emails list items but no per-item prices.
 - [ ] **2 orphaned cost-of-goods half-pairs:** a GameStop charge (Aug 2025) and a Wizards of the Coast charge (Jan 2026) carry a `net_zero_pair_id` whose partner row no longer exists, so they're silently excluded from cost of goods. Check each: if it was a real purchase, use **Unpair** (Expenses detail panel) so it counts again. 22 other orphaned half-pairs are `transfer` rows (no Schedule C effect); tidy them with Unpair when convenient.
 
 **Open data issues — health check 2026-11-10 (read-only; owner approval before any write):**

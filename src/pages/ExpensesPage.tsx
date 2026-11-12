@@ -507,6 +507,9 @@ export default function ExpensesPage() {
   const [dirFilter, setDirFilter] = useState<'all' | 'income' | 'expense'>('all')
   const [sourceFilter, setSourceFilter] = useState<'all' | 'plaid' | 'manual'>('all')
   const [accountFilter, setAccountFilter] = useState<string | null>(null)
+  // Cost-of-goods purchases vs inventory lots (2026-11-12): flags purchases
+  // that have no lot linked, or lots covering less than the charge.
+  const [lotFilter, setLotFilter] = useState<'all' | 'unlinked' | 'partial'>('all')
   // Hold only the id, never a snapshot: the detail panel must re-render from
   // freshly-fetched data after a category/notes/field edit, otherwise it keeps
   // showing the values captured when the row was clicked until it's reopened.
@@ -525,6 +528,20 @@ export default function ExpensesPage() {
 
   const qc = useQueryClient()
   const { data: customsAll = [] } = useCustomCategories()
+
+  // Allocated lot cost per transaction (inventory_lot_transactions is the
+  // source of truth for lot funding). Paged: can exceed the 1000-row cap.
+  const { data: lotAlloc } = useQuery({
+    // Under 'items' so every lot link/unlink (which invalidates ['items']) refreshes it.
+    queryKey: ['items', 'lot-allocations'],
+    queryFn: async () => {
+      const rows = await fetchAllRows<{ transaction_id: string; allocated_amount: number }>((from, to) => supabase
+        .from('inventory_lot_transactions').select('transaction_id, allocated_amount').order('id').range(from, to))
+      const m = new Map<string, number>()
+      for (const r of rows) m.set(r.transaction_id, (m.get(r.transaction_id) ?? 0) + Number(r.allocated_amount))
+      return m
+    },
+  })
 
   const updateCategoryMutation = useMutation({
     mutationFn: ({ id, cat }: { id: string; cat: string | null }) => updateCategory(id, cat),
@@ -564,9 +581,27 @@ export default function ExpensesPage() {
     return [...seen.entries()].map(([id, label]) => ({ id, label }))
   }, [transactions])
 
+  const lotStatus = useMemo(() => {
+    const status = new Map<string, 'unlinked' | 'partial'>()
+    if (!lotAlloc) return status
+    for (const t of transactions) {
+      if (t.schedule_c_category !== 'cost_of_goods' || t.amount >= 0 || t.net_zero_pair_id || t.trade_id) continue
+      const alloc = lotAlloc.get(t.id) ?? 0
+      if (alloc === 0) status.set(t.id, 'unlinked')
+      else if (Math.round(alloc * 100) < Math.round(-t.amount * 100)) status.set(t.id, 'partial')
+    }
+    return status
+  }, [transactions, lotAlloc])
+  const lotCounts = useMemo(() => {
+    let unlinked = 0, partial = 0
+    for (const v of lotStatus.values()) { if (v === 'unlinked') unlinked++; else partial++ }
+    return { unlinked, partial }
+  }, [lotStatus])
+
   const filtered = useMemo(() => {
     const terms = parseSearchTerms(search)
     return transactions.filter(t => {
+      if (lotFilter !== 'all' && lotStatus.get(t.id) !== lotFilter) return false
       if (!showSaleLinked && (t.related_sale_id || t.source === 'csv_import')) return false
       if (catFilter === UNCATEGORIZED_SENTINEL) {
         if (t.schedule_c_category) return false
@@ -580,7 +615,7 @@ export default function ExpensesPage() {
       if (accountFilter && t.plaid_account_id !== accountFilter) return false
       return matchesSearch(t, terms, customsAll)
     })
-  }, [transactions, showSaleLinked, catFilter, dirFilter, sourceFilter, accountFilter, search, customsAll])
+  }, [transactions, showSaleLinked, catFilter, dirFilter, sourceFilter, accountFilter, lotFilter, lotStatus, search, customsAll])
 
   // Sorted view of the filtered set. Default (date, desc) matches the
   // server's own `.order('date', { ascending: false })`, so leaving sort
@@ -613,7 +648,7 @@ export default function ExpensesPage() {
   // Clear any selection when the visible set changes, so a bulk action never
   // silently applies to rows the user can no longer see. Render-phase reset
   // (React's "storing info from previous renders" pattern) rather than an effect.
-  const filterSig = `${range.start}|${range.end}|${search}|${catFilter}|${showSaleLinked}|${dirFilter}|${sourceFilter}|${accountFilter}`
+  const filterSig = `${range.start}|${range.end}|${search}|${catFilter}|${showSaleLinked}|${dirFilter}|${sourceFilter}|${accountFilter}|${lotFilter}`
   const [lastFilterSig, setLastFilterSig] = useState(filterSig)
   if (filterSig !== lastFilterSig) {
     setLastFilterSig(filterSig)
@@ -642,7 +677,7 @@ export default function ExpensesPage() {
   }, [ddTxId])
 
   const ddTx = ddTxId ? sorted.find(t => t.id === ddTxId) ?? null : null
-  const activeFilterCount = [catFilter, dirFilter !== 'all', sourceFilter !== 'all', accountFilter, showSaleLinked].filter(Boolean).length
+  const activeFilterCount = [catFilter, dirFilter !== 'all', sourceFilter !== 'all', accountFilter, lotFilter !== 'all', showSaleLinked].filter(Boolean).length
 
   const allSelected = selectable.length > 0 && selectable.every(t => selectedIds.has(t.id))
   const someSelected = selectedIds.size > 0
@@ -783,6 +818,17 @@ export default function ExpensesPage() {
               {accountOptions.map(({ id, label }) => (
                 <option key={id} value={id}>{label}</option>
               ))}
+            </select>
+            <select
+              value={lotFilter}
+              onChange={e => setLotFilter(e.target.value as 'all' | 'unlinked' | 'partial')}
+              disabled={!lotAlloc}
+              aria-label="Inventory lots"
+              className="min-w-0 border border-gray-200 rounded-lg px-2 py-1.5 text-sm text-gray-700 bg-white focus:outline-none focus:ring-2 focus:ring-gray-900 disabled:opacity-50"
+            >
+              <option value="all">All inventory</option>
+              <option value="unlinked">Cost of goods without lots ({lotCounts.unlinked})</option>
+              <option value="partial">Cost of goods partly linked ({lotCounts.partial})</option>
             </select>
             {/* Phones have no sortable column headers — sort lives here instead. */}
             <select
