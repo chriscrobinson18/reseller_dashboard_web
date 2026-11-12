@@ -468,6 +468,7 @@ function TransactionDetail({ tx, onClose, onOpenTrade, onManage }: { tx: Transac
         <TransactionInventorySection
           transactionId={tx.id}
           transactionTotal={Math.abs(tx.amount)}
+          transactionDate={tx.date}
         />
       )}
 

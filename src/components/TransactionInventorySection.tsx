@@ -12,6 +12,8 @@ interface Props {
   transactionId: string
   /** Absolute value of the transaction amount, for the allocated-vs-total summary. */
   transactionTotal: number
+  /** The purchase transaction's date ('yyyy-MM-dd'): used as the new lots' purchase_date. */
+  transactionDate: string
 }
 
 /**
@@ -19,7 +21,7 @@ interface Props {
  * Lets the user turn a purchase expense into inventory by creating lots linked
  * to this transaction (transaction_id FK). Mirrors iOS AddInventoryLotSheet.
  */
-export default function TransactionInventorySection({ transactionId, transactionTotal }: Props) {
+export default function TransactionInventorySection({ transactionId, transactionTotal, transactionDate }: Props) {
   const qc = useQueryClient()
   const [adding, setAdding] = useState(false)
   const [mode, setMode] = useState<'existing' | 'new'>('existing')
@@ -54,6 +56,9 @@ export default function TransactionInventorySection({ transactionId, transaction
         quantity: parseInt(quantity, 10),
         totalCost: parseFloat(totalCost),
         transactionId,
+        // Without this, lots created here had no purchase_date (fixed 2026-11-12),
+        // so FIFO and the year-end on-hand figure fell back to the creation date.
+        purchaseDate: transactionDate.slice(0, 10),
       })
       return itemName
     },
