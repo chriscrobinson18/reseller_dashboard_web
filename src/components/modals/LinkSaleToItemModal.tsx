@@ -21,6 +21,7 @@ export default function LinkSaleToItemModal({ open, onClose, sale }: Props) {
     mutationFn: () => linkSaleToItem(sale.id, item!.id),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['sales'] })
+      qc.invalidateQueries({ queryKey: ['items'] })
       setItem(null)
       onClose()
     },
@@ -42,8 +43,8 @@ export default function LinkSaleToItemModal({ open, onClose, sale }: Props) {
         <ItemPicker selectedId={item?.id ?? null} onSelect={setItem} />
 
         <p className="text-xs text-gray-400 mt-3">
-          Linking assigns the item so profit/COGS can be computed. (Note: this links the record only — it does not
-          retroactively deplete inventory lots.)
+          Linking assigns the item and takes the units from its inventory lots, oldest purchase first (lots bought on
+          or before the sale date are used first). If there aren&apos;t enough units left, the sale is marked oversold.
         </p>
 
         {error && <div className="text-xs text-red-600 bg-red-50 border border-red-200 rounded-lg px-3 py-2 mt-2">{error}</div>}

@@ -1055,10 +1055,16 @@ export async function createSaleTransactions(params: {
   if (error) throw error
 }
 
-/** Links an unlinked sale to an inventory item. */
-export async function linkSaleToItem(saleId: string, itemId: string) {
-  const { error } = await supabase.from('sales').update({ item_id: itemId }).eq('id', saleId)
+/**
+ * Links an unlinked sale to an inventory item and FIFO-depletes that item's
+ * lots (inventory_movements + quantity_remaining), via the link_sale_to_item
+ * RPC (migration 20261112120000). Lots bought on/before the sale date are used
+ * first. Returns how many units were covered and how many were not (oversold).
+ */
+export async function linkSaleToItem(saleId: string, itemId: string): Promise<{ consumed: number; unfulfilled: number }> {
+  const { data, error } = await supabase.rpc('link_sale_to_item', { p_sale_id: saleId, p_item_id: itemId })
   if (error) throw error
+  return data as { consumed: number; unfulfilled: number }
 }
 
 /**

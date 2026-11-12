@@ -279,6 +279,8 @@ The `box_openings` migration (`supabase/migrations/20260803120000_box_openings.s
 
 ## Postgres RPCs
 
+- **`link_sale_to_item(p_sale_id uuid, p_item_id uuid) returns jsonb`** (migration `20261112120000_link_sale_to_item.sql`, added 2026-11-12): links an existing unlinked sale to an item **and FIFO-depletes its lots**, the same as `record_sale` does for new sales. Lots bought on/before the sale date are used first (oldest purchase first), then later lots (presales). It writes `inventory_movements`, sets `sales.item_id` and sets `inventory_status` to `ok` or `oversold`, and returns `{consumed, unfulfilled}`. It refuses a sale that already has movements. `SECURITY INVOKER` (the caller's RLS applies); executable by `authenticated` only. Called by `linkSaleToItem` in `mutations.ts`. Before this, linking only set `item_id`, so linked units stayed "on hand".
+
 - **`public.reverse_sale(p_sale_id uuid) RETURNS json`** ([migration](../supabase/migrations/20260623120000_reverse_sale_rpc.sql)) — `SECURITY DEFINER`, granted to `authenticated`. Locks the sale row, verifies `auth.uid()` matches `sales.user_id`, FOR UPDATE-locks the affected lot rows, restores `quantity_remaining`, deletes movements + linked manual transactions, soft-deletes the sale. Raises `sale_not_found` / `forbidden` / `already_deleted` on edge cases. Called only by the `reverse_sale` edge function; not exposed to the JS client directly.
 
 ## Storage

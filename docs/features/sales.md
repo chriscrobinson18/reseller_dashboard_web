@@ -24,6 +24,7 @@ The relational centerpiece of the app — every sale here can cascade into `tran
 ## Modals
 
 - **RecordSaleModal** → `recordSale` (item + qty + price + platform + date + optional fees/shipping/order ID). See [data-flows.md](../data-flows.md) for what this fans out into.
+- **Link to inventory** (`LinkSaleToItemModal` → `linkSaleToItem`): since 2026-11-12 this calls the `link_sale_to_item` RPC, which assigns the item **and** FIFO-depletes its lots (preferring lots bought on/before the sale date) with `inventory_movements`, marking the sale oversold if units run short. Before, it only set `item_id`.
 - **Platform list** is shared by Record Sale, Edit Sale and Edit Bundle: `SALE_PLATFORMS` in [`src/lib/salePlatforms.ts`](../../src/lib/salePlatforms.ts). `goldin` (auction-house consignment sales) was added 2026-11-10. The Year-End Tie-Out pairs sales with settlement deposits by platform, so a venue that pays by bank deposit needs an entry matching the deposit's `transactions.platform` label.
 - **EditSaleModal** → `updateSale`. For manual sales, keeps linked transaction rows in sync; for non-manual (CSV/Plaid-originated) sales, only the `sales` row changes.
 - **LinkSaleToItemModal** → `linkSaleToItem`, a one-column `.update({ item_id })`. Does not retroactively create `inventory_movements` for past depletion — linking after the fact does not fix `inventory_status`.
