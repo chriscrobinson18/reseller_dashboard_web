@@ -6,7 +6,7 @@ import { getPeriodRange, type PeriodPreset } from '../lib/periods'
 import { resolveCategory } from '../lib/categories'
 import { parseSearchTerms, matchesSearch } from '../lib/transactionSearch'
 import { formatUSD, formatDate, formatShortDate } from '../lib/utils'
-import { updateTransaction, deleteTransaction } from '../lib/mutations'
+import { updateTransaction, deleteTransaction, unpairNetZero } from '../lib/mutations'
 import PeriodPicker from '../components/PeriodPicker'
 import CategoryBadge from '../components/CategoryBadge'
 import SlideOver from '../components/SlideOver'
@@ -101,6 +101,11 @@ function TransactionDetail({ tx, onClose, onOpenTrade, onManage }: { tx: Transac
   const [editingCat, setEditingCat] = useState(false)
   const [editing, setEditing] = useState(false)
   const [confirmDelete, setConfirmDelete] = useState(false)
+  const [confirmUnpair, setConfirmUnpair] = useState(false)
+  const unpairMutation = useMutation({
+    mutationFn: () => unpairNetZero(tx.net_zero_pair_id!),
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ['transactions'] }); setConfirmUnpair(false); onClose() },
+  })
 
   // Editable fields
   const [eDate, setEDate] = useState(tx.date)
@@ -360,7 +365,16 @@ function TransactionDetail({ tx, onClose, onOpenTrade, onManage }: { tx: Transac
           <span className="px-2 py-0.5 bg-violet-100 text-violet-700 rounded text-xs font-medium">Settlement</span>
         )}
         {tx.net_zero_pair_id && (
-          <span className="px-2 py-0.5 bg-gray-100 text-gray-600 rounded text-xs font-medium">Net Zero Pair</span>
+          <span className="inline-flex items-center gap-1.5 px-2 py-0.5 bg-gray-100 text-gray-600 rounded text-xs font-medium">
+            Net Zero Pair
+            <button
+              onClick={() => setConfirmUnpair(true)}
+              className="text-blue-600 hover:text-blue-800 font-medium"
+              title="Remove the net-zero pairing so both transactions count again"
+            >
+              Unpair
+            </button>
+          </span>
         )}
         {(tx.related_sale_id || tx.source === 'csv_import') && (
           <span className="px-2 py-0.5 bg-indigo-100 text-indigo-700 rounded text-xs font-medium">Sale Linked</span>
@@ -457,6 +471,15 @@ function TransactionDetail({ tx, onClose, onOpenTrade, onManage }: { tx: Transac
         />
       )}
 
+      <ConfirmDialog
+        open={confirmUnpair}
+        title="Unpair net-zero?"
+        message="Both transactions in this pair will count toward totals again (the charge as an expense, the refund as a credit). Use this when the pair was wrong. Their categories don't change."
+        confirmLabel="Unpair"
+        loading={unpairMutation.isPending}
+        onConfirm={() => unpairMutation.mutate()}
+        onCancel={() => setConfirmUnpair(false)}
+      />
       <ConfirmDialog
         open={confirmDelete}
         title="Delete transaction?"

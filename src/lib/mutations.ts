@@ -920,6 +920,16 @@ export async function pairTransactions(id1: string, id2: string) {
   if (e2) throw e2
 }
 
+/**
+ * Removes a net-zero pairing by its shared pair id, from every row that carries
+ * it. Works for a normal pair and for an orphaned half-pair whose partner was
+ * deleted (such a row is otherwise silently excluded from every total).
+ */
+export async function unpairNetZero(pairId: string) {
+  const { error } = await supabase.from('transactions').update({ net_zero_pair_id: null }).eq('net_zero_pair_id', pairId)
+  if (error) throw error
+}
+
 export async function unpairTransactions(id1: string, id2: string) {
   const { error } = await supabase.from('transactions').update({ net_zero_pair_id: null }).in('id', [id1, id2])
   if (error) throw error

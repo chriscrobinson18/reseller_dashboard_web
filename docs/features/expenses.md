@@ -78,6 +78,7 @@ Before this runs, `classifySettlement` marks incoming deposits as `record_type =
 - Notes field autosaves on blur if changed (`notesMutation`), not on every keystroke.
 - The detail-pane category dropdown is the same shared `CategoryDropdown` component as the list view, just absolutely positioned relative to the button instead of viewport-fixed.
 - Badges shown: `Settlement` (record_type), `Net Zero Pair` (net_zero_pair_id set), `Sale Linked` (related_sale_id or csv_import).
+- **Unpair** (added 2026-11-12): the `Net Zero Pair` badge has an Unpair action (with a confirm dialog). It calls `unpairNetZero(pairId)` in `mutations.ts`, which clears `net_zero_pair_id` on **every** row carrying that pair id, so it also fixes an orphaned half-pair whose partner was deleted. Both rows then count toward totals again; categories are unchanged.
 - **When `schedule_c_category === 'cost_of_goods'`**, renders `TransactionInventorySection` — lets the user link this purchase transaction to one or more `inventory_lots` (see Inventory doc). This is the only place lot↔transaction linking happens outside the Inventory page's "Add Lot" flow.
 - Delete (`deleteTransaction`) is a hard delete with a confirm dialog; copy explicitly warns "inventory lots linked to it will be unlinked but kept" (FK `ON DELETE SET NULL`).
 
