@@ -4,7 +4,8 @@ import Modal, { Field, inputCls, ModalActions } from '../Modal'
 import { updateBundleSale } from '../../lib/mutations'
 import { useBundle } from '../../lib/queries'
 import { formatUSD } from '../../lib/utils'
-import { PAYMENT_METHODS } from '../../lib/paymentMethods'
+import { SPLIT_PAYMENT, validatePaymentSplits, parseSplitRows, splitRowsFrom, type SplitRow } from '../../lib/paymentMethods'
+import { PaymentMethodSelect, SplitPaymentEditor } from '../PaymentMethodInput'
 import { SALE_PLATFORMS } from '../../lib/salePlatforms'
 
 const PLATFORMS = SALE_PLATFORMS
@@ -50,6 +51,8 @@ function EditBundleForm({ bundleId, data, onClose, qc }: {
   const [soldAt, setSoldAt] = useState(bundle.sold_at.slice(0, 10))
   const [platform, setPlatform] = useState(bundle.platform ?? 'ebay')
   const [paymentMethod, setPaymentMethod] = useState(bundle.payment_method ?? '')
+  const [splitRows, setSplitRows] = useState<SplitRow[]>(() => splitRowsFrom(bundle.payments))
+  const isSplit = paymentMethod === SPLIT_PAYMENT
   const [orderId, setOrderId] = useState(bundle.external_order_id ?? '')
   const [fees, setFees] = useState(bundle.fees ? String(bundle.fees) : '')
   const [shipping, setShipping] = useState(bundle.shipping_cost != null ? String(bundle.shipping_cost) : '')
@@ -71,8 +74,9 @@ function EditBundleForm({ bundleId, data, onClose, qc }: {
       if (safeNum(l.salePrice) < 0) return 'Enter a valid sale price for every line'
     }
     if (total <= 0) return 'Enter at least one sale price'
+    if (isSplit) return validatePaymentSplits(parseSplitRows(splitRows), total)
     return null
-  }, [lineStates, total])
+  }, [lineStates, total, isSplit, splitRows])
 
   const mutation = useMutation({
     mutationFn: () => updateBundleSale({
@@ -80,6 +84,8 @@ function EditBundleForm({ bundleId, data, onClose, qc }: {
       soldAt,
       platform,
       paymentMethod: paymentMethod || null,
+      // null clears an old split; undefined leaves the column untouched.
+      payments: isSplit ? parseSplitRows(splitRows) : bundle.payments ? null : undefined,
       externalOrderId: orderId.trim() || null,
       fees: fees ? parseFloat(fees) : null,
       shippingCost: shipping ? parseFloat(shipping) : null,
@@ -141,10 +147,7 @@ function EditBundleForm({ bundleId, data, onClose, qc }: {
           </select>
         </Field>
         <Field label="Payment Method" hint={platform === 'manual' ? 'How you were paid' : 'Optional'}>
-          <select value={paymentMethod} onChange={e => setPaymentMethod(e.target.value)} className={inputCls + ' bg-white'}>
-            <option value="">—</option>
-            {PAYMENT_METHODS.map(m => <option key={m.value} value={m.value}>{m.label}</option>)}
-          </select>
+          <PaymentMethodSelect value={paymentMethod} onChange={setPaymentMethod} />
         </Field>
         <Field label="Sale Date">
           <input type="date" value={soldAt} onChange={e => setSoldAt(e.target.value)} className={inputCls} />
@@ -159,6 +162,8 @@ function EditBundleForm({ bundleId, data, onClose, qc }: {
           <input type="number" step="0.01" min="0" value={shipping} onChange={e => setShipping(e.target.value)} className={inputCls} placeholder="0.00" />
         </Field>
       </div>
+
+      {isSplit && <SplitPaymentEditor rows={splitRows} onChange={setSplitRows} total={total} />}
 
       <Field label="Notes" hint="Optional">
         <input value={notes} onChange={e => setNotes(e.target.value)} className={inputCls} />

@@ -6,7 +6,8 @@ import ItemPicker from '../ItemPicker'
 import { recordSale, recordBundleSale, todayStr } from '../../lib/mutations'
 import { itemUnitsInStock, type ItemWithLots } from '../../lib/queries'
 import { formatUSD } from '../../lib/utils'
-import { PAYMENT_METHODS } from '../../lib/paymentMethods'
+import { SPLIT_PAYMENT, validatePaymentSplits, emptySplitRows, parseSplitRows, type SplitRow } from '../../lib/paymentMethods'
+import { PaymentMethodSelect, SplitPaymentEditor } from '../PaymentMethodInput'
 import { SALE_PLATFORMS } from '../../lib/salePlatforms'
 
 const PLATFORMS = SALE_PLATFORMS
@@ -36,6 +37,7 @@ export default function RecordSaleModal({ open, onClose }: { open: boolean; onCl
   const [lines, setLines] = useState<Line[]>([emptyLine()])
   const [platform, setPlatform] = useState('ebay')
   const [paymentMethod, setPaymentMethod] = useState('')
+  const [splitRows, setSplitRows] = useState<SplitRow[]>(emptySplitRows)
   const [soldAt, setSoldAt] = useState(todayStr())
   const [fees, setFees] = useState('')
   const [shipping, setShipping] = useState('')
@@ -47,16 +49,27 @@ export default function RecordSaleModal({ open, onClose }: { open: boolean; onCl
   const isBundle = lines.length > 1
   const total = useMemo(() => lines.reduce((s, l) => s + l.salePrice, 0), [lines])
   const netPayout = total - (parseFloat(fees) || 0) - (parseFloat(shipping) || 0)
+  const isSplit = paymentMethod === SPLIT_PAYMENT
+  const payments = useMemo(() => isSplit ? parseSplitRows(splitRows) : null, [isSplit, splitRows])
+
+  // Units requested per item across ALL lines, so picking the same item on two
+  // lines (2 + 2 with 3 in stock) still warns, not just a single over-sized line.
+  const qtyByItem = useMemo(() => {
+    const m = new Map<string, number>()
+    for (const l of lines) if (l.item) m.set(l.item.id, (m.get(l.item.id) ?? 0) + l.quantity)
+    return m
+  }, [lines])
 
   const validationError = useMemo(() => {
     for (const l of lines) {
       if (!l.item) return 'Select an inventory item'
-      if (l.quantity <= 0) return 'Quantity must be greater than 0'
+      if (!Number.isInteger(l.quantity) || l.quantity <= 0) return 'Quantity must be a whole number greater than 0'
       if (l.salePrice < 0) return 'Enter a valid sale price'
     }
     if (total <= 0) return 'Enter a sale price'
+    if (payments) return validatePaymentSplits(payments, total)
     return null
-  }, [lines, total])
+  }, [lines, total, payments])
 
   const mutation = useMutation({
     mutationFn: async () => {
@@ -65,6 +78,7 @@ export default function RecordSaleModal({ open, onClose }: { open: boolean; onCl
           soldAt,
           platform,
           paymentMethod: paymentMethod || null,
+          payments,
           externalOrderId: orderId.trim() || null,
           fees: fees ? parseFloat(fees) : null,
           shippingCost: shipping ? parseFloat(shipping) : null,
@@ -90,6 +104,7 @@ export default function RecordSaleModal({ open, onClose }: { open: boolean; onCl
         fees: fees ? parseFloat(fees) : null,
         shippingCost: shipping ? parseFloat(shipping) : null,
         paymentMethod: paymentMethod || null,
+        payments,
       })
       return { oversoldCount: r.inventoryStatus === 'oversold' ? 1 : 0 }
     },
@@ -111,7 +126,7 @@ export default function RecordSaleModal({ open, onClose }: { open: boolean; onCl
   })
 
   function reset() {
-    setLines([emptyLine()]); setPlatform('ebay'); setPaymentMethod('')
+    setLines([emptyLine()]); setPlatform('ebay'); setPaymentMethod(''); setSplitRows(emptySplitRows())
     setSoldAt(todayStr()); setFees(''); setShipping(''); setOrderId(''); setNotes('')
     setPickerOpenIdx(0); setError(null)
     mutation.reset()
@@ -146,7 +161,9 @@ export default function RecordSaleModal({ open, onClose }: { open: boolean; onCl
         <div className="space-y-2">
           {lines.map((l, i) => {
             const stock = l.item ? itemUnitsInStock(l.item) : 0
-            const willOversell = l.item != null && l.quantity > stock
+            const requested = l.item ? qtyByItem.get(l.item.id) ?? 0 : 0
+            const sharedAcrossLines = requested !== l.quantity
+            const willOversell = l.item != null && requested > stock
             return (
               <div key={i} className="border border-gray-200 rounded-lg p-3">
                 <div className="grid grid-cols-[70px_1fr_28px] sm:grid-cols-[1fr_70px_100px_28px] gap-2 items-start">
@@ -182,7 +199,10 @@ export default function RecordSaleModal({ open, onClose }: { open: boolean; onCl
                 {willOversell && (
                   <div className="flex items-start gap-1.5 text-xs text-amber-700 mt-1.5">
                     <AlertTriangle size={12} className="shrink-0 mt-0.5" />
-                    <span>Only {stock} in stock — will be flagged <strong>oversold</strong> until you add inventory.</span>
+                    <span>
+                      Only {stock} in stock{sharedAcrossLines && <> ({requested} requested across lines with this item)</>}
+                      {' '}— will be flagged <strong>oversold</strong> until you add inventory.
+                    </span>
                   </div>
                 )}
 
@@ -214,10 +234,7 @@ export default function RecordSaleModal({ open, onClose }: { open: boolean; onCl
             </select>
           </Field>
           <Field label="Payment Method" hint={platform === 'manual' ? 'How you were paid' : 'Optional'}>
-            <select value={paymentMethod} onChange={e => setPaymentMethod(e.target.value)} className={inputCls + ' bg-white'}>
-              <option value="">—</option>
-              {PAYMENT_METHODS.map(m => <option key={m.value} value={m.value}>{m.label}</option>)}
-            </select>
+            <PaymentMethodSelect value={paymentMethod} onChange={setPaymentMethod} />
           </Field>
           <Field label="Sale Date">
             <input type="date" value={soldAt} onChange={e => setSoldAt(e.target.value)} className={inputCls} />
@@ -232,6 +249,8 @@ export default function RecordSaleModal({ open, onClose }: { open: boolean; onCl
             <input type="number" step="0.01" min="0" value={shipping} onChange={e => setShipping(e.target.value)} className={inputCls} placeholder="0.00" />
           </Field>
         </div>
+
+        {isSplit && <SplitPaymentEditor rows={splitRows} onChange={setSplitRows} total={total} />}
 
         {isBundle && (
           <Field label="Notes" hint="Optional">

@@ -33,6 +33,8 @@ Rules — first match wins, anything that returns `bucket: null` is excluded:
    - fee row (if `fees > 0`): `amount: -fees`, category `commissions_fees`
    - shipping row (if `shippingCost > 0`): `amount: -shippingCost`, category `shipping_postage`
 
+**Failure after step 1 is undone (2026-11-13).** Step 1 has already depleted lots, so if step 2's update or step 3's insert fails, `recordSale` calls `reverse_sale` on the new sale (restoring lots, deleting movements and any linked manual transactions, soft-deleting the row) and throws `Sale not recorded: … Nothing was saved`. Before this, a failed step 2 was silently ignored and a failed step 3 left a sale with depleted inventory but no payout, which a retry then double-counted. If the undo itself fails, the error names the leftover sale id.
+
 This is why a single "sale" shows up as one row in Sales but up to three rows in Expenses (visible there only when the "Sale rows" filter toggle is on).
 
 **Exception:** the "all tagged `related_sale_id`" rule above holds only for an ordinary sale. A bundle line's payout/fee/shipping rows are tagged `related_bundle_id` instead — see the next section.
@@ -45,6 +47,8 @@ One order, several **different** items, one combined payout — a multi-item mar
 2. For each item, calls `record_sale` directly — same FIFO depletion, same `inventory_movements`, same per-item `sale_price` as an ordinary sale. Each resulting `sales` row is stamped `bundle_id = <bundle id>`, `fees: 0`, `shipping_cost: null`, `net_payout: <that line's own price>` (mirrors what `recordTrade` does for given-side sales — see below).
 3. Creates **exactly one** payout/fee/shipping transaction set for the whole order, tagged `related_bundle_id` (not `related_sale_id` — no single line owns an order-level fee).
 
+**Failure partway through is undone (2026-11-13).** Each line's `record_sale` call depletes lots immediately, so a failure on line N (or on the stamp or the transaction insert) would otherwise leave lines 1..N-1 recorded under a bundle with no payout transaction. `recordBundleSale` now tracks every created sale id (pushed *before* the stamp, so a stamp failure is covered too) and on any error reverses each via `reverse_sale`, deletes the bundle's transactions and soft-deletes the bundle, then throws `Sale not recorded: … Nothing was saved`. Not a single DB transaction — `record_sale` is an edge function — so it's a compensating undo; if the undo itself fails the error names what's left over for manual cleanup.
+
 **Why not just call `recordSale()` N times:** that would run step 3's transaction-creation logic once per line, multiplying the real order payout by the number of items. The one-`sale_bundles`-header-plus-N-plain-`sales`-rows shape mirrors `trades` (below) rather than restructuring `sales` into a header/line-item table — FIFO depletion, returns, and `reverse_sale` all keep working on bundle lines completely unmodified.
 
 **Order-level fees/shipping are allocated back at read time.** Storing `fees: 0` on each line keeps the write side honest (the real charge exists once, on the bundle) but makes every line *look* free to sell. `fetchSales` therefore splits the bundle's fees and shipping across its lines **proportionally by line price** — a $100 line in a $200 order bears half — writing them to the client-only `allocated_fees` / `allocated_shipping` fields. `saleProfit()` prefers those over the row's zeroed `fees`/`shipping_cost`; without this, every bundle line overstates profit by its share of both.
@@ -54,6 +58,15 @@ These stay separate from `fees`/`shipping_cost` rather than overwriting them, be
 **Deleting a bundle** (`deleteBundleSale`) reverses each line via `reverse_sale` (restores inventory, soft-deletes the line), deletes the bundle's own transactions, and soft-deletes the `sale_bundles` row. No downstream-depletion check is needed first, unlike `deleteTrade` — a bundle sale only depletes inventory, it never creates lots.
 
 **Editing a bundle sale** (`updateBundleSale`) updates the `sale_bundles` row, re-stamps date/platform/payment method/order id onto every line (mirroring the stamp step 2 above already does at creation), and updates each line's own `quantity`/`sale_price`/`net_payout` — but never `fees`/`shipping_cost`, which stay `0`/`null` on every line just as at creation. It then syncs the bundle's linked transactions by `related_bundle_id` + `schedule_c_category`: the payout row is always updated (it always exists), but the fee/shipping rows are **created** if a positive value now exists and none did before, **updated** if one already exists, and **deleted** if edited down to zero/cleared. This is unlike `updateSale`, which only ever touches transaction rows that already exist — a bundle can be recorded with no fee at all and have one added later, so there's often nothing yet to update. Without creating the row, `BundleDetailSlideOver`'s Schedule C card (which reads actual `transactions`, not `sale_bundles.fees`/`shipping_cost`) would show nothing even though the bundle row and every line's allocated share already reflect the new amount. Line **item** is never editable through this path; changing it would mean reversing that line's FIFO depletion and re-depleting a different item's lots, a different shape of change than a field edit.
+
+## Split payments (`payments` jsonb)
+
+One order paid across several rails (e.g. $60 cash + $40 Venmo) — rare, ~1 in 500 sales, so it's a JSON column on `sales` / `sale_bundles` rather than a child table. Helpers live in `src/lib/paymentMethods.ts` (unit-tested in `__tests__/paymentMethods.test.ts`):
+
+- `validatePaymentSplits(splits, total)` — ≥2 entries, a real method on each, no duplicate method, every amount > 0, and the sum equals the total **in whole cents** (so 33.33 + 33.33 + 33.34 = 100). Run client-side in all three modals; the DB only checks shape, since a bundle's total lives on its lines.
+- `paymentBreakdown(payment_method, payments, total)` — the normalised per-rail list (the split, or one rail covering the total). This is what the planned deposit tie-out (TASKS.md: map `payment_method` → deposit platform) should consume, so a split sale offsets each wallet by its own share.
+
+Write rules (`paymentFields` in `mutations.ts`): a split stores `payment_method = 'split'` + `payments`; un-splitting an edited row writes `payments = null`; every other write **omits the `payments` column entirely**, so ordinary sales never touch it. Bundle lines get only the `'split'` sentinel. Payout transactions are unchanged — still **one** payout row per sale/bundle for the full amount; the split is descriptive and doesn't change Schedule C totals.
 
 ## Editing a sale (`updateSale`)
 

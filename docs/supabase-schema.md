@@ -71,7 +71,8 @@ The relational centerpiece — one row per sale event, FIFO-depletes inventory v
 | `inventory_status` | `'ok' \| 'oversold' \| 'reconciled'` — set by `record_sale` edge function based on FIFO depletion result |
 | `return_status` | `'none' \| 'partial' \| 'full'` |
 | `refunded_quantity`, `refunded_amount` | populated by the `record_return` edge function (v21), driven from the web `ProcessReturnModal` (shipped 2026-07-10); decremented by `reverse_return` on return-edit |
-| `payment_method` | nullable text — how the buyer paid (`cash`, `venmo`, `cashapp`, `paypal`, `apple_pay`, `zelle`, `card`, `other`). **Orthogonal to `platform`**, which is *where* the sale happened: an eBay sale and a face-to-face sale can both settle over PayPal, and an in-person sale has no marketplace at all. Deliberately unconstrained — payment rails change faster than migrations, so the known list lives in `src/lib/paymentMethods.ts`. Null on sales predating the column. |
+| `payment_method` | nullable text — how the buyer paid (`cash`, `venmo`, `cashapp`, `paypal`, `apple_pay`, `zelle`, `card`, `other`). **Orthogonal to `platform`**, which is *where* the sale happened: an eBay sale and a face-to-face sale can both settle over PayPal, and an in-person sale has no marketplace at all. Deliberately unconstrained — payment rails change faster than migrations, so the known list lives in `src/lib/paymentMethods.ts`. Null on sales predating the column. Holds the sentinel `'split'` when `payments` is set (and on every line of a split bundle). |
+| `payments` | nullable jsonb — split-payment breakdown `[{"method":"cash","amount":60},{"method":"venmo","amount":40}]`, amounts summing to `sale_price`. Set only when `payment_method = 'split'` (check `sales_payments_shape`: ≥2 entries). Null on single-rail sales **and on bundle lines** — a split bundle's breakdown lives once on `sale_bundles.payments`. Added 2026-11-13 (`sale_payment_splits` migration). |
 | `sold_at` | full ISO timestamp (not just a date) |
 | `trade_id` | nullable FK to `trades`; set on the sale(s) for items given up in a trade. `ON DELETE SET NULL`. |
 
@@ -84,7 +85,8 @@ One sale event that disposes of several **different** items for one combined pay
 |---|---|
 | `id`, `user_id`, `created_at`, `deleted_at` | soft-deleted |
 | `sold_at` | `date` (not a timestamp, unlike `sales.sold_at`) |
-| `platform`, `payment_method`, `external_order_id`, `notes` | order-level metadata, copied down onto each line for search |
+| `platform`, `payment_method`, `external_order_id`, `notes` | order-level metadata, copied down onto each line for search (`payment_method` copies as `'split'` for a split order) |
+| `payments` | nullable jsonb — split-payment breakdown for the whole order, amounts summing to the lines' total. Set iff `payment_method = 'split'` (check `sale_bundles_payments_shape`). Not copied to lines. Added 2026-11-13. |
 | `fees`, `shipping_cost` | **order-level** — one number for the whole bundle, not per line |
 
 Link columns: `sales.bundle_id` and `transactions.related_bundle_id`, both nullable + `ON DELETE SET NULL` (same pattern as `trade_id`).

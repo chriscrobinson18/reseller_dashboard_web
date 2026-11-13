@@ -3,7 +3,8 @@ import { useMutation, useQueryClient } from '@tanstack/react-query'
 import Modal, { Field, inputCls, ModalActions } from '../Modal'
 import { updateSale } from '../../lib/mutations'
 import { formatUSD } from '../../lib/utils'
-import { PAYMENT_METHODS } from '../../lib/paymentMethods'
+import { SPLIT_PAYMENT, validatePaymentSplits, parseSplitRows, splitRowsFrom, type SplitRow } from '../../lib/paymentMethods'
+import { PaymentMethodSelect, SplitPaymentEditor } from '../PaymentMethodInput'
 import type { Sale } from '../../lib/types'
 import { SALE_PLATFORMS } from '../../lib/salePlatforms'
 
@@ -24,6 +25,8 @@ export default function EditSaleModal({ open, onClose, sale }: Props) {
   const [soldAt, setSoldAt] = useState(sale.sold_at.slice(0, 10))
   const [orderId, setOrderId] = useState(sale.external_order_id ?? '')
   const [paymentMethod, setPaymentMethod] = useState(sale.payment_method ?? '')
+  const [splitRows, setSplitRows] = useState<SplitRow[]>(() => splitRowsFrom(sale.payments))
+  const isSplit = !isBundleLine && paymentMethod === SPLIT_PAYMENT
   const [fees, setFees] = useState(sale.fees ? String(sale.fees) : '')
   const [shipping, setShipping] = useState(sale.shipping_cost != null ? String(sale.shipping_cost) : '')
   const [error, setError] = useState<string | null>(null)
@@ -39,7 +42,12 @@ export default function EditSaleModal({ open, onClose, sale }: Props) {
       externalOrderId: orderId.trim() || null,
       fees: fees ? parseFloat(fees) : null,
       shippingCost: shipping ? parseFloat(shipping) : null,
-      paymentMethod: paymentMethod || null,
+      // Bundle lines don't edit payment here — it's order-level (see updateSale).
+      ...(isBundleLine ? {} : {
+        paymentMethod: paymentMethod || null,
+        // null clears an old split; undefined leaves the column untouched.
+        payments: isSplit ? parseSplitRows(splitRows) : sale.payments ? null : undefined,
+      }),
     }),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['sales'] })
@@ -56,6 +64,10 @@ export default function EditSaleModal({ open, onClose, sale }: Props) {
     const p = parseFloat(salePrice)
     if (!q || q <= 0) { setError('Quantity must be greater than 0'); return }
     if (isNaN(p) || p < 0) { setError('Enter a valid sale price'); return }
+    if (isSplit) {
+      const splitErr = validatePaymentSplits(parseSplitRows(splitRows), p)
+      if (splitErr) { setError(splitErr); return }
+    }
     mutation.mutate()
   }
 
@@ -82,10 +94,7 @@ export default function EditSaleModal({ open, onClose, sale }: Props) {
                 </select>
               </Field>
               <Field label="Payment Method" hint={platform === 'manual' ? 'How you were paid' : 'Optional'}>
-                <select value={paymentMethod} onChange={e => setPaymentMethod(e.target.value)} className={inputCls + ' bg-white'}>
-                  <option value="">—</option>
-                  {PAYMENT_METHODS.map(m => <option key={m.value} value={m.value}>{m.label}</option>)}
-                </select>
+                <PaymentMethodSelect value={paymentMethod} onChange={setPaymentMethod} />
               </Field>
               <Field label="Sale Date">
                 <input type="date" value={soldAt} onChange={e => setSoldAt(e.target.value)} className={inputCls} />
@@ -109,6 +118,9 @@ export default function EditSaleModal({ open, onClose, sale }: Props) {
             </>
           )}
         </div>
+        {isSplit && (
+          <SplitPaymentEditor rows={splitRows} onChange={setSplitRows} total={parseFloat(salePrice) || 0} />
+        )}
         {!isBundleLine && (
           <Field label="Order ID" hint="Optional">
             <input value={orderId} onChange={e => setOrderId(e.target.value)} className={inputCls} />

@@ -342,7 +342,8 @@ export function useBundles() {
         const lines = ((row.sales ?? []) as { id: string; sale_price: number; quantity: number; deleted_at: string | null }[])
           .filter(s => !s.deleted_at)
         const itemCount = lines.length
-        const itemsTotal = lines.reduce((s, l) => s + l.sale_price * l.quantity, 0)
+        // sale_price is already the LINE total (recordBundleSale convention), not per-unit.
+        const itemsTotal = lines.reduce((s, l) => s + l.sale_price, 0)
         const netPayout = itemsTotal - (row.fees ?? 0) - (row.shipping_cost ?? 0)
         return {
           id: row.id as string,

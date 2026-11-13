@@ -1,3 +1,5 @@
+import type { PaymentSplit } from './paymentMethods'
+
 /** null = not reviewed; 'ai_reviewed' = checked/changed by an AI assistant; 'owner_reviewed' = confirmed by the owner (locked). */
 export type ReviewStatus = 'ai_reviewed' | 'owner_reviewed'
 
@@ -75,6 +77,8 @@ export interface Sale {
   external_order_id?: string
   /** How the buyer paid — see lib/paymentMethods.ts. Orthogonal to `platform`. */
   payment_method?: string | null
+  /** Split-payment breakdown; set only when payment_method === 'split'. Bundle lines leave it null (the split lives on the bundle). */
+  payments?: PaymentSplit[] | null
   /**
    * Client-side only, never persisted. A bundle line's share of its bundle's
    * order-level fees/shipping, allocated proportionally by line price.
@@ -124,6 +128,8 @@ export interface SaleBundle {
   sold_at: string // 'yyyy-MM-dd'
   platform?: string | null
   payment_method?: string | null
+  /** Split-payment breakdown; set only when payment_method === 'split'. */
+  payments?: PaymentSplit[] | null
   external_order_id?: string | null
   fees: number
   shipping_cost?: number | null

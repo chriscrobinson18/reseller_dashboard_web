@@ -15,7 +15,7 @@ import EditSaleModal from '../components/modals/EditSaleModal'
 import LinkSaleToItemModal from '../components/modals/LinkSaleToItemModal'
 import ProcessReturnModal from '../components/modals/ProcessReturnModal'
 import { saleProfit } from '../lib/saleProfit'
-import { paymentMethodLabel } from '../lib/paymentMethods'
+import { paymentMethodLabel, formatPaymentSplits } from '../lib/paymentMethods'
 import type { Sale } from '../lib/types'
 import { fetchAllRows } from '../lib/fetchAll'
 import TradeDetailSlideOver from '../components/TradeDetailSlideOver'
@@ -245,7 +245,7 @@ function SaleDetail({ sale, netPayoutBySale, onLinkItem, onEdit, onDelete, onPro
           <PlatformBadge platform={sale.platform} />
           {paymentMethodLabel(sale.payment_method) && (
             <span className="text-xs px-2 py-0.5 rounded-full border border-gray-200 text-gray-600">
-              {paymentMethodLabel(sale.payment_method)}
+              {sale.payments?.length ? `Split: ${formatPaymentSplits(sale.payments)}` : paymentMethodLabel(sale.payment_method)}
             </span>
           )}
           {sale.bundle_id && (
@@ -430,7 +430,8 @@ export default function SalesPage() {
         (s.external_order_id ?? '').toLowerCase().includes(q) ||
         (s.platform ?? '').toLowerCase().includes(q) ||
         (s.payment_method ?? '').toLowerCase().includes(q) ||
-        (paymentMethodLabel(s.payment_method) ?? '').toLowerCase().includes(q)
+        (paymentMethodLabel(s.payment_method) ?? '').toLowerCase().includes(q) ||
+        formatPaymentSplits(s.payments).toLowerCase().includes(q)
       )
     })
   }, [sales, search, platformFilter, returnFilter])
@@ -675,7 +676,7 @@ export default function SalesPage() {
                             </span>
                           )}
                           {paymentMethodLabel(sale.payment_method) && (
-                            <span className="text-[10px] text-gray-500">
+                            <span className="text-[10px] text-gray-500" title={formatPaymentSplits(sale.payments) || undefined}>
                               {paymentMethodLabel(sale.payment_method)}
                             </span>
                           )}

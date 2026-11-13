@@ -3,6 +3,7 @@ import { splitLotCost, basisFromAdjustments, type LotBasis } from './lotCost'
 import { ADJUSTMENT_LABELS } from './lotAdjustments'
 import type { Item, InventoryLot, LotAdjustmentType, CSVImportResult, CSVSaleSyncResult, TcgPlayerImportResult, FindOrphansResult, ReviewStatus } from './types'
 import { CATEGORIES } from './categories'
+import { SPLIT_PAYMENT, type PaymentSplit } from './paymentMethods'
 import { isColorKey, type ColorKey } from './categoryPalette'
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -980,8 +981,10 @@ export async function recordSale(params: {
   externalOrderId?: string | null
   fees?: number | null
   shippingCost?: number | null
-  /** How the buyer paid — see lib/paymentMethods.ts. */
+  /** How the buyer paid — see lib/paymentMethods.ts. Ignored when `payments` is set. */
   paymentMethod?: string | null
+  /** Split payment (≥2 rails summing to salePrice). Stores payment_method = 'split'. Null/undefined = no split. */
+  payments?: PaymentSplit[] | null
 }): Promise<RecordSaleResult> {
   const soldAtIso = new Date(params.soldAt + 'T12:00:00').toISOString()
 
@@ -1002,37 +1005,91 @@ export async function recordSale(params: {
   const saleId: string = data.sale_id
   if (!saleId) throw new Error('record_sale returned no sale_id')
 
-  // Fields the record_sale edge function doesn't accept, written back onto the
-  // row it just created. payment_method is always persisted; fee/shipping totals
-  // (which drive the Profitability card) only when actually supplied, so a blank
-  // fee field can't overwrite something the function already set.
-  const patch: Record<string, unknown> = {
-    payment_method: params.paymentMethod || null,
-  }
-  if (params.fees != null || params.shippingCost != null) {
-    patch.external_order_id = params.externalOrderId ?? null
-    patch.fees = params.fees ?? 0
-    patch.shipping_cost = params.shippingCost ?? null
-    patch.net_payout = params.salePrice - (params.fees ?? 0) - (params.shippingCost ?? 0)
-  }
-  await supabase.from('sales').update(patch).eq('id', saleId)
+  // record_sale has already depleted lots by this point. If any follow-up
+  // write fails, undo the sale (reverse_sale) rather than leave a sale with no
+  // payout transaction — which a retry would then double-count.
+  try {
+    // Fields the record_sale edge function doesn't accept, written back onto the
+    // row it just created. payment_method is always persisted; fee/shipping totals
+    // (which drive the Profitability card) only when actually supplied, so a blank
+    // fee field can't overwrite something the function already set.
+    const patch: Record<string, unknown> = paymentFields(params.paymentMethod, params.payments || undefined)
+    if (params.fees != null || params.shippingCost != null) {
+      patch.external_order_id = params.externalOrderId ?? null
+      patch.fees = params.fees ?? 0
+      patch.shipping_cost = params.shippingCost ?? null
+      patch.net_payout = params.salePrice - (params.fees ?? 0) - (params.shippingCost ?? 0)
+    }
+    const { error: patchErr } = await supabase.from('sales').update(patch).eq('id', saleId)
+    if (patchErr) throw patchErr
 
-  // Create linked transaction rows (payout + fees + shipping).
-  await createSaleTransactions({
-    saleId,
-    itemName: params.itemName ?? null,
-    platform: params.platform,
-    date: params.soldAt,
-    salePrice: params.salePrice,
-    fees: params.fees ?? null,
-    shippingCost: params.shippingCost ?? null,
-  })
+    // Create linked transaction rows (payout + fees + shipping).
+    await createSaleTransactions({
+      saleId,
+      itemName: params.itemName ?? null,
+      platform: params.platform,
+      date: params.soldAt,
+      salePrice: params.salePrice,
+      fees: params.fees ?? null,
+      shippingCost: params.shippingCost ?? null,
+    })
+  } catch (e) {
+    await undoRecordedSales([saleId], null, e)
+  }
 
   return {
     saleId,
     inventoryStatus: data.inventory_status,
     unfulfilledQuantity: data.unfulfilled_quantity ?? 0,
   }
+}
+
+/**
+ * payment_method / payments column values for a sale or bundle.
+ *  - payments = array → split: 'split' sentinel + the breakdown
+ *  - payments = null  → single rail, and explicitly clear a previous split
+ *  - payments = undefined → single rail, `payments` column not touched
+ * Callers pass null only when un-splitting a row that had a split, so the
+ * ~499/500 non-split writes never reference the `payments` column at all.
+ */
+function paymentFields(
+  method: string | null | undefined,
+  payments: PaymentSplit[] | null | undefined,
+): { payment_method: string | null; payments?: PaymentSplit[] | null } {
+  if (payments && payments.length > 0) return { payment_method: SPLIT_PAYMENT, payments }
+  const single = { payment_method: method && method !== SPLIT_PAYMENT ? method : null }
+  return payments === null ? { ...single, payments: null } : single
+}
+
+/**
+ * Compensating undo for a sale/bundle whose recording failed partway through.
+ * reverse_sale restores each line's depleted lots, deletes its movements and
+ * linked manual transactions, and soft-deletes it; the bundle's own
+ * transactions and row are then removed. Always throws — with a "nothing was
+ * saved" message when the undo succeeded, or naming what's left over if not.
+ */
+async function undoRecordedSales(saleIds: string[], bundleId: string | null, cause: unknown): Promise<never> {
+  const reason = (cause as { message?: string } | null)?.message ?? String(cause)
+  const leftover: string[] = []
+  for (const id of saleIds) {
+    const { data, error } = await supabase.functions.invoke('reverse_sale', { body: { sale_id: id } })
+    if (error || data?.error) leftover.push(`sale ${id}`)
+  }
+  if (bundleId) {
+    const { error: txErr } = await supabase.from('transactions').delete().eq('related_bundle_id', bundleId)
+    const { error: bErr } = await supabase
+      .from('sale_bundles')
+      .update({ deleted_at: new Date().toISOString() })
+      .eq('id', bundleId)
+    if (txErr || bErr) leftover.push(`bundle ${bundleId}`)
+  }
+  if (leftover.length > 0) {
+    throw new Error(
+      `Sale failed (${reason}) and the automatic undo didn't finish for ${leftover.join(', ')}. ` +
+      'Delete the leftover entry from the Sales page before re-entering it.',
+    )
+  }
+  throw new Error(`Sale not recorded: ${reason}. Nothing was saved — inventory is unchanged.`)
 }
 
 /** Creates payout (+), fee (−), and shipping (−) transaction rows linked to a manual sale. */
@@ -1102,6 +1159,7 @@ export async function updateSale(params: {
   fees: number | null
   shippingCost: number | null
   paymentMethod?: string | null
+  payments?: PaymentSplit[] | null
 }) {
   const netPayout = params.salePrice - (params.fees ?? 0) - (params.shippingCost ?? 0)
   const { error } = await supabase
@@ -1115,7 +1173,11 @@ export async function updateSale(params: {
       fees: params.fees ?? 0,
       shipping_cost: params.shippingCost ?? null,
       net_payout: netPayout,
-      payment_method: params.paymentMethod || null,
+      // Omitted for bundle lines (the caller passes neither): the line keeps
+      // the bundle's 'split' sentinel, and the breakdown lives on the bundle.
+      ...(params.paymentMethod === undefined && params.payments === undefined
+        ? {}
+        : paymentFields(params.paymentMethod, params.payments)),
     })
     .eq('id', params.id)
   if (error) throw error
@@ -1138,10 +1200,11 @@ export async function updateSale(params: {
       default: continue
     }
     if (newAmount == null) continue
-    await supabase
+    const { error: txErr } = await supabase
       .from('transactions')
       .update({ amount: newAmount, date: params.soldAt })
       .eq('id', tx.id)
+    if (txErr) throw txErr
   }
 }
 
@@ -1629,6 +1692,8 @@ export async function recordBundleSale(params: {
   soldAt: string // 'yyyy-MM-dd'
   platform: string
   paymentMethod?: string | null
+  /** Split payment across the whole order (≥2 rails summing to the items total). */
+  payments?: PaymentSplit[] | null
   externalOrderId?: string | null
   fees?: number | null
   shippingCost?: number | null
@@ -1654,7 +1719,7 @@ export async function recordBundleSale(params: {
       user_id,
       sold_at: params.soldAt,
       platform: params.platform,
-      payment_method: params.paymentMethod ?? null,
+      ...paymentFields(params.paymentMethod, params.payments || undefined),
       external_order_id: params.externalOrderId ?? null,
       fees: params.fees ?? 0,
       shipping_cost: params.shippingCost ?? null,
@@ -1664,79 +1729,88 @@ export async function recordBundleSale(params: {
     .single()
   if (bundleErr || !bundle) throw bundleErr ?? new Error('Failed to create bundle')
   const bundleId: string = bundle.id
+  // Lines get only the sentinel; the split breakdown is order-level and lives
+  // once on the bundle (sales_payments_shape allows payments null here).
+  const linePaymentMethod = paymentFields(params.paymentMethod, params.payments || undefined).payment_method
 
   const saleIds: string[] = []
   const oversoldItemIds: string[] = []
-  for (const line of params.items) {
-    const { data: saleData, error: saleErr } = await supabase.functions.invoke('record_sale', {
-      body: {
-        item_id: line.itemId,
-        quantity: line.quantity,
-        sale_price: String(line.salePrice),
-        platform: params.platform,
-        sold_at: soldAtIso,
-        source: 'manual',
-        external_order_id: params.externalOrderId ?? null,
-      },
-    })
-    if (saleErr) throw saleErr
-    if (saleData?.error) throw new Error(saleData.error)
-    const saleId: string = saleData.sale_id
-    if (!saleId) throw new Error('record_sale returned no sale_id')
-    if ((saleData.unfulfilled_quantity ?? 0) > 0) oversoldItemIds.push(line.itemId)
-
-    // bundle_id links this line to the order. fees/shipping/net_payout are
-    // explicitly zeroed rather than left at record_sale's column default
-    // (recordTrade does the same for its given-side sales) — there's no
-    // principled per-line split of an order-level fee, so the Sales list
-    // falls back to showing the line's own price as its net payout; the true
-    // post-fee total lives only on the bundle.
-    const { error: stampErr } = await supabase
-      .from('sales')
-      .update({
-        bundle_id: bundleId,
-        payment_method: params.paymentMethod ?? null,
-        external_order_id: params.externalOrderId ?? null,
-        fees: 0,
-        shipping_cost: null,
-        net_payout: line.salePrice,
+  // Each line is a separate record_sale call (which depletes lots immediately),
+  // so a failure on line N must undo lines 1..N-1 and the bundle row —
+  // otherwise the order is left half-recorded with no payout transaction.
+  try {
+    for (const line of params.items) {
+      const { data: saleData, error: saleErr } = await supabase.functions.invoke('record_sale', {
+        body: {
+          item_id: line.itemId,
+          quantity: line.quantity,
+          sale_price: String(line.salePrice),
+          platform: params.platform,
+          sold_at: soldAtIso,
+          source: 'manual',
+          external_order_id: params.externalOrderId ?? null,
+        },
       })
-      .eq('id', saleId)
-    if (stampErr) throw stampErr
+      if (saleErr) throw saleErr
+      if (saleData?.error) throw new Error(saleData.error)
+      const saleId: string = saleData.sale_id
+      if (!saleId) throw new Error('record_sale returned no sale_id')
+      saleIds.push(saleId) // before the stamp, so a stamp failure still gets undone
+      if ((saleData.unfulfilled_quantity ?? 0) > 0) oversoldItemIds.push(line.itemId)
 
-    saleIds.push(saleId)
-  }
+      // bundle_id links this line to the order. fees/shipping/net_payout are
+      // explicitly zeroed rather than left at record_sale's column default
+      // (recordTrade does the same for its given-side sales) — there's no
+      // principled per-line split of an order-level fee, so the Sales list
+      // falls back to showing the line's own price as its net payout; the true
+      // post-fee total lives only on the bundle.
+      const { error: stampErr } = await supabase
+        .from('sales')
+        .update({
+          bundle_id: bundleId,
+          payment_method: linePaymentMethod,
+          external_order_id: params.externalOrderId ?? null,
+          fees: 0,
+          shipping_cost: null,
+          net_payout: line.salePrice,
+        })
+        .eq('id', saleId)
+      if (stampErr) throw stampErr
+    }
 
-  // One payout/fee/shipping transaction set for the whole order, tagged
-  // related_bundle_id since no single line owns them.
-  const totalPrice = params.items.reduce((s, l) => s + l.salePrice, 0)
-  const merchantNames = params.items.map(l => l.itemName).filter(Boolean).join(', ')
-  const merchant = merchantNames.length > 120 ? merchantNames.slice(0, 117) + '…' : (merchantNames || 'Bundle sale')
-  const platformLabel = params.platform.charAt(0).toUpperCase() + params.platform.slice(1)
+    // One payout/fee/shipping transaction set for the whole order, tagged
+    // related_bundle_id since no single line owns them.
+    const totalPrice = params.items.reduce((s, l) => s + l.salePrice, 0)
+    const merchantNames = params.items.map(l => l.itemName).filter(Boolean).join(', ')
+    const merchant = merchantNames.length > 120 ? merchantNames.slice(0, 117) + '…' : (merchantNames || 'Bundle sale')
+    const platformLabel = params.platform.charAt(0).toUpperCase() + params.platform.slice(1)
 
-  const rows: Record<string, unknown>[] = [
-    {
-      user_id, date: params.soldAt, amount: totalPrice,
-      merchant, type: 'other', source: 'manual',
-      schedule_c_category: 'payout', related_bundle_id: bundleId,
-    },
-  ]
-  if (params.fees && params.fees > 0) {
-    rows.push({
-      user_id, date: params.soldAt, amount: -params.fees,
-      merchant: `${platformLabel} Fee`, type: 'fee', source: 'manual',
-      schedule_c_category: 'commissions_fees', related_bundle_id: bundleId,
-    })
+    const rows: Record<string, unknown>[] = [
+      {
+        user_id, date: params.soldAt, amount: totalPrice,
+        merchant, type: 'other', source: 'manual',
+        schedule_c_category: 'payout', related_bundle_id: bundleId,
+      },
+    ]
+    if (params.fees && params.fees > 0) {
+      rows.push({
+        user_id, date: params.soldAt, amount: -params.fees,
+        merchant: `${platformLabel} Fee`, type: 'fee', source: 'manual',
+        schedule_c_category: 'commissions_fees', related_bundle_id: bundleId,
+      })
+    }
+    if (params.shippingCost && params.shippingCost > 0) {
+      rows.push({
+        user_id, date: params.soldAt, amount: -params.shippingCost,
+        merchant: 'Shipping', type: 'shipping', source: 'manual',
+        schedule_c_category: 'shipping_postage', related_bundle_id: bundleId,
+      })
+    }
+    const { error: txErr } = await supabase.from('transactions').insert(rows)
+    if (txErr) throw txErr
+  } catch (e) {
+    await undoRecordedSales(saleIds, bundleId, e)
   }
-  if (params.shippingCost && params.shippingCost > 0) {
-    rows.push({
-      user_id, date: params.soldAt, amount: -params.shippingCost,
-      merchant: 'Shipping', type: 'shipping', source: 'manual',
-      schedule_c_category: 'shipping_postage', related_bundle_id: bundleId,
-    })
-  }
-  const { error: txErr } = await supabase.from('transactions').insert(rows)
-  if (txErr) throw txErr
 
   return { bundleId, saleIds, oversoldItemIds }
 }
@@ -1782,16 +1856,17 @@ export async function deleteBundleSale(bundleId: string): Promise<void> {
  * item's lots, which is a different shape of change (closer to delete-line-
  * then-add-line) than a plain field edit.
  *
- * Mirrors updateSale's shape: update the row(s), then sync only the
- * transactions that already exist by category (same limitation updateSale
- * has — adding a fee where none existed before doesn't create a new
- * transaction row).
+ * Mirrors updateSale's shape: update the row(s), then sync the bundle's
+ * transactions by category. Unlike updateSale, a fee/shipping row is created
+ * when one is added for the first time and deleted when edited to zero — see
+ * the comment above the transaction sync below.
  */
 export async function updateBundleSale(params: {
   bundleId: string
   soldAt: string // 'yyyy-MM-dd'
   platform: string
   paymentMethod: string | null
+  payments?: PaymentSplit[] | null
   externalOrderId: string | null
   fees: number | null
   shippingCost: number | null
@@ -1799,13 +1874,14 @@ export async function updateBundleSale(params: {
   lines: Array<{ id: string; quantity: number; salePrice: number }>
 }): Promise<void> {
   const soldAtIso = new Date(params.soldAt + 'T12:00:00').toISOString()
+  const payment = paymentFields(params.paymentMethod, params.payments)
 
   const { error: bundleErr } = await supabase
     .from('sale_bundles')
     .update({
       sold_at: params.soldAt,
       platform: params.platform,
-      payment_method: params.paymentMethod,
+      ...payment,
       external_order_id: params.externalOrderId,
       fees: params.fees ?? 0,
       shipping_cost: params.shippingCost,
@@ -1826,7 +1902,7 @@ export async function updateBundleSale(params: {
         sale_price: line.salePrice,
         sold_at: soldAtIso,
         platform: params.platform,
-        payment_method: params.paymentMethod,
+        payment_method: payment.payment_method,
         external_order_id: params.externalOrderId,
         net_payout: line.salePrice,
       })
@@ -1856,7 +1932,8 @@ export async function updateBundleSale(params: {
 
   const payoutTx = byCategory.get('payout')
   if (payoutTx) {
-    await supabase.from('transactions').update({ amount: totalPrice, date: params.soldAt }).eq('id', payoutTx.id)
+    const { error } = await supabase.from('transactions').update({ amount: totalPrice, date: params.soldAt }).eq('id', payoutTx.id)
+    if (error) throw error
   }
 
   async function syncCostRow(
@@ -1868,7 +1945,8 @@ export async function updateBundleSale(params: {
     const existing = byCategory.get(category)
     if (value && value > 0) {
       if (existing) {
-        await supabase.from('transactions').update({ amount: -value, date: params.soldAt }).eq('id', existing.id)
+        const { error } = await supabase.from('transactions').update({ amount: -value, date: params.soldAt }).eq('id', existing.id)
+        if (error) throw error
       } else {
         const { error } = await supabase.from('transactions').insert({
           user_id, date: params.soldAt, amount: -value,
