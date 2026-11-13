@@ -1,3 +1,10 @@
+// import_marketplace_csv (2026-11-13): eBay Transaction Report parsing moved to
+//   ../_shared/ebayTransactionReport.ts and fixed: Transaction ID "0" rows no
+//   longer collapse into one key (102 orders lost in 2025); all order fee
+//   columns are booked (below standard, international, regulatory…); label /
+//   charge / hold keys include date + amount so adjustments sharing a
+//   reference survive; "Purchase" rows are booked; exact repeats get _dupN.
+//   Existing keys re-keyed by migration 20261113140000_ebay_csv_rekey.sql.
 // import_marketplace_csv v21 (2026-11-09)
 // Fix: eBay Order Earnings re-imports now BACKFILL instead of clobbering, via
 //      ../_shared/salesImport.ts. New orders are inserted; existing live sales
@@ -44,6 +51,7 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts"
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2"
 import { upsertImportedSales } from "../_shared/salesImport.ts"
+import { parseEbayTransactionReport } from "../_shared/ebayTransactionReport.ts"
 
 function parseCSV(text: string): string[][] {
   const rows: string[][] = []
@@ -514,74 +522,18 @@ serve(async (req) => {
       }
       if (headerIdx === -1) return json(400, { error: 'Could not find eBay CSV header row (expected first column: "Transaction creation date")' })
 
-      const header = allRows[headerIdx].map(h => h.replace(/"/g,'').trim())
-      const col = (row: string[], name: string) => row[header.indexOf(name)]?.replace(/"/g,'').trim() ?? ''
-
-      for (let i = headerIdx + 1; i < allRows.length; i++) {
-        const r           = allRows[i]
-        const type        = col(r, 'Type')
-        const date        = parseDateAny(col(r, 'Transaction creation date'))
-        const payoutId    = col(r, 'Payout ID')
-        const transId     = col(r, 'Transaction ID')
-        const refId       = col(r, 'Reference ID')
-        const itemTitle   = col(r, 'Item title')
-        const netAmount   = parseAmount(col(r, 'Net amount'))
-        const grossAmount = parseAmount(col(r, 'Gross transaction amount'))
-        const fvfFixed    = parseAmount(col(r, 'Final Value Fee - fixed'))
-        const fvfVariable = parseAmount(col(r, 'Final Value Fee - variable'))
-        const description = col(r, 'Description')
-        const orderNumber = col(r, 'Order number')
-
-        if (!date) { trackSkip('bad_date'); continue }
-
-        const hasPayoutId = payoutId && payoutId !== '--' && payoutId !== ''
-        const groupId = hasPayoutId ? payoutId : null
-
-        if (type === 'Payout') {
-          if (netAmount !== 0 && groupId) { rowsParsed++; transactions.push({ user_id: user.id, date, amount: netAmount, gross_amount: null, merchant: 'eBay Payout', type: 'other', source: 'csv_import', platform: 'ebay', schedule_c_category: 'transfer', record_type: 'transaction', csv_transaction_id: `ebay_payout_${payoutId}`, csv_group_id: groupId, notes: null, parent_settlement_id: null }) } else { trackSkip('intentional:Payout') }
-          continue
-        }
-        if (type === 'Reserve' || type === 'Hold') {
-          if (netAmount !== 0 && groupId) { rowsParsed++; transactions.push({ user_id: user.id, date, amount: netAmount, gross_amount: null, merchant: description.slice(0,100) || `eBay ${type}`, type: 'other', source: 'csv_import', platform: 'ebay', schedule_c_category: 'balance_adjustment', record_type: 'transaction', csv_transaction_id: `ebay_${notDash(refId) || (date + '_' + type.toLowerCase() + '_' + Math.abs(netAmount))}_bal`, csv_group_id: groupId, notes: null, parent_settlement_id: null }) } else { trackSkip(`intentional:${type}`) }
-          continue
-        }
-        if (type === 'Transfer' || type === 'Secondary payout') { trackSkip(`intentional:${type}`); continue }
-
-        if (type === 'Order') {
-          rowsParsed++
-          transactions.push({ user_id: user.id, date, amount: grossAmount || netAmount, gross_amount: grossAmount || null, merchant: itemTitle || 'eBay Sale', type: 'other', source: 'csv_import', platform: 'ebay', schedule_c_category: 'payout', record_type: 'transaction', csv_transaction_id: `ebay_${notDash(transId) || orderNumber}_order`, csv_group_id: groupId, notes: notDash(orderNumber), parent_settlement_id: null })
-          const fvfTotal = fvfFixed + fvfVariable
-          if (fvfTotal !== 0) { rowsParsed++; transactions.push({ user_id: user.id, date, amount: fvfTotal, gross_amount: null, merchant: 'eBay Final Value Fee', type: 'other', source: 'csv_import', platform: 'ebay', schedule_c_category: 'commissions_fees', record_type: 'transaction', csv_transaction_id: `ebay_${notDash(transId) || orderNumber}_fvf`, csv_group_id: groupId, notes: notDash(orderNumber), parent_settlement_id: null }) }
-        } else if (type === 'Other fee') {
-          const isPromoted = description.toLowerCase().includes('promoted')
-          rowsParsed++
-          transactions.push({ user_id: user.id, date, amount: netAmount, gross_amount: null, merchant: description.slice(0,100) || 'eBay Fee', type: 'other', source: 'csv_import', platform: 'ebay', schedule_c_category: isPromoted ? 'advertising' : 'commissions_fees', record_type: 'transaction', csv_transaction_id: `ebay_${notDash(refId) || notDash(transId) || (notDash(orderNumber) + '_fee')}_fee`, csv_group_id: groupId, notes: notDash(orderNumber), parent_settlement_id: null })
-        } else if (type === 'Shipping label') {
-          rowsParsed++
-          transactions.push({ user_id: user.id, date, amount: netAmount, gross_amount: null, merchant: 'eBay Shipping Label', type: 'other', source: 'csv_import', platform: 'ebay', schedule_c_category: 'shipping_postage', record_type: 'transaction', csv_transaction_id: `ebay_${notDash(refId) || notDash(transId) || (date + '_ship_' + Math.abs(netAmount))}_ship`, csv_group_id: groupId, notes: notDash(orderNumber), parent_settlement_id: null })
-        } else if (type === 'Refund') {
-          // Use sanitized Reference ID (e.g. "Return_ID_5305955544") as the stable unique key.
-          // Transaction ID is always '--' for eBay Refund rows — using it directly caused every
-          // refund after the first to be silently dropped (ignoreDuplicates on 'ebay_--_refund').
-          const safeRefId = (notDash(refId) ?? '').replace(/[^a-zA-Z0-9_-]/g, '_')
-          const refundIdKey = safeRefId || (notDash(orderNumber) + '_' + date + '_refund')
-          rowsParsed++
-          transactions.push({ user_id: user.id, date, amount: netAmount, gross_amount: null, merchant: itemTitle || 'eBay Refund', type: 'other', source: 'csv_import', platform: 'ebay', schedule_c_category: 'payout', record_type: 'transaction', csv_transaction_id: `ebay_${refundIdKey}_refund`, csv_group_id: groupId, notes: notDash(orderNumber), parent_settlement_id: null })
-        } else if (type === 'Charge') {
-          rowsParsed++
-          transactions.push({ user_id: user.id, date, amount: netAmount, gross_amount: null, merchant: description.slice(0,100) || 'eBay Charge', type: 'other', source: 'csv_import', platform: 'ebay', schedule_c_category: 'other_expense', record_type: 'transaction', csv_transaction_id: `ebay_${notDash(refId) || (date + '_charge')}_charge`, csv_group_id: groupId, notes: null, parent_settlement_id: null })
-        } else if (type === 'Claim') {
-          rowsParsed++
-          transactions.push({ user_id: user.id, date, amount: netAmount, gross_amount: null, merchant: itemTitle || 'eBay Claim', type: 'other', source: 'csv_import', platform: 'ebay', schedule_c_category: 'other_expense', record_type: 'transaction', csv_transaction_id: `ebay_${notDash(refId) || notDash(orderNumber)}_claim`, csv_group_id: groupId, notes: notDash(orderNumber), parent_settlement_id: null })
-        } else if (type === 'Adjustment') {
-          rowsParsed++
-          transactions.push({ user_id: user.id, date, amount: netAmount, gross_amount: null, merchant: description.slice(0,100) || 'eBay Adjustment', type: 'other', source: 'csv_import', platform: 'ebay', schedule_c_category: 'other_expense', record_type: 'transaction', csv_transaction_id: `ebay_${notDash(refId)}_adj`, csv_group_id: groupId, notes: null, parent_settlement_id: null })
-        } else if (type === 'Withheld tax') {
-          rowsParsed++
-          transactions.push({ user_id: user.id, date, amount: netAmount, gross_amount: null, merchant: 'eBay Withheld Tax', type: 'other', source: 'csv_import', platform: 'ebay', schedule_c_category: 'taxes_licenses', record_type: 'transaction', csv_transaction_id: `ebay_${notDash(refId)}_tax`, csv_group_id: groupId, notes: null, parent_settlement_id: null })
-        } else {
-          trackSkip(`ebay_type:${type || 'empty'}`)
-        }
+      // Parsing lives in ../_shared/ebayTransactionReport.ts (unit-tested from
+      // the web app). Every booked row set sums to its row's Net amount.
+      const parsed = parseEbayTransactionReport(allRows[headerIdx], allRows.slice(headerIdx + 1))
+      for (const [why, n] of Object.entries(parsed.skipped)) for (let k = 0; k < n; k++) trackSkip(why)
+      for (const r of parsed.rows) {
+        rowsParsed++
+        transactions.push({
+          user_id: user.id, date: r.date, amount: r.amount, gross_amount: r.gross_amount, merchant: r.merchant,
+          type: 'other', source: 'csv_import', platform: 'ebay', schedule_c_category: r.schedule_c_category,
+          record_type: 'transaction', csv_transaction_id: r.csv_transaction_id, csv_group_id: r.csv_group_id,
+          notes: r.notes, parent_settlement_id: null,
+        })
       }
 
     // ──────────────────────────────

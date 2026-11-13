@@ -375,7 +375,8 @@ export function compareEbaySources(sales: EbaySaleInput[], csvRows: EbayCsvRowIn
 // explainable:
 //
 //   recorded sales net                       (A, Sales tab)
-// + order differences = report order net − A, per order        (sales check)
+// + order differences = report order net − A, per order        (sales check;
+//                       order rows incl. promoted-listing fees, as Order Earnings)
 // + not tied to an order (ads, store fees, labels, charges, holds)   (C)
 // − change in balance held on the platform   (E = Σ every report row)
 // = payouts in the platform report           (D = −Σ transfer rows)
@@ -416,7 +417,16 @@ export interface PlatformLedger {
   reportOrderNet: number
   /** reportOrderNet − recordedNet (sum of `orderDiffs`). */
   orderDifference: number
+  /**
+   * Labels the report bills with no order number. eBay Order Earnings (the
+   * Sales tab) charges each one to its order, so they show up as order
+   * differences of the opposite sign. Negative.
+   */
+  separateLabels: number
+  /** orderDifference + separateLabels: what the label attribution doesn't explain. Should be ~0. */
+  orderDifferenceAfterLabels: number
   orderDiffs: LedgerOrderDiff[]
+  /** C, by type: rows with no order number (store subscription, labels bought separately, charges, holds…). */
   notOnOrders: LedgerLine[]
   notOnOrdersTotal: number
   /** Σ every report row in the year incl. payouts. Positive = more held at year end than at the start. */
@@ -440,13 +450,18 @@ export interface PlatformLedger {
 }
 
 const NOT_ON_ORDER_LABELS: Record<string, string> = {
-  advertising: 'Promoted listings / ads',
+  advertising: 'Promoted listings / ads not on an order',
   commissions_fees: 'Store subscription & fees not on an order',
   shipping_postage: 'Shipping labels not on an order',
   other_expense: 'Other charges & credits',
   balance_adjustment: 'Holds & balance adjustments',
   payout: 'Credits not tied to an order',
+  cost_of_goods: 'eBay funds purchases (inventory bought with your balance)',
 }
+
+/** eBay "Charge for … from Visa/Chase …" rows: eBay pulled money from your card or bank to cover a negative balance. */
+const LABEL_PAID_IN = 'Paid in from your card/bank (eBay charges)'
+const LABEL_SEPARATE_SHIPPING = NOT_ON_ORDER_LABELS.shipping_postage
 
 const dayNum = (d: string) => Date.parse(d.slice(0, 10) + 'T00:00:00Z') / 86_400_000
 
@@ -494,14 +509,20 @@ export function computePlatformLedger(
     if (!inYear(r.date)) continue
     balanceChange += amt
     if (cat === 'transfer') { reportPayouts += -amt; reportPayoutCount++; continue }
-    if (r.notes && cat !== 'advertising') {
+    // Order rows: anything carrying an order number. Ads included: eBay Order
+    // Earnings counts the Promoted Listing Standard fee in the order's fees.
+    // Purchases (eBay funds purchase) carry the order number of something you
+    // BOUGHT, so they're never one of your sales.
+    if (r.notes && cat !== 'cost_of_goods') {
       reportOrderNet += amt
       const e = reportByOrder.get(r.notes) ?? { net: 0, date: r.date }
       e.net += amt
       reportByOrder.set(r.notes, e)
       continue
     }
-    const label = NOT_ON_ORDER_LABELS[cat] ?? cat
+    const label = cat === 'other_expense' && /^charge for /i.test(r.merchant ?? '')
+      ? LABEL_PAID_IN
+      : (NOT_ON_ORDER_LABELS[cat] ?? cat)
     const line = notOn.get(label) ?? { label, amount: 0, count: 0 }
     line.amount += amt; line.count++
     notOn.set(label, line)
@@ -575,6 +596,8 @@ export function computePlatformLedger(
     recordedNet: r2(recordedNet),
     reportOrderNet: r2(reportOrderNet),
     orderDifference: r2(reportOrderNet - recordedNet),
+    separateLabels: r2(notOnOrders.find(l => l.label === LABEL_SEPARATE_SHIPPING)?.amount ?? 0),
+    orderDifferenceAfterLabels: r2(reportOrderNet - recordedNet + (notOnOrders.find(l => l.label === LABEL_SEPARATE_SHIPPING)?.amount ?? 0)),
     orderDiffs,
     notOnOrders,
     notOnOrdersTotal: r2(notOnOrders.reduce((t, l) => t + l.amount, 0)),
@@ -595,8 +618,9 @@ export function computePlatformLedger(
   const plural = (n: number, w: string) => `${n} ${w}${n === 1 ? '' : 's'}`
   if (unmatchedReportPayouts.length) out.flags.push(`${plural(unmatchedReportPayouts.length, 'payout')} in the report not found in the bank`)
   if (unmatchedBankDeposits.length) out.flags.push(`${plural(unmatchedBankDeposits.length, 'bank deposit')} not in the report`)
-  if (Math.abs(out.orderDifference) > tolerance) {
-    out.flags.push(`Sales tab differs from the report on ${plural(orderDiffs.length, 'order')} (net ${out.orderDifference > 0 ? '+' : '−'}$${Math.abs(out.orderDifference).toFixed(2)})`)
+  if (Math.abs(out.orderDifferenceAfterLabels) > tolerance) {
+    const d = out.orderDifferenceAfterLabels
+    out.flags.push(`Sales tab differs from the report by ${d > 0 ? '+' : '−'}$${Math.abs(d).toFixed(2)} after labels bought separately (see orders)`)
   }
   return out
 }

@@ -287,12 +287,13 @@ describe('computePlatformLedger (eBay/Amazon report reconciliation)', () => {
 
   it('bridges recorded sales to report payouts exactly', () => {
     const l = computePlatformLedger('ebay', 2026, sales, rows, [])
-    expect([l.recordedNet, l.reportOrderNet, l.orderDifference]).toEqual([135, 150, 15])
-    expect(l.notOnOrdersTotal).toBe(-8)       // −5 label, −3 ads (ads never count as order rows)
-    expect(l.balanceChange).toBe(2)           // 150 − 8 − 140 paid out
+    // O2's −3 promoted-listing fee carries its order number, so it counts in the order (as Order Earnings does).
+    expect([l.recordedNet, l.reportOrderNet, l.orderDifference]).toEqual([135, 147, 12])
+    expect(l.notOnOrdersTotal).toBe(-5)       // only the label bought without an order number
+    expect(l.balanceChange).toBe(2)           // 147 − 5 − 140 paid out
     expect(l.reportPayouts).toBe(140)
     expect(r2(l.recordedNet + l.orderDifference + l.notOnOrdersTotal - l.balanceChange)).toBe(l.reportPayouts)
-    expect(l.orderDiffs).toEqual([{ orderId: 'O2', date: '2026-03-05', recorded: 50, report: 60, difference: 10 }, { orderId: 'O1', date: '2026-03-01', recorded: 85, report: 90, difference: 5 }])
+    expect(l.orderDiffs).toEqual([{ orderId: 'O2', date: '2026-03-05', recorded: 50, report: 57, difference: 7 }, { orderId: 'O1', date: '2026-03-01', recorded: 85, report: 90, difference: 5 }])
   })
 
   it('matches payouts exactly, then net of a small transfer fee; leftovers are unexplained', () => {
@@ -322,5 +323,24 @@ describe('computePlatformLedger (eBay/Amazon report reconciliation)', () => {
     expect(withReport[0].notes).toEqual([])
     const noReport = applyLedgers(base, [computePlatformLedger('ebay', 2026, sales, [], [])])
     expect(noReport[0].ledger).toBeUndefined()
+  })
+})
+
+describe('computePlatformLedger: labels bought separately, purchases, card charges', () => {
+  const row = (o: Partial<LedgerRow>): LedgerRow => ({ date: '2026-03-01', amount: 0, schedule_c_category: 'payout', notes: null, platform: 'ebay', ...o })
+  const sales = [sale({ platform: 'ebay', sold_at: '2026-03-01T12:00:00Z', net_payout: 90, external_order_id: 'S1' } as Partial<TieOutSale>)]
+  it('a label billed without an order number offsets the order difference; no flag when nothing else remains', () => {
+    const l = computePlatformLedger('ebay', 2026, sales, [
+      row({ amount: 100, notes: 'S1' }),                                    // Sales tab net 90 already deducts the $10 label
+      row({ amount: -10, schedule_c_category: 'shipping_postage' }),        // report bills the label separately
+      row({ amount: -140.1, schedule_c_category: 'cost_of_goods', notes: 'BOUGHT-1' }), // eBay funds purchase
+      row({ amount: 140.1, schedule_c_category: 'other_expense', merchant: 'Charge for refund cost from Visa ending in 6883' }),
+    ], [])
+    expect([l.orderDifference, l.separateLabels, l.orderDifferenceAfterLabels]).toEqual([10, -10, 0])
+    expect(l.orderDiffs.map(d => d.orderId)).toEqual(['S1'])               // the purchase is not one of your orders
+    expect(l.notOnOrders.map(n => n.label)).toEqual([
+      'eBay funds purchases (inventory bought with your balance)', 'Shipping labels not on an order', 'Paid in from your card/bank (eBay charges)',
+    ])
+    expect(l.flags).toEqual([])
   })
 })

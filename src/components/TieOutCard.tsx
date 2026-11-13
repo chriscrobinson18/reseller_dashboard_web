@@ -105,6 +105,12 @@ function LedgerBridge({ l }: { l: PlatformLedger }) {
       <div>
         <Line label="Recorded sales net (Sales tab)" value={formatUSD(l.recordedNet)} />
         <Line label={`Sales tab vs ${name} report, ${l.orderDiffs.length} order${l.orderDiffs.length === 1 ? '' : 's'}`} value={signed(l.orderDifference)} />
+        {l.separateLabels !== 0 && (
+          <Line
+            muted value=""
+            label={<>of which labels bought separately (the Sales tab charges each to its order; the report bills it without one). Remaining: {signed(l.orderDifferenceAfterLabels)}</>}
+          />
+        )}
         {l.notOnOrders.map(n => <Line key={n.label} label={<>{n.label} <span className="text-gray-400">({n.count})</span></>} value={signed(n.amount)} />)}
         <Line label={l.balanceChange >= 0 ? `Added to balance held on ${name}` : `Paid out from balance held on ${name}`} value={signed(-l.balanceChange)} />
         <Line label={`Payouts in the ${name} report (${l.reportPayoutCount})`} value={formatUSD(l.reportPayouts)} strong />
