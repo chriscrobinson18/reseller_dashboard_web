@@ -107,3 +107,56 @@ export function inventoryOnHandAsOf(
   }
   return { value: Math.round(value * 100) / 100, units, lotCount }
 }
+
+// ─── Period inventory change (Dashboard KPI row) ─────────────────────────────
+
+export interface PeriodInventory {
+  /** On hand at the end of the day BEFORE the period starts (0 for all-time). */
+  beginning: number
+  /** On hand at the end of the period (capped at today). */
+  ending: number
+  /** ending − beginning: inventory bought in the period but not yet sold, net of older stock sold off. */
+  change: number
+  beginningAsOf: string | null
+  endingAsOf: string
+}
+
+function dayBefore(ymd: string): string {
+  const d = new Date(ymd.slice(0, 10) + 'T00:00:00Z')
+  d.setUTCDate(d.getUTCDate() - 1)
+  return d.toISOString().slice(0, 10)
+}
+
+/**
+ * Lot-based inventory at both ends of a dashboard period, so the KPI row can
+ * show profit on an inventory basis instead of cash:
+ *
+ *   net after inventory = cash net + (ending − beginning)
+ *
+ * which is the same as replacing period purchases with
+ * beginning + purchases − ending (the Part III shape). Adding only `ending`
+ * would be wrong: stock on hand at the start was paid for — and expensed — in
+ * an EARLIER period, so it would be credited without its purchase.
+ *
+ * Management view only. The tax figure stays Part III (full year, stored
+ * valuations) — see docs/features/dashboard.md.
+ */
+export function inventoryChangeForPeriod(
+  lots: LotForValuation[],
+  movements: MovementForValuation[],
+  start: string | null,
+  end: string | null,
+  today: string,
+): PeriodInventory {
+  const endingAsOf = !end || end.slice(0, 10) > today ? today : end.slice(0, 10)
+  const beginningAsOf = start ? dayBefore(start) : null
+  const ending = inventoryOnHandAsOf(lots, movements, endingAsOf).value
+  const beginning = beginningAsOf ? inventoryOnHandAsOf(lots, movements, beginningAsOf).value : 0
+  return {
+    beginning,
+    ending,
+    change: Math.round((ending - beginning) * 100) / 100,
+    beginningAsOf,
+    endingAsOf,
+  }
+}

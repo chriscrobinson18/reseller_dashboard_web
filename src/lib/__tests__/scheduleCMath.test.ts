@@ -111,6 +111,24 @@ describe('computeKPIs', () => {
     expect(result.expenses).toBe(400)
     expect(result.net).toBe(600)
   })
+
+  it('reports inventory purchases and adds the inventory change to an inventory-basis net', () => {
+    const txs = [
+      tx({ id: 'a', amount: 1000, schedule_c_category: 'payout' }),
+      tx({ id: 'b', amount: -400, schedule_c_category: 'cost_of_goods' }),
+      tx({ id: 'c', amount: -100, schedule_c_category: 'supplies' }),
+    ]
+    const r = computeKPIs(txs, [], undefined, 250) // 250 of the 400 bought is still on the shelf
+    expect([r.net, r.inventoryPurchases, r.inventoryChange, r.netAfterInventory]).toEqual([500, 400, 250, 750])
+    // Without an inventory change, both nets agree (backward compatible).
+    const plain = computeKPIs(txs, [])
+    expect([plain.inventoryChange, plain.netAfterInventory]).toEqual([0, plain.net])
+  })
+
+  it('a falling inventory lowers the inventory-basis net (old stock sold this period)', () => {
+    const r = computeKPIs([tx({ id: 'a', amount: 1000, schedule_c_category: 'payout' })], [], undefined, -300)
+    expect(r.netAfterInventory).toBe(700)
+  })
 })
 
 describe('computeMonthlyChart', () => {

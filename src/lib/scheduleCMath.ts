@@ -42,35 +42,52 @@ export function computeScheduleC(
 
 export interface KPITotals {
   income: number    // display value, always >= 0 in normal cases
-  expenses: number  // display value, always >= 0 in normal cases
-  net: number       // income - expenses
+  expenses: number  // display value, always >= 0 in normal cases (cash: includes inventory purchases)
+  net: number       // income - expenses (cash basis)
+  /** Inventory purchases (cost_of_goods bucket) included in `expenses`, positive magnitude. */
+  inventoryPurchases: number
+  /** ending − beginning inventory for the period; 0 when not supplied. */
+  inventoryChange: number
+  /** net + inventoryChange: profit with unsold inventory treated as an asset, not an expense. */
+  netAfterInventory: number
 }
 
 /**
  * Period-scoped income, expenses, and net for the dashboard KPI row. Refunds
  * against expenses reduce expenses. With sales: income += gross − returns,
  * expenses += fees + platform shipping.
+ *
+ * `inventoryChange` (from inventoryChangeForPeriod in partIII.ts) turns the
+ * cash net into an inventory-basis net: purchases still on the shelf at the
+ * end of the period aren't a cost of this period's sales.
  */
 export function computeKPIs(
   transactions: Transaction[],
   customs: CustomCategory[],
   sales?: SalesIncomeTotals,
+  inventoryChange = 0,
 ): KPITotals {
   let incomeSum = 0
   let expenseSum = 0  // negative in the normal case
+  let cogsSum = 0     // negative in the normal case
   for (const t of transactions) {
     const b = bucketTransaction(t, customs)
     if (b.bucket === 'income') incomeSum += b.signedAmount
     else if (b.bucket === 'expense' || b.bucket === 'cogs') expenseSum += b.signedAmount
+    if (b.bucket === 'cogs') cogsSum += b.signedAmount
   }
   if (sales) {
     incomeSum += sales.grossReceipts - sales.returns
     expenseSum -= sales.fees + sales.platformShipping
   }
+  const net = incomeSum + expenseSum // expenseSum already negative
   return {
     income: incomeSum,
     expenses: Math.abs(expenseSum),
-    net: incomeSum + expenseSum, // expenseSum already negative
+    net,
+    inventoryPurchases: -cogsSum,
+    inventoryChange,
+    netAfterInventory: net + inventoryChange,
   }
 }
 

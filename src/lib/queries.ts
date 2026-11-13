@@ -4,6 +4,8 @@ import type { Item, InventoryLot, Trade, SaleBundle, PlaidItem, PlaidAccount, Tr
 import type { CustomCategory } from './categories'
 import { customCategoryValue } from './categories'
 import type { ColorKey } from './categoryPalette'
+import { fetchAllRows } from './fetchAll'
+import type { LotForValuation, MovementForValuation } from './partIII'
 
 export interface ItemWithLots extends Item {
   inventory_lots: InventoryLot[]
@@ -546,6 +548,42 @@ export function useInventoryValuations() {
         .order('tax_year')
       if (error) throw error
       return (data ?? []).map(r => ({ ...r, ending_inventory: Number(r.ending_inventory) })) as InventoryValuation[]
+    },
+  })
+}
+
+/**
+ * Every live lot + every sale movement, for lot-based inventory valuation as of
+ * any date (inventoryOnHandAsOf / inventoryChangeForPeriod in partIII.ts).
+ * Shared by the Part III card and the Dashboard KPI row — one cached query.
+ * Paged: PostgREST caps each response at 1000 rows.
+ */
+export function useLotValuationData() {
+  return useQuery({
+    queryKey: ['inventory', 'valuation-lots'],
+    queryFn: async (): Promise<{ lots: LotForValuation[]; movements: MovementForValuation[] }> => {
+      type SaleRef = { sold_at: string; deleted_at: string | null }
+      type MovRow = { inventory_lot_id: string; quantity: number; sales: SaleRef | SaleRef[] | null }
+      const [lots, movRows] = await Promise.all([
+        fetchAllRows<LotForValuation>((from, to) => supabase.from('inventory_lots')
+          .select('id, quantity_remaining, unit_cost, purchase_date, created_at, deleted_at')
+          .is('deleted_at', null)
+          .order('id')
+          .range(from, to)),
+        fetchAllRows<MovRow>((from, to) => supabase.from('inventory_movements')
+          .select('id, inventory_lot_id, quantity, sales(sold_at, deleted_at)')
+          .order('id')
+          .range(from, to)),
+      ])
+      const movements: MovementForValuation[] = movRows.map(m => {
+        const sale = Array.isArray(m.sales) ? m.sales[0] : m.sales
+        return {
+          inventory_lot_id: m.inventory_lot_id,
+          quantity: m.quantity,
+          sold_at: sale && !sale.deleted_at ? sale.sold_at : null,
+        }
+      })
+      return { lots, movements }
     },
   })
 }

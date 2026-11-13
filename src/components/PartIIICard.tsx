@@ -3,13 +3,10 @@ import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { supabase } from '../lib/supabase'
 import { fetchAllRows } from '../lib/fetchAll'
 import { formatUSD } from '../lib/utils'
-import { useInventoryValuations } from '../lib/queries'
+import { useInventoryValuations, useLotValuationData } from '../lib/queries'
 import { saveInventoryValuation, type InventoryValuationInput } from '../lib/mutations'
 import { computeScheduleCSummary } from '../lib/csvExport'
-import {
-  computePartIII, inventoryOnHandAsOf,
-  type LotForValuation, type MovementForValuation,
-} from '../lib/partIII'
+import { computePartIII, inventoryOnHandAsOf } from '../lib/partIII'
 import type { CustomCategory } from '../lib/categories'
 import type { Transaction } from '../lib/types'
 
@@ -37,30 +34,6 @@ async function fetchYearTransactions(year: number): Promise<Transaction[]> {
     .lte('date', `${year}-12-31`)
     .order('id')
     .range(from, to))
-}
-
-async function fetchLotData(): Promise<{ lots: LotForValuation[]; movements: MovementForValuation[] }> {
-  type MovRow = { inventory_lot_id: string; quantity: number; sales: { sold_at: string; deleted_at: string | null } | { sold_at: string; deleted_at: string | null }[] | null }
-  const [lots, movRows] = await Promise.all([
-    fetchAllRows<LotForValuation>((from, to) => supabase.from('inventory_lots')
-      .select('id, quantity_remaining, unit_cost, purchase_date, created_at, deleted_at')
-      .is('deleted_at', null)
-      .order('id')
-      .range(from, to)),
-    fetchAllRows<MovRow>((from, to) => supabase.from('inventory_movements')
-      .select('id, inventory_lot_id, quantity, sales(sold_at, deleted_at)')
-      .order('id')
-      .range(from, to)),
-  ])
-  const movements: MovementForValuation[] = movRows.map(m => {
-    const sale = Array.isArray(m.sales) ? m.sales[0] : m.sales
-    return {
-      inventory_lot_id: m.inventory_lot_id,
-      quantity: m.quantity,
-      sold_at: sale && !sale.deleted_at ? sale.sold_at : null,
-    }
-  })
-  return { lots, movements }
 }
 
 function Row({ line, label, value, strong, warn }: { line: string; label: string; value: number; strong?: boolean; warn?: string }) {
@@ -179,7 +152,7 @@ export default function PartIIICard({ customs }: { customs: CustomCategory[] }) 
     queryKey: ['transactions', 'part-iii', year],
     queryFn: () => fetchYearTransactions(year),
   })
-  const { data: lotData } = useQuery({ queryKey: ['inventory', 'valuation-lots'], queryFn: fetchLotData })
+  const { data: lotData } = useLotValuationData()
 
   // Purchases use exactly the Summary CSV's rules (sale-derived / settlement /
   // net-zero / excluded rows skipped), so the card and the export agree.

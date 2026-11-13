@@ -7,7 +7,8 @@ import {
 import { supabase } from '../lib/supabase'
 import { getPeriodRange, PERIOD_LABELS, type PeriodPreset } from '../lib/periods'
 import { CATEGORIES, resolveCategory, type CustomCategory, type CategoryDef } from '../lib/categories'
-import { useCustomCategories, useInventoryValuations } from '../lib/queries'
+import { useCustomCategories, useInventoryValuations, useLotValuationData } from '../lib/queries'
+import { inventoryChangeForPeriod } from '../lib/partIII'
 import PartIIICard from '../components/PartIIICard'
 import TieOutCard from '../components/TieOutCard'
 import { computeScheduleC, computeKPIs, computeMonthlyChart } from '../lib/scheduleCMath'
@@ -96,17 +97,28 @@ function computeProfitability(sales: Sale[]) {
 
 // ─── Sub-components ───────────────────────────────────────────────────────────
 
-function KpiCard({ label, value, positive }: { label: string; value: number; positive?: boolean }) {
+function KpiCard({ label, value, positive, sub, loading }: {
+  label: string
+  value: number
+  positive?: boolean
+  /** Small explanatory line under the value. */
+  sub?: React.ReactNode
+  loading?: boolean
+}) {
   const isPositive = positive !== undefined ? positive : value >= 0
   return (
-    <div className="bg-white border border-gray-200 rounded-xl p-4">
+    <div className="bg-white border border-gray-200 rounded-xl p-4 h-full">
       <div className="text-xs text-gray-500 font-medium mb-1">{label}</div>
-      <div className={`text-lg sm:text-xl font-semibold tabular-nums break-words ${isPositive ? 'text-gray-900' : 'text-red-500'}`}>
-        {formatUSD(value)}
+      <div className={`text-lg sm:text-xl font-semibold tabular-nums break-words ${loading ? 'text-gray-300' : isPositive ? 'text-gray-900' : 'text-red-500'}`}>
+        {loading ? '—' : formatUSD(value)}
       </div>
+      {sub && !loading && <div className="text-xs text-gray-500 mt-1 tabular-nums">{sub}</div>}
     </div>
   )
 }
+
+const shortDate = (ymd: string) =>
+  new Date(ymd + 'T00:00:00Z').toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric', timeZone: 'UTC' })
 
 function ProfitRow({ label, value, muted }: { label: string; value: number; muted?: boolean }) {
   return (
@@ -169,7 +181,22 @@ export default function DashboardPage() {
   const salesIncome = useMemo(() => computeSalesIncome(sales, bundles), [sales, bundles])
   const salesByMonth = useMemo(() => computeSalesIncomeByMonth(sales, bundles), [sales, bundles])
 
-  const kpis = useMemo(() => computeKPIs(transactions, customs, salesIncome), [transactions, customs, salesIncome])
+  // Inventory on hand at both ends of the period (lot-based), so Net treats
+  // unsold stock as an asset rather than a cost of this period's sales.
+  const { data: lotData, isLoading: loadingLots } = useLotValuationData()
+  const periodInventory = useMemo(
+    () => lotData
+      ? inventoryChangeForPeriod(lotData.lots, lotData.movements, range.start, range.end, new Date().toISOString().slice(0, 10))
+      : null,
+    [lotData, range.start, range.end],
+  )
+  const kpis = useMemo(
+    () => computeKPIs(transactions, customs, salesIncome, periodInventory?.change ?? 0),
+    [transactions, customs, salesIncome, periodInventory],
+  )
+  // Sales with no inventory link never deplete a lot, so their units still
+  // count as on hand — ending inventory (and Net) is overstated by their cost.
+  const unlinkedSales = useMemo(() => sales.filter(s => !s.item_id && !s.trade_id), [sales])
   const profitability = useMemo(() => computeProfitability(sales), [sales])
   const monthlyData = useMemo(() => computeMonthlyChart(transactions, customs, salesByMonth), [transactions, customs, salesByMonth])
   const scheduleC = useMemo(() => computeScheduleC(transactions, customs, salesIncome), [transactions, customs, salesIncome])
@@ -276,11 +303,35 @@ export default function DashboardPage() {
 
       {/* KPI row */}
       {/* Phones: Income | Expenses side by side, Net full-width beneath. */}
-      <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 md:gap-4">
+      {/* Net is inventory-basis: cash net + (ending − beginning inventory). */}
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 md:gap-4">
         <KpiCard label="Total Income" value={kpis.income} positive />
-        <KpiCard label="Total Expenses" value={kpis.expenses} positive={false} />
-        <div className="col-span-2 sm:col-span-1"><KpiCard label="Net" value={kpis.net} /></div>
+        <KpiCard
+          label="Total Expenses" value={kpis.expenses} positive={false}
+          sub={kpis.inventoryPurchases > 0 ? <>incl. {formatUSD(kpis.inventoryPurchases)} inventory bought</> : undefined}
+        />
+        <KpiCard
+          label={periodInventory ? `Inventory on hand · ${shortDate(periodInventory.endingAsOf)}` : 'Inventory on hand'}
+          value={periodInventory?.ending ?? 0} positive loading={loadingLots}
+          sub={periodInventory && (periodInventory.beginningAsOf
+            ? <>{periodInventory.change >= 0 ? '+' : '−'}{formatUSD(Math.abs(periodInventory.change))} vs {shortDate(periodInventory.beginningAsOf)} ({formatUSD(periodInventory.beginning)})</>
+            : <>All time</>)}
+        />
+        <KpiCard
+          label="Net (inventory counted)" value={kpis.netAfterInventory} loading={loadingLots}
+          sub={<>Cash basis: {formatUSD(kpis.net)}</>}
+        />
       </div>
+      <p className="text-xs text-gray-500 -mt-2 md:-mt-4">
+        Net counts inventory still on hand as an asset, not an expense: cash net {kpis.inventoryChange >= 0 ? '+' : '−'} change in inventory over the period. Inventory is valued from your lots at cost.
+        {' '}Tax filing uses Part III below (full year).
+        {unlinkedSales.length > 0 && (
+          <span className="block text-amber-700 mt-0.5">
+            ⚠️ {unlinkedSales.length} sale{unlinkedSales.length === 1 ? '' : 's'} in this period {unlinkedSales.length === 1 ? 'isn\'t' : 'aren\'t'} linked to inventory, so {unlinkedSales.length === 1 ? 'its item still counts' : 'their items still count'} as on hand — inventory and Net are overstated by that cost.{' '}
+            <Link to="/sales" className="underline">Link them on Sales</Link>.
+          </span>
+        )}
+      </p>
 
       {/* Profitability + Schedule C side by side */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
