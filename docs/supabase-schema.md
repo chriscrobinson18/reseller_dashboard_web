@@ -238,6 +238,29 @@ One row per linked Plaid Item (institution). `plaid_accounts` is the per-account
 ### `inventory_valuations`
 Added 2026-11-09 (migration `20261109150000_inventory_valuations.sql`). Year-end inventory value per tax year for Schedule C Part III (traditional method). Columns: `user_id`, `tax_year` (unique per user), `ending_inventory` (numeric ≥ 0), `method` (`count` / `estimate` / `lots` / `filed_return`), `notes`, timestamps. Owner-scoped RLS (select/insert/update/delete on `auth.uid() = user_id`). Beginning inventory is the prior year's row, never stored separately. Read by `useInventoryValuations`, written by `saveInventoryValuation` / `deleteInventoryValuation`.
 
+## Review markers (`review_status`, added 2026-11-13)
+
+Migration `20261113120000_review_status.sql`. Purpose: show which records an AI assistant has checked or changed, and stop anything but the owner from changing a record the owner has confirmed.
+
+- Columns on `transactions`, `sales`, `inventory_lots`: `review_status text` (`null` | `'ai_reviewed'` | `'owner_reviewed'`) and `reviewed_at timestamptz`. Partial index on each.
+- Trigger `owner_review_lock` → `enforce_owner_review_lock()` (before insert/update/delete). Who is who comes from the PostgREST JWT (`review_jwt_role()`):
+
+| Caller | On an `owner_reviewed` row |
+| --- | --- |
+| Owner (app session, `authenticated`, `auth.uid() = user_id`) | Anything, including un-marking |
+| `service_role` edge functions (Plaid sync, imports, `record_sale`, `record_return`) | Protected fields are silently kept at their old values; other fields update; deletes are skipped. Syncs/imports never fail |
+| Anything else (direct SQL, admin scripts, AI assistants) | Error on any protected-field change or delete |
+
+- Only the owner can set `owner_reviewed` or move a row off it.
+- Protected fields (`owner_review_locked_fields()`) are the reviewed decisions:
+  - transactions: category, record type, net-zero pair, sale/bundle/trade/settlement links, non-cash flag.
+  - sales: item link, bundle/trade, quantity, price, fees, shipping, discount, net payout, sold date, platform, deleted_at.
+  - lots: item, funding transaction, trade, box opening, quantities purchased, unit cost, initial unit cost, purchase date, deleted_at.
+
+  Bank facts (amount, date, merchant), notes, a lot's `quantity_remaining` and sale refund/return fields stay writable, so sales and returns keep working.
+- Link tables: trigger `owner_review_lock` → `enforce_owner_review_link_lock()` on `inventory_movements` (sale ↔ lot) and `inventory_lot_transactions` (lot ↔ charge). Callers other than `authenticated` and `service_role` cannot add, change or remove a link that touches an owner-reviewed sale, lot or transaction.
+- Writes: `setReviewStatus(table, ids, status)` in `mutations.ts`; UI in `components/ReviewMarker.tsx`.
+
 ## Tables referenced but not yet built on (per TASKS.md)
 - `category_rules` (planned — merchant auto-categorization)
 - `tax_profiles` (planned — Schedule C header fields, home office sqft, vehicle method)

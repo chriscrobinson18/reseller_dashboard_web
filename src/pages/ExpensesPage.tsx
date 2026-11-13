@@ -1,6 +1,6 @@
 import { useState, useMemo, useEffect } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { Search, Filter, ChevronDown, Plus, Pencil, Trash2, Tag, X, ExternalLink, ArrowUp, ArrowDown } from 'lucide-react'
+import { Search, Filter, ChevronDown, Plus, Pencil, Trash2, Tag, X, ExternalLink, ArrowUp, ArrowDown, Lock } from 'lucide-react'
 import { supabase } from '../lib/supabase'
 import { getPeriodRange, type PeriodPreset } from '../lib/periods'
 import { resolveCategory } from '../lib/categories'
@@ -9,6 +9,8 @@ import { formatUSD, formatDate, formatShortDate } from '../lib/utils'
 import { updateTransaction, deleteTransaction, unpairNetZero } from '../lib/mutations'
 import PeriodPicker from '../components/PeriodPicker'
 import CategoryBadge from '../components/CategoryBadge'
+import { ReviewBadge, ReviewControl } from '../components/ReviewMarker'
+import { setReviewStatus } from '../lib/mutations'
 import SlideOver from '../components/SlideOver'
 import ConfirmDialog from '../components/ConfirmDialog'
 import AddTransactionModal from '../components/modals/AddTransactionModal'
@@ -97,6 +99,8 @@ function SortableTh({ field, label, width, align, sortField, sortDir, onSort }: 
 
 function TransactionDetail({ tx, onClose, onOpenTrade, onManage }: { tx: Transaction; onClose: () => void; onOpenTrade: (id: string) => void; onManage: () => void }) {
   const qc = useQueryClient()
+  const ownerLocked = tx.review_status === 'owner_reviewed'
+  const catLocked = !!tx.trade_id || ownerLocked
   const [notes, setNotes] = useState(tx.notes ?? '')
   const [editingCat, setEditingCat] = useState(false)
   const [editing, setEditing] = useState(false)
@@ -315,14 +319,16 @@ function TransactionDetail({ tx, onClose, onOpenTrade, onManage }: { tx: Transac
         </div>
       )}
 
+      <ReviewControl table="transactions" id={tx.id} status={tx.review_status} reviewedAt={tx.reviewed_at} invalidate={[['transactions']]} />
+
       {/* Category */}
       <div>
         <div className="text-xs font-medium text-gray-500 mb-1.5">Schedule C Category</div>
         <div className="relative">
           <button
-            onClick={() => !tx.trade_id && setEditingCat(!editingCat)}
-            disabled={!!tx.trade_id}
-            title={tx.trade_id ? 'Locked — part of a trade' : undefined}
+            onClick={() => !catLocked && setEditingCat(!editingCat)}
+            disabled={catLocked}
+            title={tx.trade_id ? 'Locked — part of a trade' : ownerLocked ? 'Reviewed by you — unlock to edit' : undefined}
             className="flex items-center gap-2 border border-gray-200 rounded-lg px-3 py-2 text-sm w-full text-left hover:border-gray-300 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
           >
             {cat ? (
@@ -330,9 +336,9 @@ function TransactionDetail({ tx, onClose, onOpenTrade, onManage }: { tx: Transac
             ) : (
               <span className="text-gray-400 text-xs">No category</span>
             )}
-            {!tx.trade_id && <ChevronDown size={14} className="text-gray-400 ml-auto" />}
+            {!catLocked && <ChevronDown size={14} className="text-gray-400 ml-auto" />}
           </button>
-          {!tx.trade_id && editingCat && (
+          {!catLocked && editingCat && (
             <div className="absolute top-full left-0 right-0 z-10 mt-1">
               <CategoryDropdown
                 current={tx.schedule_c_category}
@@ -511,6 +517,7 @@ export default function ExpensesPage() {
   // Cost-of-goods purchases vs inventory lots (2026-11-12): flags purchases
   // that have no lot linked, or lots covering less than the charge.
   const [lotFilter, setLotFilter] = useState<'all' | 'unlinked' | 'partial'>('all')
+  const [reviewFilter, setReviewFilter] = useState<'all' | 'none' | 'ai_reviewed' | 'owner_reviewed'>('all')
   // Hold only the id, never a snapshot: the detail panel must re-render from
   // freshly-fetched data after a category/notes/field edit, otherwise it keeps
   // showing the values captured when the row was clicked until it's reopened.
@@ -549,8 +556,18 @@ export default function ExpensesPage() {
     onSuccess: () => qc.invalidateQueries({ queryKey: ['transactions'] }),
   })
 
+  const bulkReviewMutation = useMutation({
+    mutationFn: () => setReviewStatus('transactions', [...selectedIds], 'owner_reviewed'),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['transactions'] })
+      setSelectedIds(new Set())
+      setShowBulkCat(false)
+    },
+  })
+
   const bulkCatMutation = useMutation({
-    mutationFn: (cat: string | null) => bulkUpdateCategory([...selectedIds], cat),
+    // Rows you've marked reviewed are locked: bulk recategorize skips them.
+    mutationFn: ({ ids, cat }: { ids: string[]; cat: string | null }) => bulkUpdateCategory(ids, cat),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['transactions'] })
       setSelectedIds(new Set())
@@ -599,10 +616,17 @@ export default function ExpensesPage() {
     return { unlinked, partial }
   }, [lotStatus])
 
+  const reviewCounts = useMemo(() => {
+    const c = { ai_reviewed: 0, owner_reviewed: 0, none: 0 }
+    for (const t of transactions) c[t.review_status ?? 'none']++
+    return c
+  }, [transactions])
+
   const filtered = useMemo(() => {
     const terms = parseSearchTerms(search)
     return transactions.filter(t => {
       if (lotFilter !== 'all' && lotStatus.get(t.id) !== lotFilter) return false
+      if (reviewFilter !== 'all' && (t.review_status ?? 'none') !== reviewFilter) return false
       if (!showSaleLinked && (t.related_sale_id || t.source === 'csv_import')) return false
       if (catFilter === UNCATEGORIZED_SENTINEL) {
         if (t.schedule_c_category) return false
@@ -616,7 +640,7 @@ export default function ExpensesPage() {
       if (accountFilter && t.plaid_account_id !== accountFilter) return false
       return matchesSearch(t, terms, customsAll)
     })
-  }, [transactions, showSaleLinked, catFilter, dirFilter, sourceFilter, accountFilter, lotFilter, lotStatus, search, customsAll])
+  }, [transactions, showSaleLinked, catFilter, dirFilter, sourceFilter, accountFilter, lotFilter, reviewFilter, lotStatus, search, customsAll])
 
   // Sorted view of the filtered set. Default (date, desc) matches the
   // server's own `.order('date', { ascending: false })`, so leaving sort
@@ -649,7 +673,7 @@ export default function ExpensesPage() {
   // Clear any selection when the visible set changes, so a bulk action never
   // silently applies to rows the user can no longer see. Render-phase reset
   // (React's "storing info from previous renders" pattern) rather than an effect.
-  const filterSig = `${range.start}|${range.end}|${search}|${catFilter}|${showSaleLinked}|${dirFilter}|${sourceFilter}|${accountFilter}|${lotFilter}`
+  const filterSig = `${range.start}|${range.end}|${search}|${catFilter}|${showSaleLinked}|${dirFilter}|${sourceFilter}|${accountFilter}|${lotFilter}|${reviewFilter}`
   const [lastFilterSig, setLastFilterSig] = useState(filterSig)
   if (filterSig !== lastFilterSig) {
     setLastFilterSig(filterSig)
@@ -678,7 +702,7 @@ export default function ExpensesPage() {
   }, [ddTxId])
 
   const ddTx = ddTxId ? sorted.find(t => t.id === ddTxId) ?? null : null
-  const activeFilterCount = [catFilter, dirFilter !== 'all', sourceFilter !== 'all', accountFilter, lotFilter !== 'all', showSaleLinked].filter(Boolean).length
+  const activeFilterCount = [catFilter, dirFilter !== 'all', sourceFilter !== 'all', accountFilter, lotFilter !== 'all', reviewFilter !== 'all', showSaleLinked].filter(Boolean).length
 
   const allSelected = selectable.length > 0 && selectable.every(t => selectedIds.has(t.id))
   const someSelected = selectedIds.size > 0
@@ -831,6 +855,17 @@ export default function ExpensesPage() {
               <option value="unlinked">Cost of goods without lots ({lotCounts.unlinked})</option>
               <option value="partial">Cost of goods partly linked ({lotCounts.partial})</option>
             </select>
+            <select
+              value={reviewFilter}
+              onChange={e => setReviewFilter(e.target.value as 'all' | 'none' | 'ai_reviewed' | 'owner_reviewed')}
+              aria-label="Review"
+              className="min-w-0 border border-gray-200 rounded-lg px-2 py-1.5 text-sm text-gray-700 bg-white focus:outline-none focus:ring-2 focus:ring-gray-900"
+            >
+              <option value="all">Any review</option>
+              <option value="ai_reviewed">AI reviewed ({reviewCounts.ai_reviewed})</option>
+              <option value="owner_reviewed">Reviewed by me ({reviewCounts.owner_reviewed})</option>
+              <option value="none">Not reviewed ({reviewCounts.none})</option>
+            </select>
             {/* Phones have no sortable column headers — sort lives here instead. */}
             <select
               value={`${sortField}:${sortDir}`}
@@ -911,9 +946,10 @@ export default function ExpensesPage() {
                           <CategoryBadge
                             size="xs"
                             value={tx.schedule_c_category}
-                            onClick={tx.trade_id ? undefined : e => openDropdown(tx.id, e)}
+                            onClick={tx.trade_id || tx.review_status === 'owner_reviewed' ? undefined : e => openDropdown(tx.id, e)}
                           />
                         </span>
+                        <ReviewBadge status={tx.review_status} compact />
                         <span className="shrink-0 tabular-nums">{formatShortDate(tx.date)}</span>
                         <span className="truncate">· {tx.account_display || tx.platform || '—'}</span>
                       </div>
@@ -1002,10 +1038,13 @@ export default function ExpensesPage() {
                         )}
                       </td>
                       <td className="px-4 py-2.5" onClick={e => e.stopPropagation()}>
-                        <CategoryBadge
-                          value={tx.schedule_c_category}
-                          onClick={tx.trade_id ? undefined : e => openDropdown(tx.id, e)}
-                        />
+                        <span className="inline-flex items-center gap-1">
+                          <CategoryBadge
+                            value={tx.schedule_c_category}
+                            onClick={tx.trade_id || tx.review_status === 'owner_reviewed' ? undefined : e => openDropdown(tx.id, e)}
+                          />
+                          <ReviewBadge status={tx.review_status} compact />
+                        </span>
                         {!tx.trade_id && ddTxId === tx.id && (
                           <div
                             data-cat-dd
@@ -1063,12 +1102,24 @@ export default function ExpensesPage() {
                 {showBulkCat && (
                   <div className="absolute bottom-full right-0 mb-2">
                     <CategoryDropdown
-                      onSelect={(v) => bulkCatMutation.mutate(v)}
+                      onSelect={(v) => bulkCatMutation.mutate({
+                        ids: transactions.filter(t => selectedIds.has(t.id) && t.review_status !== 'owner_reviewed').map(t => t.id),
+                        cat: v,
+                      })}
                       onManage={() => { setShowBulkCat(false); setShowManage(true) }}
                     />
                   </div>
                 )}
               </div>
+              <button
+                type="button"
+                onClick={() => bulkReviewMutation.mutate()}
+                disabled={bulkReviewMutation.isPending}
+                title="Mark the selected transactions reviewed by me (locks them)"
+                className="flex items-center gap-1.5 bg-white/10 hover:bg-white/20 rounded-full px-3 py-1.5 text-sm font-medium transition-colors disabled:opacity-50 whitespace-nowrap"
+              >
+                <Lock size={13} /> {bulkReviewMutation.isPending ? 'Saving…' : 'Mark reviewed'}
+              </button>
               <button
                 type="button"
                 onClick={() => { setSelectedIds(new Set()); setShowBulkCat(false) }}

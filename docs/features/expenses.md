@@ -83,6 +83,16 @@ Before this runs, `classifySettlement` marks incoming deposits as `record_type =
 - **When `schedule_c_category === 'cost_of_goods'`**, renders `TransactionInventorySection` — lets the user link this purchase transaction to one or more `inventory_lots` (see Inventory doc). This is the only place lot↔transaction linking happens outside the Inventory page's "Add Lot" flow.
 - Delete (`deleteTransaction`) is a hard delete with a confirm dialog; copy explicitly warns "inventory lots linked to it will be unlinked but kept" (FK `ON DELETE SET NULL`).
 
+## Review markers (added 2026-11-13)
+
+See `docs/supabase-schema.md` → Review markers.
+
+- **Rows:** a compact badge shows next to the category: amber robot = AI reviewed, green lock = Reviewed by me.
+- **Filter:** "Any review / AI reviewed / Reviewed by me / Not reviewed", with counts.
+- **Detail panel:** a Review section with "Mark reviewed by me" / "Unlock to edit".
+- **Locking:** while a row is owner-reviewed, its category picker is disabled in the panel and inline.
+- **Bulk bar:** "Mark reviewed". Bulk "Set category" skips owner-reviewed rows.
+
 ## Add Transaction modal
 
 `AddTransactionModal` → `insertTransaction` in `mutations.ts`. Always `source: 'manual'`. No sale-linking, no inventory-linking from this modal — pure standalone transaction entry.

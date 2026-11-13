@@ -24,6 +24,10 @@ The footer count reflects the active view — items in By Item, lots in By Date.
 - Per-lot sub-row: purchase date (`purchase_date`, falling back to `created_at` for lots entered before the column was added), purchased/remaining quantities, unit cost, value (`remaining * unit_cost`), purchase-transaction link status (`Linked` vs. italic `No purchase record` — clickable, see below), and a "% sold" progress bar (`(purchased - remaining) / purchased * 100`).
 - "Add purchase lot" row always rendered at the bottom of an expanded item's lot list, even when the item has zero lots.
 
+## Review markers (added 2026-11-13)
+
+Lot rows (By Item, ledger, mobile) show a compact review badge. The Edit Lot modal has the Review section ("Mark reviewed by me" / "Unlock to edit"). An owner-reviewed lot's item, quantity purchased, cost, date and funding links are locked against AI and imports. `quantity_remaining` still moves with sales. See `docs/supabase-schema.md` → Review markers.
+
 ## Mutations
 
 - `createItem`/`updateItem`/`deleteItem` (soft delete) — straightforward, via modals `AddItemModal`/`EditItemModal`.

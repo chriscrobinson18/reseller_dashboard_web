@@ -31,6 +31,10 @@ Deployed on Vercel (`vercel.json` at repo root).
 - **`src/lib/types.ts`** — shared TypeScript interfaces and types; check here before defining new ones.
 - **`src/lib/utils.ts`** — shared utility functions.
 
+## Review markers (AI vs owner)
+
+`transactions`, `sales` and `inventory_lots` have `review_status`. **Any AI-made data write must set `review_status = 'ai_reviewed'` and `reviewed_at = now()` on the rows it creates or changes.** Rows marked `owner_reviewed` are confirmed by the owner. A database trigger blocks direct SQL from changing their category, links, amounts or lot fields. Don't try to work around it; list those rows for the owner instead. See `docs/supabase-schema.md` → Review markers.
+
 ## Shared UI components
 
 Reuse these before building new ones:

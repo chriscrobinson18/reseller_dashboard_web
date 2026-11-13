@@ -1,7 +1,7 @@
 import { supabase } from './supabase'
 import { splitLotCost, basisFromAdjustments, type LotBasis } from './lotCost'
 import { ADJUSTMENT_LABELS } from './lotAdjustments'
-import type { Item, InventoryLot, LotAdjustmentType, CSVImportResult, CSVSaleSyncResult, TcgPlayerImportResult, FindOrphansResult } from './types'
+import type { Item, InventoryLot, LotAdjustmentType, CSVImportResult, CSVSaleSyncResult, TcgPlayerImportResult, FindOrphansResult, ReviewStatus } from './types'
 import { CATEGORIES } from './categories'
 import { isColorKey, type ColorKey } from './categoryPalette'
 
@@ -933,6 +933,25 @@ export async function unpairNetZero(pairId: string) {
 export async function unpairTransactions(id1: string, id2: string) {
   const { error } = await supabase.from('transactions').update({ net_zero_pair_id: null }).in('id', [id1, id2])
   if (error) throw error
+}
+
+// ─── Review markers ────────────────────────────────────────────────────────────
+
+/**
+ * Set who has reviewed records. 'owner_reviewed' locks the record in the database
+ * (see docs/supabase-schema.md "Review markers"); only the signed-in owner can set
+ * or clear it, which is always the case from the app. null clears the marker.
+ */
+export async function setReviewStatus(
+  table: 'transactions' | 'sales' | 'inventory_lots',
+  ids: string[],
+  status: ReviewStatus | null,
+) {
+  const reviewed_at = status ? new Date().toISOString() : null
+  for (let i = 0; i < ids.length; i += 200) {
+    const { error } = await supabase.from(table).update({ review_status: status, reviewed_at }).in('id', ids.slice(i, i + 200))
+    if (error) throw error
+  }
 }
 
 // ─── Sales — the relational centerpiece ───────────────────────────────────────

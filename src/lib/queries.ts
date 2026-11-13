@@ -12,7 +12,7 @@ export interface ItemWithLots extends Item {
 export async function fetchItemsWithLots(): Promise<ItemWithLots[]> {
   const { data, error } = await supabase
     .from('items')
-    .select('*, inventory_lots(id, item_id, user_id, quantity_purchased, quantity_remaining, unit_cost, initial_unit_cost, transaction_id, trade_id, box_opening_id, purchase_date, created_at, deleted_at, inventory_lot_transactions(id, user_id, lot_id, transaction_id, allocated_amount, created_at), lot_cost_adjustments(id, user_id, lot_id, transaction_id, created_transaction, adjustment_type, amount, incurred_on, grader, grade_received, notes, created_at, deleted_at))')
+    .select('*, inventory_lots(id, item_id, user_id, quantity_purchased, quantity_remaining, unit_cost, initial_unit_cost, transaction_id, trade_id, box_opening_id, purchase_date, created_at, deleted_at, review_status, reviewed_at, inventory_lot_transactions(id, user_id, lot_id, transaction_id, allocated_amount, created_at), lot_cost_adjustments(id, user_id, lot_id, transaction_id, created_transaction, adjustment_type, amount, incurred_on, grader, grade_received, notes, created_at, deleted_at))')
     .is('deleted_at', null)
     .order('name')
   if (error) throw error

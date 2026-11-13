@@ -1,3 +1,6 @@
+/** null = not reviewed; 'ai_reviewed' = checked/changed by an AI assistant; 'owner_reviewed' = confirmed by the owner (locked). */
+export type ReviewStatus = 'ai_reviewed' | 'owner_reviewed'
+
 export interface Transaction {
   id: string
   user_id: string
@@ -41,6 +44,9 @@ export interface Transaction {
   plaid_category_confidence?: 'LOW' | 'MEDIUM' | 'HIGH' | 'VERY_HIGH' | string | null
   plaid_metadata?: Record<string, unknown> | null
   trade_id?: string
+  /** Who has checked this record: AI assistant, or the owner (owner-reviewed rows are locked in the database). */
+  review_status?: ReviewStatus | null
+  reviewed_at?: string | null
 }
 
 export interface Sale {
@@ -90,6 +96,9 @@ export interface Sale {
   sold_at: string
   created_at: string
   deleted_at?: string
+  /** Who has checked this record: AI assistant, or the owner (owner-reviewed rows are locked in the database). */
+  review_status?: ReviewStatus | null
+  reviewed_at?: string | null
   // from joins
   items?: { id: string; name: string; category?: string } | null
   inventory_movements?: Array<{
@@ -196,6 +205,9 @@ export interface InventoryLot {
   purchase_date?: string | null
   created_at: string
   deleted_at?: string
+  /** Who has checked this record: AI assistant, or the owner (owner-reviewed rows are locked in the database). */
+  review_status?: ReviewStatus | null
+  reviewed_at?: string | null
 }
 
 export interface Trade {

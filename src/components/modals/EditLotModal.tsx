@@ -1,5 +1,6 @@
 import { useState, type FormEvent } from 'react'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
+import { ReviewControl } from '../ReviewMarker'
 import Modal, { Field, inputCls, ModalActions } from '../Modal'
 import { updateLot } from '../../lib/mutations'
 import { formatUSD } from '../../lib/utils'
@@ -46,6 +47,9 @@ export default function EditLotModal({ open, onClose, lot }: Props) {
 
   return (
     <Modal open={open} onClose={onClose} title="Edit Lot">
+      <div className="mb-4">
+        <ReviewControl table="inventory_lots" id={lot.id} status={lot.review_status} reviewedAt={lot.reviewed_at} invalidate={[['items']]} />
+      </div>
       <form onSubmit={submit}>
         <Field label="Purchase Date">
           <input autoFocus type="date" value={date} onChange={e => setDate(e.target.value)} className={inputCls} />

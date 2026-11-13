@@ -14,6 +14,7 @@ import OpenBoxModal from '../components/modals/OpenBoxModal'
 import AddLotModal from '../components/modals/AddLotModal'
 import EditItemModal from '../components/modals/EditItemModal'
 import EditLotModal from '../components/modals/EditLotModal'
+import { ReviewBadge } from '../components/ReviewMarker'
 import AddLotCostAdjustmentModal from '../components/modals/AddLotCostAdjustmentModal'
 import ConfirmDialog from '../components/ConfirmDialog'
 import TradeDetailSlideOver from '../components/TradeDetailSlideOver'
@@ -109,7 +110,9 @@ function LotRows({ lots, onAddLot, onEditLot, onDeleteLot, onTradePillClick, onB
         return (
           <Fragment key={lot.id}>
           <tr className="group bg-blue-50/20 border-b border-blue-50">
-            <td className="pl-12 py-2 text-xs text-gray-600">{formatDate(lot.purchase_date ?? lot.created_at)}</td>
+            <td className="pl-12 py-2 text-xs text-gray-600">
+              <span className="inline-flex items-center gap-1.5">{formatDate(lot.purchase_date ?? lot.created_at)}<ReviewBadge status={lot.review_status} compact /></span>
+            </td>
             <td className="px-3 py-2 text-xs text-gray-700 text-center">{lot.quantity_purchased}</td>
             <td className="px-3 py-2 text-center">
               <span className={`text-xs font-medium px-1.5 py-0.5 rounded ${
@@ -261,7 +264,7 @@ function BasisLines({ lot, onDeleteAdjustment, alwaysShowDelete }: {
       </div>
       <div className="flex gap-2 text-gray-500">
         <span className="tabular-nums w-20 shrink-0 text-right">{formatUSD(purchaseTotal)}</span>
-        <span className="min-w-0">Purchase · {formatDate(lot.purchase_date ?? lot.created_at)}</span>
+        <span className="min-w-0 inline-flex items-center gap-1.5">Purchase · {formatDate(lot.purchase_date ?? lot.created_at)}<ReviewBadge status={lot.review_status} compact /></span>
       </div>
       {adjustments.map(a => (
         <div key={a.id} className="flex gap-2 text-gray-500 group/adj items-center">
@@ -562,6 +565,7 @@ function LotLedger({ rows, onEditLot, onDeleteLot, onTradePillClick, onBoxPillCl
             <td className="px-4 py-2.5">
               <div className="flex items-center gap-1.5">
                 <span className="font-medium text-gray-900 text-xs">{itemName}</span>
+                <ReviewBadge status={lot.review_status} compact />
                 {lot.trade_id && (
                   <button
                     onClick={() => onTradePillClick(lot.trade_id!)}

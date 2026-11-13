@@ -21,6 +21,10 @@ The relational centerpiece of the app — every sale here can cascade into `tran
 - Metrics grid's "Net Payout" field uses the same linked-transactions sum as the table column (see List view above), shown in red when negative.
 - Profitability breakdown only renders when there's at least one inventory movement (`hasCogsData`) — an unlinked or zero-COGS sale shows the metrics grid but not the profit card.
 
+## Review markers (added 2026-11-13)
+
+The detail panel opens with a Review section ("Mark reviewed by me" / "Unlock to edit"); list rows show a compact badge. An owner-reviewed sale's item link, money fields and date are locked against AI and imports. Its sale↔lot movements are locked against AI. See `docs/supabase-schema.md` → Review markers.
+
 ## Modals
 
 - **RecordSaleModal** → `recordSale` (item + qty + price + platform + date + optional fees/shipping/order ID). See [data-flows.md](../data-flows.md) for what this fans out into.

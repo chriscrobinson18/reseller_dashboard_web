@@ -7,6 +7,7 @@ import { formatUSD, formatDate } from '../lib/utils'
 import { deleteSale } from '../lib/mutations'
 import PeriodPicker from '../components/PeriodPicker'
 import SlideOver from '../components/SlideOver'
+import { ReviewBadge, ReviewControl } from '../components/ReviewMarker'
 import ConfirmDialog from '../components/ConfirmDialog'
 import RecordSaleModal from '../components/modals/RecordSaleModal'
 import BundleDetailSlideOver from '../components/BundleDetailSlideOver'
@@ -173,6 +174,8 @@ function SaleDetail({ sale, netPayoutBySale, onLinkItem, onEdit, onDelete, onPro
 
   return (
     <div className="space-y-4">
+      <ReviewControl table="sales" id={sale.id} status={sale.review_status} reviewedAt={sale.reviewed_at} invalidate={[['sales'], ['items']]} />
+
       {/* Trade banner */}
       {sale.trade_id && (
         <div className="mb-3 p-2.5 rounded-lg bg-purple-50 border border-purple-200 text-xs text-purple-800">
@@ -580,6 +583,7 @@ export default function SalesPage() {
                           {/* "OK" on every card is noise on a small screen — only flag problems. */}
                           {sale.inventory_status !== 'ok' && <StatusBadge status={sale.inventory_status} type="inventory" />}
                           <StatusBadge status={sale.return_status} type="return" />
+                          <ReviewBadge status={sale.review_status} compact />
                         </div>
                         {!sale.item_id && (
                           <button
@@ -689,6 +693,7 @@ export default function SalesPage() {
                       <div className="flex gap-1 flex-wrap">
                         <StatusBadge status={sale.inventory_status} type="inventory" />
                         <StatusBadge status={sale.return_status} type="return" />
+                        <ReviewBadge status={sale.review_status} compact />
                       </div>
                     </td>
                   </tr>
