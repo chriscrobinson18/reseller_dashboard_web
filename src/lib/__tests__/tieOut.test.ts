@@ -68,19 +68,19 @@ describe('computeTieOut', () => {
 
   it('flags months with deposits but no sales (unimported months)', () => {
     const [p] = computeTieOut(
-      [sale({ net_payout: 100, sold_at: '2026-09-15' })],
-      [{ date: '2026-09-17', amount: 100, platform: 'ebay' }, { date: '2026-10-04', amount: 80, platform: 'ebay' }, { date: '2026-11-02', amount: 70, platform: 'ebay' }],
+      [sale({ platform: 'goldin', net_payout: 100, sold_at: '2026-09-15' })],
+      [{ date: '2026-09-17', amount: 100, platform: 'goldin' }, { date: '2026-10-04', amount: 80, platform: 'goldin' }, { date: '2026-11-02', amount: 70, platform: 'goldin' }],
     )
     expect(p.flags).toContain('Deposits but no sales in 2026-10, 2026-11')
     expect(p.flags).toContain('Deposits exceed recorded sales: sales may be missing')
   })
 
   it('tolerance is max($50, 5% of sales net), strictly greater than', () => {
-    const run = (dep: number) => computeTieOut([sale({ net_payout: 2000 })], [{ date: '2025-03-11', amount: dep, platform: 'ebay' }])[0].flags
+    const run = (dep: number) => computeTieOut([sale({ platform: 'goldin', net_payout: 2000 })], [{ date: '2025-03-11', amount: dep, platform: 'goldin' }])[0].flags
     expect(run(2100)).toEqual([])                     // exactly 5% → not flagged
     expect(run(2100.01)).toEqual(['Deposits exceed recorded sales: sales may be missing'])
     expect(run(1899.99)).toEqual(['Recorded sales exceed deposits: payouts may be missing or still pending'])
-    const small = (dep: number) => computeTieOut([sale({ net_payout: 100 })], [{ date: '2025-03-11', amount: dep, platform: 'ebay' }])[0].flags
+    const small = (dep: number) => computeTieOut([sale({ platform: 'goldin', net_payout: 100 })], [{ date: '2025-03-11', amount: dep, platform: 'goldin' }])[0].flags
     expect(small(150)).toEqual([])                    // $50 floor beats 5% of 100
     expect(small(150.01)).toHaveLength(1)
   })
@@ -224,6 +224,45 @@ describe('in-person sales route to their payment rail', () => {
   })
   it('flags a marketplace with sales but no deposits', () => {
     const [p] = computeTieOut([{ ...base, platform: 'tcgplayer', net_payout: 10 }], [])
+    expect(p.flags[0]).toMatch(/no deposits/)
+  })
+})
+
+describe('held-balance / payout-lag platforms (eBay, Amazon, TCGplayer)', () => {
+  const dep = (amount: number, date = '2026-05-03', platform = 'ebay') => ({ date, amount, platform })
+
+  it('no monthly flags: a payout in a later month is normal', () => {
+    const [p] = computeTieOut(
+      [sale({ platform: 'tcgplayer', net_payout: 100, sold_at: '2026-01-28' })],
+      [dep(100, '2026-02-04', 'tcgplayer')],
+    )
+    expect([p.flags, p.notes]).toEqual([[], []])
+  })
+
+  it('sales above deposits is a note (held / not yet paid out), never a flag', () => {
+    const [p] = computeTieOut([sale({ net_payout: 2000, sold_at: '2026-05-01' })], [dep(1000)])
+    expect(p.flags).toEqual([])
+    expect(p.notes[0]).toMatch(/1,000\.00 not yet paid out/)
+  })
+
+  it('deposits above sales: covered by last year\'s held balance → note; beyond it → flag', () => {
+    const prior = { sales: [sale({ net_payout: 900, sold_at: '2025-12-20' })], deposits: [dep(400, '2025-12-22')] } // 500 held at year end
+    const run = (d: number) => computeTieOut([sale({ net_payout: 1000, sold_at: '2026-03-01' })], [dep(d)], prior)[0]
+    const covered = run(1500) // excess 500 = carry 500
+    expect(covered.flags).toEqual([])
+    expect(covered.notes[0]).toMatch(/covered by \$500\.00 held/)
+    const over = run(1600) // excess 600 > carry 500 + $50 tolerance
+    expect(over.flags[0]).toMatch(/last year's held balance \(\$500\.00\) by \$100\.00/)
+  })
+
+  it('first tracked year (no prior sales): deposits above sales is a note, not a flag', () => {
+    const [p] = computeTieOut([sale({ platform: 'amazon', net_payout: 100 })], [dep(800, '2025-01-05', 'amazon')], { sales: [], deposits: [] })
+    expect(p.flags).toEqual([])
+    expect(p.notes[0]).toMatch(/carried in from last year \(no sales recorded then/)
+  })
+
+  it('sales with no deposits at all are still flagged', () => {
+    const [p] = computeTieOut([sale({ platform: 'tcgplayer', net_payout: 50 })], [])
     expect(p.flags[0]).toMatch(/no deposits/)
   })
 })

@@ -1,6 +1,6 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
 import { fetchAllRows } from './fetchAll'
-import type { TieOutSale, TieOutDeposit, IncomeDepositInput, EbaySaleInput, EbayCsvRowInput } from './tieOut'
+import { HELD_BALANCE_PLATFORMS, type TieOutSale, type TieOutDeposit, type TieOutPrior, type IncomeDepositInput, type EbaySaleInput, type EbayCsvRowInput } from './tieOut'
 
 /**
  * Data for the Year-End Tie-Out card (components/TieOutCard.tsx): one full tax
@@ -23,12 +23,16 @@ export interface TieOutData {
   incomeRows: IncomeDepositInput[]
   ebaySales: EbaySaleInput[]
   ebayCsv: EbayCsvRowInput[]
+  /** Prior tax year, held-balance platforms only (eBay/Amazon/TCGplayer): carry-in for computeTieOut. */
+  prior: TieOutPrior
 }
 
 export async function fetchTieOutData(supabase: SupabaseClient, year: number): Promise<TieOutData> {
   const start = `${year}-01-01`, end = `${year}-12-31`, next = `${year + 1}-01-01`
   const wStart = shiftDate(start, -EBAY_WINDOW_DAYS), wEnd = shiftDate(end, EBAY_WINDOW_DAYS)
-  const [sales, deposits, incomeRows, ebaySales, ebayCsv] = await Promise.all([
+  const held = [...HELD_BALANCE_PLATFORMS]
+  const prevStart = `${year - 1}-01-01`, prevEnd = `${year - 1}-12-31`
+  const [sales, deposits, incomeRows, ebaySales, ebayCsv, priorSales, priorDeposits] = await Promise.all([
     fetchAllRows<TieOutSale>((from, to) => supabase.from('sales')
       // '*' rather than a column list: includes payment_method and, once the
       // sale_payment_splits migration is applied, payments (absent before).
@@ -64,6 +68,20 @@ export async function fetchTieOutData(supabase: SupabaseClient, year: number): P
       .eq('source', 'csv_import').eq('platform', 'ebay')
       .gte('date', wStart).lte('date', wEnd)
       .order('id').range(from, to)),
+    fetchAllRows<TieOutSale>((from, to) => supabase.from('sales')
+      .select('*')
+      .in('platform', held).is('deleted_at', null)
+      .gte('sold_at', `${prevStart}T00:00:00Z`).lt('sold_at', `${start}T00:00:00Z`)
+      .order('id').range(from, to)),
+    fetchAllRows<TieOutDeposit>((from, to) => supabase.from('transactions')
+      .select('date, amount, platform')
+      .in('platform', held)
+      .or('record_type.eq.settlement,schedule_c_category.eq.settlement')
+      .or('source.is.null,source.neq.csv_import')
+      .is('related_sale_id', null).is('related_bundle_id', null)
+      .gt('amount', 0)
+      .gte('date', prevStart).lte('date', prevEnd)
+      .order('id').range(from, to)),
   ])
-  return { sales, deposits, incomeRows, ebaySales, ebayCsv }
+  return { sales, deposits, incomeRows, ebaySales, ebayCsv, prior: { sales: priorSales, deposits: priorDeposits } }
 }

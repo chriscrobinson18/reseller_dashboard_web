@@ -34,6 +34,13 @@ function Status({ p }: { p: TieOutPlatform }) {
     )
   }
   if (p.saleCount > 0 && p.depositCount > 0) return <span className="text-xs font-medium text-green-700">Ties</span>
+  if (p.notes.length) {
+    return (
+      <div className="space-y-1">
+        {p.notes.map(n => <span key={n} className="block text-xs text-gray-600">{n}</span>)}
+      </div>
+    )
+  }
   if (p.platform === 'cash') return <span className="text-xs text-gray-500">Cash: no deposits expected</span>
   if (p.depositCount === 0) return <span className="text-xs text-gray-500">No deposits under this platform</span>
   return null
@@ -165,7 +172,7 @@ export default function TieOutCard() {
     queryFn: () => fetchTieOutData(supabase, year),
   })
 
-  const platforms = useMemo(() => (data ? computeTieOut(data.sales, data.deposits) : []), [data])
+  const platforms = useMemo(() => (data ? computeTieOut(data.sales, data.deposits, data.prior) : []), [data])
   const income = useMemo(() => (data ? incomeDepositsNeedingSales(data.incomeRows) : []), [data])
   const ebay = useMemo(() => (data ? compareEbaySources(data.ebaySales, data.ebayCsv, year) : null), [data, year])
 
@@ -193,7 +200,9 @@ export default function TieOutCard() {
         Proves every sale is recorded: each platform’s settlement deposits should roughly equal the net of its recorded sales
         (full tax year; flagged above the larger of {formatUSD(TIE_OUT_TOLERANCE.abs)} or {TIE_OUT_TOLERANCE.pct * 100}%).
         Small gaps are usually timing (December sales paid in January). In-person sales are matched to the wallet
-        they were paid through (PayPal, Venmo, Cash App, Zelle) by their payment method. Read-only.
+        they were paid through (PayPal, Venmo, Cash App, Zelle) by their payment method. eBay, Amazon and TCGplayer pay out
+        on their own schedule (eBay and Amazon also spend from your balance for labels, ads and reserves), so they aren't
+        checked month by month and are only flagged when deposits exceed sales plus last year's held balance. Read-only.
       </p>
 
       {isLoading && <p className="text-xs text-gray-400">Loading {year}…</p>}

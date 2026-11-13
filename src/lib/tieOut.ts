@@ -102,6 +102,27 @@ export interface TieOutPlatform {
   difference: number          // deposits − salesNet
   months: TieOutMonth[]
   flags: string[]
+  /** Informational, not a problem (e.g. a balance held on eBay, a TCGplayer payout still pending). */
+  notes: string[]
+}
+
+/**
+ * Marketplaces whose payouts don't line up with sale dates. eBay and Amazon
+ * hold the seller's balance and spend from it (shipping labels, promoted-
+ * listing/ad fees, reserves) before paying out; TCGplayer pays out on its own
+ * schedule, so a sale and its payout often land in different months. Their
+ * deposits legitimately lag or lead recorded sales, monthly and across a year
+ * end, so they get no monthly flags and are judged on direction instead of a
+ * tolerance: sales > deposits is money not yet paid out or spent on the
+ * platform (normal); deposits > sales is only explainable by last year's
+ * held balance.
+ */
+export const HELD_BALANCE_PLATFORMS = new Set(['ebay', 'amazon', 'tcgplayer'])
+
+/** Prior tax year's sales/deposits, used for held-balance platforms' carry-in. */
+export interface TieOutPrior {
+  sales: TieOutSale[]
+  deposits: TieOutDeposit[]
 }
 
 /** A sale's expected payout: its stored net (platform-specific formulas
@@ -115,12 +136,21 @@ export function saleNet(s: TieOutSale): number {
 /** Difference worth a look: more than 5% of sales net and more than $50. */
 export const TIE_OUT_TOLERANCE = { pct: 0.05, abs: 50 }
 
-export function computeTieOut(sales: TieOutSale[], deposits: TieOutDeposit[]): TieOutPlatform[] {
+export function computeTieOut(sales: TieOutSale[], deposits: TieOutDeposit[], prior?: TieOutPrior): TieOutPlatform[] {
+  // Last year's held balance per held-balance platform (sales net - deposits,
+  // floored at 0), and whether last year had any recorded sales to judge by.
+  const carry = new Map<string, { held: number; known: boolean }>()
+  if (prior) {
+    for (const p of computeTieOut(prior.sales, prior.deposits)) {
+      if (!HELD_BALANCE_PLATFORMS.has(p.platform)) continue
+      carry.set(p.platform, { held: Math.max(0, -p.difference), known: p.saleCount > 0 })
+    }
+  }
   const byPlat = new Map<string, TieOutPlatform & { m: Map<string, TieOutMonth> }>()
   const get = (p: string) => {
     let e = byPlat.get(p)
     if (!e) {
-      e = { platform: p, saleCount: 0, gross: 0, fees: 0, shipping: 0, refunds: 0, salesNet: 0, deposits: 0, depositCount: 0, difference: 0, months: [], flags: [], m: new Map() }
+      e = { platform: p, saleCount: 0, gross: 0, fees: 0, shipping: 0, refunds: 0, salesNet: 0, deposits: 0, depositCount: 0, difference: 0, months: [], flags: [], notes: [], m: new Map() }
       byPlat.set(p, e)
     }
     return e
@@ -166,6 +196,11 @@ export function computeTieOut(sales: TieOutSale[], deposits: TieOutDeposit[]): T
       months: [...m.values()].sort((a, b) => a.month.localeCompare(b.month))
         .map(x => ({ ...x, salesNet: r2(x.salesNet), deposits: r2(x.deposits) })),
       flags: [],
+      notes: [],
+    }
+    if (HELD_BALANCE_PLATFORMS.has(p.platform) && p.saleCount > 0 && p.depositCount > 0) {
+      out.push(judgeHeldBalance(p, carry.get(p.platform), prior !== undefined))
+      continue
     }
     if (p.depositCount > 0 && p.saleCount === 0) p.flags.push('Deposits with no recorded sales')
     if (p.saleCount > 0 && p.depositCount === 0 && !NO_DEPOSIT_PLATFORMS.has(p.platform)) {
@@ -181,6 +216,29 @@ export function computeTieOut(sales: TieOutSale[], deposits: TieOutDeposit[]): T
     out.push(p)
   }
   return out.sort((a, b) => (b.salesNet + b.deposits) - (a.salesNet + a.deposits))
+}
+
+const fmt = (n: number) => '$' + Math.abs(n).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+
+/** eBay/Amazon/TCGplayer: direction-based, with last year's held balance as carry-in. No monthly flags. */
+function judgeHeldBalance(p: TieOutPlatform, carry: { held: number; known: boolean } | undefined, hadPrior: boolean): TieOutPlatform {
+  const tol = Math.max(TIE_OUT_TOLERANCE.abs, TIE_OUT_TOLERANCE.pct * Math.abs(p.salesNet))
+  if (p.difference <= 0) {
+    if (p.difference < 0) p.notes.push(`About ${fmt(p.difference)} not yet paid out or spent on the platform (pending payouts, labels, ads, reserves)`)
+    return p
+  }
+  // Deposits exceed this year's sales: fine if last year left that much on the platform.
+  const excess = p.difference
+  if (carry && carry.known) {
+    if (excess <= carry.held + tol) {
+      p.notes.push(`Deposits exceed this year's sales by ${fmt(excess)}, covered by ${fmt(carry.held)} held at the end of last year`)
+    } else {
+      p.flags.push(`Deposits exceed sales plus last year's held balance (${fmt(carry.held)}) by ${fmt(excess - carry.held)}: sales may be missing`)
+    }
+  } else {
+    p.notes.push(`Deposits exceed this year's sales by ${fmt(excess)}, likely a balance carried in from last year${hadPrior ? ' (no sales recorded then to confirm)' : ''}`)
+  }
+  return p
 }
 
 // ─── 2. Income-tagged deposits ───────────────────────────────────────────────
