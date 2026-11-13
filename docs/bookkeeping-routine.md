@@ -1,53 +1,38 @@
 # Bookkeeping routine and year-end tie-out
 
-How the books are kept accurate with minimal effort, and what gets handed to the tax preparer. Decided 2026-11-09 during the books cleanup (see [`TASKS.md`](../TASKS.md) "Books Cleanup"). This file is process, not code: no amounts or merchant names belong here (public repo).
+How the books stay accurate with little effort, and what goes to the tax preparer. Process, not code. Public repo: no amounts or merchant names here. Accounting decisions: [books-cleanup-handoff.md](books-cleanup-handoff.md#decision-log); per-platform details: [reconciliation.md](reconciliation.md).
+
+## The model in one paragraph
+
+Income comes from **recorded sales** (the Sales tab). Bank deposits are never income: each is `settlement` (sale proceeds), `transfer` (own money) or `personal`. Settlements are the proof that the sales are complete: the Dashboard's **Year-End Tie-Out** reconciles each channel's recorded sales with the money it paid out. Expenses are categorized bank/card transactions plus a few platform-only costs (the eBay store subscription comes from eBay's report). Inventory uses the traditional method: Part III = beginning + purchases − ending.
 
 ## Why not per-deposit settlement linking
 
-Linking every bank deposit to the exact sales it pays out is the most expensive control and not one a preparer requires for a Schedule C reseller. The checks a CPA (or an IRS examiner) actually runs work on **annual totals per platform**:
+The checks a preparer (or an examiner) actually runs work on **annual totals per platform**:
 
-1. **Gross receipts vs. platform reports.** Sales reported for each marketplace must agree with that platform's annual report / Form 1099-K, with differences explained (refunds, buyer-paid shipping, marketplace-collected sales tax).
-2. **Every deposit is explained.** Total deposits minus non-income sources (transfers, loans, owner contributions) must not exceed reported income (the "bank deposits" method). In the app: no uncategorized credits on business accounts, and each one labeled `settlement` / `transfer` / `payout` / owner contribution (Phase 2).
-3. **Expenses documented and categorized, inventory method consistent** (Phase 1; inventory method in TASKS P2).
+1. **Gross receipts vs. platform reports.** Recorded sales per marketplace agree with that platform's annual report / 1099-K, with differences explained (refunds, buyer-paid shipping, marketplace-collected sales tax).
+2. **Every deposit is explained.** No uncategorized credits on business accounts; every deposit is a settlement, transfer, personal item or owner contribution.
+3. **Expenses documented and categorized, inventory method consistent.**
 
-Per-deposit linking that already exists (eBay / Amazon CSV auto-match in Settings → Settlement Status) stays as a convenience; it isn't maintained by hand.
-
-**One hard rule remains:** a marketplace deposit is only re-tagged from income (`payout`) to `settlement` once its sales are known to be recorded (a linked CSV payout group, or the platform's month is fully imported). Otherwise the income disappears from the books.
+The tie-out covers 1 and 2 per year, so per-deposit linking isn't maintained by hand.
 
 ## Monthly (≈15 min)
 
-1. Upload the month's eBay and Amazon CSVs; import TCGplayer orders.
-2. Record P2P / cash sales: per sale, or one summary sale per channel per month.
-3. Expenses page: categorize anything uncategorized. Create a category rule when a merchant repeats and is always the same category.
+1. Upload the month's eBay **Order Earnings** and **Transaction Report**, the Amazon report, and import TCGplayer orders (re-uploads are safe: only missing rows are added).
+2. Record in-person / P2P sales (per sale, or one summary sale per channel per month) **with a payment method**, so the tie-out can match them to the wallet that received the money.
+3. Expenses page: categorize anything uncategorized; add a category rule when a merchant repeats with one category.
+4. Glance at the Tie-Out card for the current year: new flags or ghost rows mean something is missing.
 
 ## Year-end (≈1 hour)
 
-1. Download each platform's annual report / 1099-K and each wallet's (PayPal, Cash App) year-end statement.
-2. Fill the **tie-out** per platform per year:
-
-   | Column | Source |
-   |---|---|
-   | Sales gross, fees, shipping, refunds, net | App (`sales`) |
-   | Gross per platform report / 1099-K | Platform |
-   | Deposits received | App (`settlement` deposits for that platform) |
-   | Difference + explanation | Timing (Dec sales paid in Jan), wallet balance change, wallet-funded purchases, missing imports |
-
-   A small timing difference is normal. A difference that matches a gap in imported months means sales are missing.
-3. Export the Dashboard **Schedule C Summary CSV** for the year.
-4. Hand the preparer: summary CSV + tie-out + platform reports + inventory figures (if required by the chosen method).
-
-## Open questions for the preparer
-
-- Inventory method: NIMS (§471(c)) or traditional (§471)? Decides whether year-end inventory values are needed (Phase 5).
-- Is a few-percent annual timing difference between payouts and recorded sales acceptable with a written explanation?
-- Credit card rewards: reduce expenses (current setup: "Credit Card Rewards", Line 27a) or exclude?
-- After closing 2025: amend (1040-X) or not?
+1. Re-import the last months of every platform (December sales pay out in January).
+2. Download each platform's annual report / 1099-K and each wallet's year-end statement.
+3. **Tie-Out card**, per platform: eBay and Amazon should read "Explained by the report" (or show only explained differences); TCGplayer and others should differ only by timing; wallet deposits without sales are either missing sales or transfers. Resolve every flag and ghost before closing.
+4. **Part III card:** save the year-end inventory value (count, estimate, or the lot-based figure it suggests).
+5. Export the Dashboard **Schedule C Summary CSV** for the full year ("Last Year" period, so Part III is included).
+6. Hand the preparer: the summary CSV, the tie-out results, platform reports / 1099-Ks, and the inventory figures. Open questions for them are in [books-cleanup-handoff.md](books-cleanup-handoff.md#open-questions-for-the-preparer).
 
 ## Tooling
 
-The read-only **Year-End Tie-Out** card on the Dashboard (built 2026-11-10) covers steps 2–3 above, per tax year:
-- platform table of sales net vs settlement deposits, with month drill-down and flags
-- the list of deposits still counted as income
-- the eBay Order Earnings vs Transaction Report check
-
-See [features/dashboard.md](features/dashboard.md#year-end-tie-out-built-2026-11-10).
+- **Year-End Tie-Out** ([features/dashboard.md](features/dashboard.md#year-end-tie-out)): platform table with month drill-down and flags, eBay/Amazon report reconciliation with payout matching and the ghost check, in-person sales matched by payment method, deposits still tagged as income, and the eBay Order Earnings vs Transaction Report check.
+- **Part III card** ([features/dashboard.md](features/dashboard.md#part-iii-cost-of-goods-sold--traditional-method-built-2026-11-09)): full-year cost of goods sold with lot-based estimates until values are saved.

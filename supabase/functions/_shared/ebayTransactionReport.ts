@@ -14,7 +14,7 @@
 //     orders + their FVF rows in 2025. Now keyed by order number + item ID.
 //  2. Only "Final Value Fee - fixed/variable" were booked. Below standard
 //     performance, International, Regulatory operating, Very high INAD and
-//     Deposit processing fees (2026: $288.77) were lost. Now one `_ofee` row.
+//     Deposit processing fees were lost. Now one `_ofee` row.
 //  3. Shipping label / Charge / Hold / Reserve rows sharing a Reference ID
 //     (e.g. a label and its later "Underpaid" postage adjustment, both
 //     "Tracking no. X") collided. Their keys now include date and amount.

@@ -11,8 +11,7 @@ Rules — first match wins, anything that returns `bucket: null` is excluded:
 | Condition | Bucket |
 |---|---|
 | `record_type === 'settlement'` | `null` |
-| `related_sale_id` set | `null` |
-| `source === 'csv_import'` | `null` |
+| Sale-derived (`isSaleDerivedTransaction`: `related_sale_id` / `related_bundle_id` set, `source === 'csv_import'`, or a trade income leg) — except eBay store subscription report rows, which count | `null` |
 | `net_zero_pair_id` set | `null` |
 | `schedule_c_category` null/undefined | `null` |
 | Category `isExcluded === true` | `null` |
@@ -64,7 +63,7 @@ These stay separate from `fees`/`shipping_cost` rather than overwriting them, be
 One order paid across several rails (e.g. $60 cash + $40 Venmo) — rare, ~1 in 500 sales, so it's a JSON column on `sales` / `sale_bundles` rather than a child table. Helpers live in `src/lib/paymentMethods.ts` (unit-tested in `__tests__/paymentMethods.test.ts`):
 
 - `validatePaymentSplits(splits, total)` — ≥2 entries, a real method on each, no duplicate method, every amount > 0, and the sum equals the total **in whole cents** (so 33.33 + 33.33 + 33.34 = 100). Run client-side in all three modals; the DB only checks shape, since a bundle's total lives on its lines.
-- `paymentBreakdown(payment_method, payments, total)` — the normalised per-rail list (the split, or one rail covering the total). This is what the planned deposit tie-out (TASKS.md: map `payment_method` → deposit platform) should consume, so a split sale offsets each wallet by its own share.
+- `paymentBreakdown(payment_method, payments, total)` — the normalised per-rail list (the split, or one rail covering the total). The Year-End Tie-Out divides a split sale across rails the same way (`tieOutTargets` in `tieOut.ts`), so each wallet's deposits are offset by its own share.
 
 Write rules (`paymentFields` in `mutations.ts`): a split stores `payment_method = 'split'` + `payments`; un-splitting an edited row writes `payments = null`; every other write **omits the `payments` column entirely**, so ordinary sales never touch it. Bundle lines get only the `'split'` sentinel. Payout transactions are unchanged — still **one** payout row per sale/bundle for the full amount; the split is descriptive and doesn't change Schedule C totals.
 
@@ -138,9 +137,11 @@ FIFO depletion, `record_sale`, and returns need no changes: a box-opening card l
 
 `netRevenue = sale_price - (return_status === 'partial' ? refunded_amount : 0)`. Sales with `return_status === 'full'` are excluded entirely from revenue/profitability sums (`active = sales.filter(s => s.return_status !== 'full')`). Centralized in `saleProfit()` for per-sale callers; `DashboardPage.computeProfitability` and the `totalRevenue` calc in `SalesPage` still inline the same formula since they aggregate across many sales.
 
-`record_return` (v21, local source ahead as v2 — see the CSV note below) also posts a refund `transactions` row (`schedule_c_category: 'returns_allowances'`, `amount: -refund_amount`) and, when a return-shipping cost is given, a second `shipping_postage` row — **both carry `related_sale_id`**. Because `bucketTransaction` drops every `related_sale_id` row, these refund rows do **not** appear in the Dashboard's transaction-derived aggregates (KPIs / Schedule C breakdown / monthly chart). Returns reach those numbers only through the Sales Profitability card's `netRevenue` (partial-return refund subtracted, full returns excluded). The refund + return-shipping rows *do* surface in the Schedule C **CSV export**, which deliberately includes sale-linked rows — there the payout row (gross `sale_price`) and the `returns_allowances` row net correctly for 1099-K-style "gross receipts − returns" reporting. See [categories.md](categories.md#returns--allowances-added-2026-06-23). (A manually-categorized `returns_allowances` transaction with **no** `related_sale_id` is different: it is not sale-linked, so `bucketTransaction` includes it in the Part I bucket with a negative signed amount.)
+Schedule C does **not** use `netRevenue`: Line 1 is each sale's gross and Line 2 its `refunded_amount` (`salesIncome.ts`, [categories.md](categories.md#returns--allowances)). `netRevenue` is the Profitability card's view.
 
-**CSV-reconciled returns (2026-08-27; not yet deployed — see `docs/supabase-schema.md`).** When a return is applied through the Return Reconciliation review queue (`docs/features/settings.md#return-reconciliation`) instead of the manual `ProcessReturnModal`, `record_return` **re-tags** the real imported CSV refund/shipping transaction rows in place — `related_sale_id` + `schedule_c_category` flip on the *existing* row — rather than inserting new synthetic ones. The Dashboard/CSV-export accounting above is unaffected either way: both paths end with the same `related_sale_id`-carrying rows in the same categories, so `bucketTransaction`'s exclusion and the CSV export's inclusion behave identically regardless of which path produced the row. The only difference is the row's `date`/`amount` are the real imported values rather than "today" + a typed estimate, and the same real transaction row is never duplicated.
+`record_return` also posts a refund `transactions` row (`returns_allowances`, `amount: -refund_amount`) and, when a return-shipping cost is given, a `shipping_postage` row — **both carry `related_sale_id`**, so both are sale-derived and excluded from Schedule C (the refund is already on the sale). Known gap: that return-shipping cost therefore never reaches Line 27a (TASKS.md). A manual `returns_allowances` row with **no** `related_sale_id` (a refund of a prior-year sale) is not sale-linked and counts on Part I.
+
+**CSV-reconciled returns (deployed 2026-09-23).** Applied through the Return Reconciliation queue (`docs/features/settings.md#return-reconciliation`), `record_return` **re-tags** the real imported refund/shipping rows in place (`related_sale_id` + `schedule_c_category` on the *existing* row) instead of inserting synthetic ones. Both paths end with sale-linked rows in the same categories, so the accounting is identical; the CSV path just keeps the real imported date and amount and never duplicates a row.
 
 ## Net payout on the Sales page
 

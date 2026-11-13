@@ -9,6 +9,7 @@ Read-only overview page. No mutations — purely fetches `transactions` + `sales
 - `fetchTransactions(start, end)` — all columns, paged (`fetchAllRows`), ordered by `date desc, id`. Local to this file (not shared with `ExpensesPage`'s identical-looking copy — see [architecture.md](../architecture.md) "Inconsistency to be aware of").
 - `fetchBundles(start, end)` — `sale_bundles` (fees, shipping_cost, sold_at…) in the period, non-deleted; bundle order-level fees/shipping count once.
 - `fetchSales(start, end)` — joins `items(id,name,category)` and `inventory_movements(id,quantity,inventory_lots(unit_cost,item_id))`, paged, excludes soft-deleted.
+- `useLotValuationData()` (`queries.ts`) — every live lot + every sale movement, for lot-based inventory on hand at any date (`partIII.ts`: `inventoryOnHandAsOf`, `inventoryChangeForPeriod`, `inventoryChangeByMonth`). Shared with the Part III card.
 
 ## Derived sections (each a pure function over the fetched arrays — see [data-flows.md](../data-flows.md) for the shared exclusion-filter logic these all use)
 
@@ -17,9 +18,9 @@ All three transaction-aggregating functions (KPI row, Schedule C breakdown, mont
 1. **KPI row** (`computeKPIs`) — Total Income, **Cost of Goods Sold**, Total Expenses, **Inventory on hand**, **Net**. Built on `bucketTransaction`.
    - **Expenses are operating costs only (2026-11-13).** The `cogs` bucket (inventory purchases) is no longer in Expenses, on the KPI row or in the Monthly Overview.
    - **Cost of Goods Sold** = purchases − (ending − beginning inventory) = beginning + purchases − ending, for the selected period. Beginning is the lot-based value on hand at the end of the day *before* the period starts (0 for All time). Ending is the value at the period end, capped at today. Both come from `inventoryChangeForPeriod` / `inventoryOnHandAsOf` in [`partIII.ts`](../../src/lib/partIII.ts), fed by the shared `useLotValuationData` hook (also used by the Part III card).
-   - **Net** = income − cost of goods sold − expenses, so unsold stock is an asset, not a cost. `cashNet` (income − expenses − purchases, the old Net) is the Net card's sub-line. YTD 2026 on live data: cash −$59,524 → Net +$10,460 (inventory +$69,983 since Dec 31).
+   - **Net** = income − cost of goods sold − expenses, so unsold stock is an asset, not a cost. `cashNet` (income − expenses − purchases, the old Net) is the Net card's sub-line. In a stocking-up year the two differ by the growth in inventory on hand.
    - It uses the inventory **change**, not just the ending value: stock on hand at the start was paid for and expensed in an earlier period.
-   - Cross-check (YTD 2026): $42,609 + $101,299 lots bought − $112,593 = $31,316, vs $31,334 FIFO COGS on sales — within $18.
+   - Cross-check (2026-11-13, YTD): beginning + lots bought − ending agreed with the FIFO cost of goods on sales to within a few tens of dollars, so the lot data holds together.
    - **Known overstatement:** sales with no `item_id` never deplete lots, so their units still count as on hand (COGS understated, Net overstated). The page shows an amber warning with the count.
    - Refunds-against-income subtract correctly; refunds-against-expense partially offset expenses.
    - Management view only — the tax figure is Part III (full year), never this period number.
@@ -79,52 +80,49 @@ Math: [`src/lib/partIII.ts`](../../src/lib/partIII.ts) (`computePartIII`). Value
 
 **The Sales Profitability card stays period-scoped FIFO** (`computeProfitability`) and must never feed Line 4 — switching the period would silently change a tax-year figure.
 
-## Year-End Tie-Out (built 2026-11-10)
+## Year-End Tie-Out
 
-`TieOutCard` ([`src/components/TieOutCard.tsx`](../../src/components/TieOutCard.tsx)), below the Part III card. **Read-only completeness insurance** for sales-based income (owner decision 2026-11-09): if every sale is recorded, each platform's settlement deposits roughly equal the net of its recorded sales.
+`TieOutCard` ([`src/components/TieOutCard.tsx`](../../src/components/TieOutCard.tsx)), below the Part III card. **Read-only completeness insurance** for sales-based income (owner decision 2026-11-09): it proves every sale is recorded by reconciling each channel's recorded sales with the money it paid out. Platform-by-platform background: [reconciliation.md](../reconciliation.md).
 
 - **Own tax-year selector** (2025 → current year, defaults to the current year), **never period-scoped**, like Part III.
-- **Data** ([`src/lib/tieOutData.ts`](../../src/lib/tieOutData.ts), all paged with `fetchAllRows`; takes the Supabase client as a parameter so the same queries can be run outside the browser):
-  - the year's non-deleted sales
-  - settlement deposits: `record_type = 'settlement'` or category `settlement`, amount > 0, source not `csv_import`
-  - income-tagged (`payout`) deposits
-  - eBay Order Earnings sales and eBay Transaction Report rows (`csv_import`), each fetched **±45 days** around the year so orders that straddle New Year pair up
-- **Math** ([`src/lib/tieOut.ts`](../../src/lib/tieOut.ts), tests in `src/lib/__tests__/tieOut.test.ts`):
-  - **Platform table** (`computeTieOut`): per platform, sales count / net (each sale's stored `net_payout`, because platform formulas differ) vs settlement deposits, and deposits − sales net. Trade sales are skipped (non-cash). Flags:
-    - deposits with no recorded sales
-    - months with deposits but no sales
-    - a difference above the larger of $50 or 5% of sales net
+- **Data** ([`src/lib/tieOutData.ts`](../../src/lib/tieOutData.ts), all paged with `fetchAllRows`; takes the Supabase client as a parameter so the same queries run outside the browser, e.g. under Vitest against live data):
+  - the year's non-deleted sales (all columns, incl. `payment_method` / `payments`)
+  - settlement deposits: `record_type = 'settlement'` or category `settlement`, amount > 0, source not `csv_import`, **not** linked to a sale or bundle (a sale's own payout row re-tagged `settlement` is not a bank deposit)
+  - the prior year's sales and deposits for the payout-timing platforms (carry-in)
+  - eBay / Amazon report rows (`csv_import`) and their settlement deposits, ±31 days around the year (for payout matching across New Year)
+  - bank/card/manual rows mentioning eBay or Amazon (for the ghost check)
+  - income-tagged (`payout`) deposits, and eBay Order Earnings sales + Transaction Report rows ±45 days (for the eBay source comparison)
 
-    Tap a platform for its months (rows with deposits but no sales are highlighted).
-  - **Deposits still counted as income** (`incomeDepositsNeedingSales`): positive `payout` bank deposits not linked to a sale, bundle, trade or net-zero pair. The owner rule: each needs matching sales recorded, then gets re-tagged `settlement`.
-  - **eBay: Order Earnings vs Transaction Report** (`compareEbaySources(…, year)`): per order, gross / fees (incl. advertising) / labels / refunds, plus orders present on only one side. Orders are kept for the year by the Order Earnings sale date (report-only orders by their first report row). Order Earnings is authoritative for income; differences point to report files worth re-importing.
-- **Layout:** table from `md` up, stacked cards on phones (see [mobile-layout.md](../mobile-layout.md)); the two lists are collapsible.
-- **Limits:**
-  - Manual sales have no deposit platform, so they can't be matched to wallet / P2P deposits automatically.
-  - Wallet cash-outs (PayPal, Cash App) show as "deposits with no recorded sales" until Phase 3 records their sales.
-  - Amazon refunds are netted into `sale_price` by the Amazon sync (TASKS.md).
+### Platform table (`computeTieOut`, `src/lib/tieOut.ts`)
 
+Per platform: sales count / net (each sale's stored `net_payout`, because platform formulas differ) vs settlement deposits, with month drill-down. Trade sales are skipped (non-cash).
 
-**In-person sales and wallets (2026-11-13).** Sales on venues with no settlement of their own (`manual`, Facebook Marketplace/Groups, Discord — `IN_PERSON_PLATFORMS` in `tieOut.ts`) are filed under the rail they were paid through via `payment_method` (`tieOutTargets`): PayPal / Venmo / Cash App / Zelle go to that wallet's deposits; cash goes to a **Cash** row that expects no deposits; split payments are divided by amount. Before this every wallet showed "Deposits with no recorded sales" while the matching manual sales sat unmatched under `manual`. In-person sales with no usable payment method stay under their platform with a "set a payment method" flag.
+- **Where a sale's money should land** (`tieOutTargets`): marketplaces under their own name; in-person venues (`IN_PERSON_PLATFORMS`: `manual`, Facebook Marketplace / Groups, Discord) under the rail in `payment_method` (`RAIL_DEPOSIT_PLATFORM`: PayPal / Venmo / Cash App / Zelle; **cash** expects no deposit); split payments divided by amount. In-person sales with no usable method stay under their platform and are flagged.
+- **Strict platforms** (everything not listed below): flags for deposits with no recorded sales, months with deposits but no sales, a difference above the larger of $50 or 5% of sales net, and recorded sales with no deposits at all.
+- **Payout-timing platforms** (`HELD_BALANCE_PLATFORMS`: eBay, Amazon, TCGplayer — used for eBay/Amazon only in a year with no imported report): no monthly flags; sales > deposits is a note; deposits > sales is a note when covered by last year's held balance (prior year's sales net − deposits, floored at 0) or in the first tracked year, and a flag beyond it (`judgeHeldBalance`).
 
-**Ghost check (2026-11-13).** Every eBay/Amazon report row without an order number must reach the books by some path, or the ledger lists it under "Ghost rows" and flags it: labels (covered by the Sales tab per order), holds/balance adjustments (net zero), eBay store subscription (on Schedule C), "Charge for …" rows (must match a `settlement` row on a card/bank, ±7 days), eBay funds purchases (must match a `cost_of_goods` row, ±7 days); anything else is a ghost. A charge and its reversal (same description, equal and opposite, ≤90 days apart) cancel. Live result: one ghost, the $93.66 eBay charge to Visa ••1123 (2026-09-28), a card that doesn't sync.
+### eBay and Amazon: report reconciliation (`computePlatformLedger`, `applyLedgers`)
 
-**eBay and Amazon: full report reconciliation (2026-11-13).** Order rows are every report row carrying an order number (promoted-listing fees included, as eBay Order Earnings counts them in the order's fees), except eBay funds purchases (`cost_of_goods`: things you bought, shown as their own line). Labels the report bills with no order number are shown as offsetting the order difference (`separateLabels`): Order Earnings charges each to its order, so they cancel; only `orderDifferenceAfterLabels` is flagged. eBay "Charge for … from Visa/Chase" rows are money eBay pulled from your card or bank to cover a negative balance ("Paid in from your card/bank"). Verified 2026-11-13 against the owner's eBay files (after the import fix): Sales tab = Order Earnings exactly for all 476 orders; 2026 order difference after labels $0.00; 2025 −$9.19 = labels for two December-2024 orders billed in January 2025 ($9.26) less cents of rounding; payouts $0.00 unexplained both years. 
-
-Original design: Their imported reports (`csv_import` rows) are complete ledgers of the seller balance, including every payout (`transfer` rows), so nothing is written off as "held". `computePlatformLedger` (`tieOut.ts`, data from `fetchTieOutData`'s `ledgerRows` / `ledgerDeposits`, fetched with a 31-day margin) builds, per year:
+Their reports are complete ledgers of the seller balance, so these rows are reconciled line by line instead of by timing. Clicking the row shows the bridge:
 
 | Line | Source |
 |---|---|
 | Recorded sales net | Σ `saleNet` of the Sales tab |
-| Sales tab vs report, per order | report order rows (rows with an order id in `notes`, ads excluded) − recorded net, listed per order |
-| Not tied to an order | ads (always here: eBay bills promoted listings separately), store subscription/fees, labels without an order id, other charges/credits, holds & adjustments |
-| Change in balance held on the platform | Σ every report row in the year (incl. payouts) |
-| **= Payouts in the report** | −Σ `transfer` rows — exact by construction |
-| Bank deposits | settlement deposits, matched 1:1 to report payouts: exact amount within 30 days, then bank ≤ $5 less within 10 days (eBay's $2 instant-transfer fee); unmatched deposits within a week of the report's first row are payouts of a pre-report balance |
-| **Unexplained** | bank − report payouts, net of transfer fees and pre-report payouts. Should be $0. |
+| Sales tab vs report, per order | order rows (report rows carrying an order number, promoted-listing fees included, purchases excluded) − recorded net; listed per order (largest 100) |
+| of which labels bought separately | labels the report bills with no order number (`separateLabels`): Order Earnings charges each to its order, so they offset the order difference; only `orderDifferenceAfterLabels` is flagged (over $5) |
+| Not tied to an order | store subscription and other fees, labels bought separately, eBay funds purchases, **paid in from your card/bank** ("Charge for …" rows), holds & adjustments |
+| Change in balance held on the platform | Σ every report row in the year, incl. payouts |
+| **= Payouts in the report** | −Σ `transfer` rows (exact by construction) |
+| Bank deposits | settlement deposits matched 1:1 to report payouts (`PAYOUT_MATCH`): exact amount within 30 days, then a bank amount up to $5 lower within 10 days (instant-transfer fee); unmatched deposits within a week of the report's first row are payouts of a pre-report balance |
+| **Unexplained** | bank − report payouts, net of transfer fees and pre-report payouts; should be $0 |
 
-Clicking the eBay/Amazon row shows this bridge, any unmatched payouts, and the per-order differences (largest 100). `applyLedgers` replaces those rows' timing notes with ledger flags: unmatched payouts, and order differences over $5. Live results: eBay 2025/2026 and Amazon 2025 unexplained **$0.00**; Amazon 2026 −$448.69 = report payouts of $416.75 (2026-01-20, no bank deposit found) and $31.94 (2026-06-23, in the bank but tagged `other_expense` with no platform). Order differences are mostly fees/labels booked differently by Order Earnings and the Transaction Report (e.g. a $38.83 below-standard fee and a $19.27 label on order 16-15242-54134), plus refunds of prior-year sales; cancelled orders net to the same on both sides. Since Schedule C fees come from the Sales tab, a persistent fee difference is worth checking.
+**Ghost check.** Every report row without an order number must reach the books by some path, or it is listed under "Ghost rows" and flagged: labels (covered by the Sales tab), holds / balance adjustments (net zero), the eBay store subscription (on Schedule C), "Charge for …" rows (must match a `settlement` row on a card/bank within ±7 days), eBay funds purchases (must match a `cost_of_goods` row within ±7 days); anything else is a ghost. A charge and its reversal (same description, equal and opposite, ≤ 90 days apart) cancel.
 
-**TCGplayer (no imported report)** keeps the payout-timing rule: no monthly flags; sales > deposits is a note; deposits > sales is checked against last year's held balance (`HELD_BALANCE_PLATFORMS`, `judgeHeldBalance`). eBay/Amazon fall back to the same rule in a year with no imported report.
+Ledger flags replace the timing notes on those rows: ghosts, report payouts with no bank deposit, bank deposits not in the report, and order differences after labels. With no flags the row reads "Explained by the {platform} report".
 
-**Also (2026-11-13):** a platform with sales but **no deposits** is now flagged (2025 TCGplayer had $2,531 of sales and no deposits, unflagged); deposit rows linked to a sale or bundle (`related_sale_id` / `related_bundle_id`) are excluded — two bundle payout rows recategorized to `settlement` had shown as $3,403 of "Unassigned" deposits; `psa` was added to `SALE_PLATFORMS` so PSA consignment sales can be recorded against PSA deposits. The card has **its own year selector** (defaults to the current year) — e.g. Goldin's only sale is in 2025.
+### Other sections
+
+- **Deposits still counted as income** (`incomeDepositsNeedingSales`): positive `payout` deposits not linked to a sale, bundle, trade or net-zero pair (normally empty since the 2026-11-10 re-tag).
+- **eBay: Order Earnings vs Transaction Report** (`compareEbaySources(…, year)`): per order, gross / fees (incl. advertising) / labels / refunds, plus one-sided orders. Order Earnings is authoritative; the report under-reports labels billed separately.
+- **Layout:** table from `md` up, stacked cards on phones ([mobile-layout.md](../mobile-layout.md)); the lists are collapsible.
+- **Limits:** Amazon refunds are netted into `sale_price` by the Amazon sync (TASKS.md), and refunds of prior-year sales show as order differences (the Sales tab has no prior-year orders).

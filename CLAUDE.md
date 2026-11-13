@@ -2,7 +2,7 @@
 
 Web client for a reseller bookkeeping/tax app. Tracks bank transactions, sales, and inventory (FIFO cost lots) and rolls them up into IRS Schedule C categories. Shares one Supabase project/schema with a sibling iOS app (`reseller_dashboard`) — **this is the primary client going forward**; fix bugs here rather than porting them from mobile.
 
-Full knowledge base lives in [`docs/`](docs/README.md) — read it before making non-trivial changes, and **update the relevant doc in the same PR** whenever you change schema, a money-math function, or a feature's behavior. Stale docs are worse than no docs.
+Full knowledge base lives in [`docs/`](docs/README.md) — read it before making non-trivial changes (books work: start at [`docs/books-cleanup-handoff.md`](docs/books-cleanup-handoff.md); production work: [`docs/operations.md`](docs/operations.md)), and **update the relevant doc in the same PR** whenever you change schema, a money-math function, or a feature's behavior. Stale docs are worse than no docs.
 
 ## Quick orientation
 
@@ -20,11 +20,13 @@ npm run build    # tsc -b && vite build
 npm run lint     # ESLint
 ```
 
-Vitest is set up (`npx vitest run`) but coverage is sparse — only `src/lib/saleProfit.ts`, `src/lib/scheduleCMath.ts`, and `src/lib/categories.ts` (`bucketTransaction`) have specs today, under `src/lib/__tests__/`. Add tests when you touch covered files; don't add brand-new test files for uncovered areas unless explicitly asked.
+Vitest (`npx vitest run`) covers the money math under `src/lib/__tests__/`: categories/bucketing, `scheduleCMath`, `salesIncome`, `partIII`, `tieOut`, `csvExport`, `saleProfit`, `lotCost`, `paymentMethods`, `fetchAll`, and the pure edge-function parsers in `supabase/functions/_shared/` (`csvOrderAggregate`, `ebayTransactionReport`). Add tests when you touch covered files; don't add brand-new test files for uncovered areas unless explicitly asked.
 
 Deployed on Vercel (`vercel.json` at repo root).
 
 ## Key gotchas
+
+- **Public repo** — never put amounts, merchant names, account/order numbers or personal names in commits, docs or code comments.
 
 - **Tailwind v4** — uses `@tailwindcss/vite` plugin; there is no `tailwind.config.js`. All theme customization goes in CSS, not a config file.
 - **React Router v7** (not v6) — uses the v7 API. Don't use v6-only patterns.

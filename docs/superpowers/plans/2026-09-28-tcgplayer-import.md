@@ -48,7 +48,7 @@
 
   // ── CONFIG ──────────────────────────────────────────────────────────────────
   // Your seller key: lowercase prefix of any order number.
-  // e.g. order "AE18D02E-28AA51-BAA99" → seller key is "ae18d02e"
+  // e.g. order "XXXXXXXX-XXXXXX-XXXXX" → seller key is "ae18d02e"
   const SELLER_KEY = 'REPLACE_WITH_YOUR_SELLER_KEY'
 
   const PAGE_SIZE = 100

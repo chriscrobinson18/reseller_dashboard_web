@@ -247,7 +247,7 @@ Backfills the column from stored `plaid_metadata`. No new Plaid API calls requir
 
 ### Step 2 — Re-sync affected cards
 
-Once `plaid_account_id` is populated, force-resync ••1000, ••1004, ••2003 via
+Once `plaid_account_id` is populated, force-resync ••0001, ••0002, ••0003 via
 Settings → Force Full Resync. These are the same current items (same `item_id`s), so Plaid
 re-delivers the same `plaid_transaction_id`s. The existing `ignoreDuplicates: true` guard skips
 existing rows and restores any that were accidentally deleted during the July cleanup.

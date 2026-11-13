@@ -885,7 +885,7 @@ Expected: `missing_backfill = 0`. If non-zero, re-run the backfill UPDATE from T
 
 - [ ] **Step 2: Re-sync affected cards**
 
-In Settings, locate the institutions for cards ••1000, ••1004, ••2003 (AmEx and Chase accounts involved in the July reconnects). For each, open the kebab menu → Force Full Resync.
+In Settings, locate the institutions for cards ••0001, ••0002, ••0003 (AmEx and Chase accounts involved in the July reconnects). For each, open the kebab menu → Force Full Resync.
 
 This re-delivers all historical `plaid_transaction_id`s from the current item. Since these are the same items (not new items), Plaid returns the same IDs. The existing `ignoreDuplicates: true` guard skips rows already in the DB and re-inserts any rows that were accidentally deleted during the July cleanup.
 

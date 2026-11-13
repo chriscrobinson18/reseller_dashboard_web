@@ -69,7 +69,7 @@ The "Purchase Tx" cell in each lot sub-row is a button opening `LotTransactionSl
 - under → amber "$X of this lot isn't funded yet — add the other payment method"
 - over → amber "funding exceeds the lot cost by $X"
 
-A lot can have **several funding sources**. The motivating case is a split-tender purchase: an eBay order paid $84.23 on a card (which Plaid syncs) and $29.65 from marketplace balance (which never touches a bank and must be entered by hand). **Add funding source** reopens the picker to attach the next one, defaulting its amount to whatever of the lot is still unfunded, capped at that transaction's own total. Already-linked transactions are filtered out of the candidate list.
+A lot can have **several funding sources**. The motivating case is a split-tender purchase: an eBay order paid $80.00 on a card (which Plaid syncs) and $25.00 from marketplace balance (which never touches a bank and must be entered by hand). **Add funding source** reopens the picker to attach the next one, defaulting its amount to whatever of the lot is still unfunded, capped at that transaction's own total. Already-linked transactions are filtered out of the candidate list.
 
 This replaced an earlier cross-lot "Purchase allocation" panel that compared the sum of a transaction's lots against the transaction amount. That question — *has all of this purchase become inventory?* — now lives where it belongs, on the Expenses side in `TransactionInventorySection`, which sums `allocated_amount` per transaction. The lot panel answers the complementary question, *is this lot fully paid for?*, and neither double-counts a split lot.
 
@@ -178,7 +178,7 @@ An alternative to the all-at-once flow for box opens where pull counts aren't kn
 3. "Add Pull" adds one card lot at a time. Each pull specifies an item and a basis amount drawn from the pool.
 4. "Close Box" finalizes: if any pool balance remains, inserts a `transactions` row (`cost_of_goods`, negative amount) as a bulk write-off, then marks the breakdown `'closed'`.
 
-**Accounting:** Under §471(c) NIMS, each card's cost hits COGS at time of sale (FIFO depletion of its lot). The close-out write-off is a bulk disposal event — correct when remaining cards are genuinely discarded. The pool balance display shows how much basis is unallocated at any point.
+**Accounting:** this was designed for §471(c) NIMS (cost hits COGS when a card sells; the close-out write-off as a bulk disposal). **The owner chose traditional §471 on 2026-11-09**, where Line 4 = beginning + purchases − ending: the box was already counted as a purchase when bought, so the close-out's extra `cost_of_goods` row would **deduct the same cost twice**. Under the traditional method discarded cards should simply leave ending inventory (no new transaction). No close-out write-off rows exist as of 2026-11-13; fixing `closeBoxOpening` is open in TASKS.md. The pool balance display shows how much basis is unallocated at any point.
 
 **Schema note:** `box_openings.status` added in migration `20260928120000_lazy_box_breakdown.sql`. All pre-existing breakdowns are `'closed'`; all-at-once `openBox()` also sets `'closed'` explicitly.
 
@@ -219,6 +219,28 @@ Lots with `box_opening_id != null` show a small teal **"Breakdown"** pill in the
 ## Purchase date
 
 `inventory_lots` has a `purchase_date date` column (nullable). All new lots get a `purchase_date` set from the date picker (defaults to today). Lots created before the column was added show their `created_at` date as a fallback. The `purchase_date` is editable via the Edit Lot modal and is what the page's "Purchase Date" column displays.
+
+## Lot data rules (books cleanup)
+
+Rules the owner set on 2026-11-12 for building lots from historical data and linking sales to them. Use them for any future bulk entry.
+
+**Lots from cost-of-goods charges**
+- Match each unlinked `cost_of_goods` charge to its order email by **merchant + exact amount**; re-check every match for the same merchant.
+- Create lots only when each item's subtotal can be read or derived from the email (a foreign-currency order counts: its prices still give the ratio). Otherwise skip; the charge stays visible under Expenses → **"Cost of goods without lots"** (e.g. emails that list items without prices, several candidate orders, totals that don't match).
+- One lot per distinct item. Lot costs sum **exactly** to the charge: split across items by price ratio (tax, shipping and FX included proportionally), then penny-split per unit as `splitLotCost` does.
+- A single-shipment partial charge that is clearly one item's subtotal may be used. For multi-order drops, only delivered orders get lots; cancelled orders are handled as charge/refund net-zero pairs.
+- All units stay on hand until a sale is linked. Lots created from the Expenses panel take the charge's date as `purchase_date`.
+- Memberships and subscriptions are never inventory (category "Memberships", Line 27a).
+
+**Charge/refund pairs.** Same merchant + same amount + refund within 90 days → net-zero pair. Pairs reaching into a prior year are left out (that refund correctly reduces the later year's cost of goods). Partial refunds stay as separate refunds.
+
+**Linking sales to lots**
+- Only when the sale title and the item clearly refer to the same product (model/set number, or near-identical wording, or a confident same-product judgment), only one item plausibly matches, and the sale is a sealed/whole product (singles, packs and slabs need a breakdown first).
+- Units are taken oldest-first via `inventory_movements`, as `record_sale` / `link_sale_to_item` do; a lot bought after the sale is allowed only within a 60-day presale window.
+- **Fully refunded sales are never linked** (no unit left inventory). Titles whose quantity disagrees with the sale's quantity are skipped.
+- Verify after each round: units and costs match the plan, no lot below 0 or above its purchased quantity, every movement on the sale's own item.
+
+**Duplicate items.** Merge two items only when they are the same product (wording differences only, comparable unit cost) **and their lots come from distinct charges** (no charge shared or over-allocated). Different formats or variants stay separate. The duplicate is soft-deleted after its lots and sales move.
 
 ## Gaps vs. mobile (TASKS.md backlog)
 

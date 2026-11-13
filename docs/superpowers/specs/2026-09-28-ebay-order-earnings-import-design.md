@@ -150,7 +150,7 @@ Same shape as existing parsers: `{ rowsParsed, rowsSkipped, skippedTypes }`.
 
 ## Dedup on Overlapping Time Ranges
 
-- Dedup key: `external_order_id = Order number` (e.g., `14-12531-38813`)
+- Dedup key: `external_order_id = Order number` (e.g., `00-00000-00000`)
 - Upsert: `INSERT ... ON CONFLICT (user_id, external_order_id) DO UPDATE SET ...`
 - Reimporting the same order overwrites with identical data (idempotent)
 - Reimporting after a refund: `Refunds` column reflects the updated value, `Order earnings` recalculated — upsert captures the change

@@ -16,18 +16,18 @@ const sum = (xs: { amount: number }[]) => Math.round(xs.reduce((t, x) => t + x.a
 describe('parseEbayTransactionReport', () => {
   it('books every order fee column, so an order\'s rows sum to its Net amount', () => {
     const { rows } = parse({
-      'Transaction creation date': 'Oct 4, 2026', Type: 'Order', 'Order number': '16-15242-54134', 'Transaction ID': '123',
-      'Gross transaction amount': '599.90', 'Final Value Fee - fixed': '-0.41', 'Final Value Fee - variable': '-82.18',
-      'Below standard performance fee': '-38.83', 'Net amount': '478.48', 'Payout ID': 'P1',
+      'Transaction creation date': 'Oct 4, 2026', Type: 'Order', 'Order number': '11-11111-11111', 'Transaction ID': '123',
+      'Gross transaction amount': '500.00', 'Final Value Fee - fixed': '-0.40', 'Final Value Fee - variable': '-65.00',
+      'Below standard performance fee': '-30.00', 'Net amount': '404.60', 'Payout ID': 'P1',
     })
     expect(rows.map(r => r.csv_transaction_id)).toEqual(['ebay_123_order', 'ebay_123_fvf', 'ebay_123_ofee'])
-    expect(rows[2]).toMatchObject({ amount: -38.83, schedule_c_category: 'commissions_fees', notes: '16-15242-54134' })
-    expect(sum(rows)).toBe(478.48)
+    expect(rows[2]).toMatchObject({ amount: -30, schedule_c_category: 'commissions_fees', notes: '11-11111-11111' })
+    expect(sum(rows)).toBe(404.6)
   })
 
   it('keys Transaction ID "0" rows by order + item instead of collapsing them (2025 bug: 102 orders lost)', () => {
     const { rows } = parse(
-      { 'Transaction creation date': 'Jul 1, 2025', Type: 'Order', 'Order number': 'A', 'Item ID': '111', 'Transaction ID': '0', 'Gross transaction amount': '36', 'Final Value Fee - variable': '-5.27', 'Net amount': '30.73' },
+      { 'Transaction creation date': 'Jul 1, 2025', Type: 'Order', 'Order number': 'A', 'Item ID': '111', 'Transaction ID': '0', 'Gross transaction amount': '40', 'Final Value Fee - variable': '-6', 'Net amount': '34' },
       { 'Transaction creation date': 'Jul 2, 2025', Type: 'Order', 'Order number': 'B', 'Item ID': '222', 'Transaction ID': '0', 'Gross transaction amount': '20', 'Final Value Fee - variable': '-3', 'Net amount': '17' },
     )
     const ids = rows.map(r => r.csv_transaction_id)
@@ -48,31 +48,31 @@ describe('parseEbayTransactionReport', () => {
 
   it('a label and its "Underpaid" adjustment on the same tracking number both survive', () => {
     const { rows } = parse(
-      { 'Transaction creation date': 'Oct 6, 2025', Type: 'Shipping label', 'Order number': 'O', 'Reference ID': 'Tracking no. 1Z', 'Net amount': '-22.73', Description: 'UPS' },
-      { 'Transaction creation date': 'Oct 22, 2025', Type: 'Shipping label', 'Order number': 'O', 'Reference ID': 'Tracking no. 1Z', 'Net amount': '-13.57', Description: 'Underpaid, UPS' },
+      { 'Transaction creation date': 'Oct 6, 2025', Type: 'Shipping label', 'Order number': 'O', 'Reference ID': 'Tracking no. 1Z', 'Net amount': '-20.00', Description: 'UPS' },
+      { 'Transaction creation date': 'Oct 22, 2025', Type: 'Shipping label', 'Order number': 'O', 'Reference ID': 'Tracking no. 1Z', 'Net amount': '-10.00', Description: 'Underpaid, UPS' },
     )
-    expect(rows.map(r => r.csv_transaction_id)).toEqual(['ebay_Tracking no. 1Z_2025-10-06_-2273_ship', 'ebay_Tracking no. 1Z_2025-10-22_-1357_ship'])
-    expect(sum(rows)).toBe(-36.3)
+    expect(rows.map(r => r.csv_transaction_id)).toEqual(['ebay_Tracking no. 1Z_2025-10-06_-2000_ship', 'ebay_Tracking no. 1Z_2025-10-22_-1000_ship'])
+    expect(sum(rows)).toBe(-30)
   })
 
   it('exact repeats get _dup2 instead of being dropped; same-day charges without a reference are kept apart by amount', () => {
-    const c = { 'Transaction creation date': 'Oct 27, 2025', Type: 'Charge', 'Net amount': '9.84' }
-    const { rows } = parse(c, c, { ...c, 'Net amount': '19.95' })
+    const c = { 'Transaction creation date': 'Oct 27, 2025', Type: 'Charge', 'Net amount': '10.00' }
+    const { rows } = parse(c, c, { ...c, 'Net amount': '20.00' })
     expect(rows.map(r => r.csv_transaction_id)).toEqual([
-      'ebay_2025-10-27_charge_2025-10-27_984_charge',
-      'ebay_2025-10-27_charge_2025-10-27_984_dup2_charge',
-      'ebay_2025-10-27_charge_2025-10-27_1995_charge',
+      'ebay_2025-10-27_charge_2025-10-27_1000_charge',
+      'ebay_2025-10-27_charge_2025-10-27_1000_dup2_charge',
+      'ebay_2025-10-27_charge_2025-10-27_2000_charge',
     ])
   })
 
   it('books "eBay funds purchase" rows instead of skipping them; still skips transfers and reports unknown types', () => {
     const { rows, skipped } = parse(
-      { 'Transaction creation date': 'May 15, 2026', Type: 'Purchase', 'Transaction ID': 'T9', 'Item title': 'Elite Trainer Box', 'Net amount': '-140.10', Description: 'eBay funds purchase' },
+      { 'Transaction creation date': 'May 15, 2026', Type: 'Purchase', 'Transaction ID': 'T9', 'Item title': 'Elite Trainer Box', 'Net amount': '-100.00', Description: 'eBay funds purchase' },
       { 'Transaction creation date': 'May 16, 2026', Type: 'Transfer', 'Net amount': '5' },
       { 'Transaction creation date': 'May 17, 2026', Type: 'Mystery', 'Net amount': '1' },
     )
     expect(rows).toHaveLength(1)
-    expect(rows[0]).toMatchObject({ csv_transaction_id: 'ebay_T9_2026-05-15_-14010_purchase', amount: -140.1, schedule_c_category: 'cost_of_goods' })
+    expect(rows[0]).toMatchObject({ csv_transaction_id: 'ebay_T9_2026-05-15_-10000_purchase', amount: -100, schedule_c_category: 'cost_of_goods' })
     expect(skipped).toEqual({ 'intentional:Transfer': 1, 'ebay_type:Mystery': 1 })
   })
 

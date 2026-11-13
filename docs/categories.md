@@ -65,8 +65,7 @@ Bucketing rules (in order — first match wins):
 | Condition | Result |
 |---|---|
 | `record_type === 'settlement'` | `null` |
-| `related_sale_id` set | `null` (sale-side handled by Profitability) |
-| `source === 'csv_import'` | `null` (same rationale) |
+| Sale-derived (`isSaleDerivedTransaction`): `related_sale_id` or `related_bundle_id` set, `source === 'csv_import'`, or a trade income leg (`trade_id` with amount > 0) | `null` — the `sales` row carries that money (next section). **Exception:** eBay store subscription report rows (`isEbayStoreSubscriptionRow`) are not sale-derived and count on Line 10 |
 | `net_zero_pair_id` set | `null` (cancels out) |
 | `schedule_c_category` null/undefined | `null` (uncategorized) |
 | Category `isExcluded === true` | `null` |
@@ -82,9 +81,9 @@ Bucketing rules (in order — first match wins):
 
 The `is_non_cash` flag exists so a future bank-reconciliation or cash-flow view can filter to `is_non_cash = false` rows only. `bucketTransaction` does **not** filter on this flag — both cash and non-cash transactions flow through the same bucketing logic and land in the same Schedule C totals, which is correct.
 
-## Known correctness gaps (see TASKS.md P0/P1 for full detail — don't fix ad-hoc, read that list first)
+## Known correctness gaps
 
-- ~~The Dashboard's Schedule C breakdown and KPI cards are transaction-derived and miss sale income.~~ **Fixed 2026-11-09** by sales-based income (next section): the Breakdown, KPIs, chart and both CSV exports now include every recorded sale.
+See TASKS.md "Code follow-ups" (Amazon refunds netted into Line 1; TCGplayer refunds not imported; return-shipping cost from in-app returns not reaching Line 27a). Don't fix money math ad hoc: read the related doc section first.
 
 ## Sales-based income (2026-11-09)
 
@@ -101,9 +100,9 @@ Bundles add their order-level `sale_bundles.fees` / `shipping_cost` once (lines 
 
 **No double counting:** `isSaleDerivedTransaction(t)` (in `categories.ts`) marks the transactions that duplicate a sale's money: `related_sale_id` (Record Sale's payout/fee/shipping/refund rows), `related_bundle_id` (bundle rows) and `source = 'csv_import'` (marketplace report rows). `bucketTransaction` and both CSV exports skip them; they remain visible in Expenses as audit detail. Marketplace bank deposits are `settlement` rows (excluded); they serve as the completeness check (year-end tie-out), not income.
 
-**One exception: eBay store subscription (owner decision 2026-11-13).** eBay Transaction Report rows that are `commissions_fees`, have no order number and read "Store (…): Subscription Fee …" (`isEbayStoreSubscriptionRow`) **do** count on Line 10: eBay takes the fee from the seller balance before paying out, so it is in neither Order Earnings nor the bank feed and the report row is its only record. This replaced 16 manual rows (2025 $107.16, 2026 $327.69) with identical Line 10 totals. Deliberately narrow — no other report row without an order number counts; instead the Year-End Tie-Out lists any such row that reaches the books by no path as a **ghost** (see [features/dashboard.md](features/dashboard.md)). eBay's charges to a card/bank to cover a negative balance ("Charge for …") are `settlement` rows on the card/bank side, not expenses.
+**One exception: eBay store subscription (owner decision 2026-11-13).** eBay Transaction Report rows that are `commissions_fees`, have no order number and read "Store (…): Subscription Fee …" (`isEbayStoreSubscriptionRow`) **do** count on Line 10: eBay takes the fee from the seller balance before paying out, so it is in neither Order Earnings nor the bank feed and the report row is its only record. It replaced manual rows entered earlier the same day, with identical Line 10 totals (verified on live data). Deliberately narrow — no other report row without an order number counts; instead the Year-End Tie-Out lists any such row that reaches the books by no path as a **ghost** (see [features/dashboard.md](features/dashboard.md)). eBay's charges to a card/bank to cover a negative balance ("Charge for …") are `settlement` rows on the card/bank side, not expenses.
 
-**What still counts from transactions:** every other categorized business row. That includes bank deposits still tagged `payout` (P2P / auction / wallet deposits whose sales aren't recorded yet): the Phase 2 backlog, kept as income until classified so nothing disappears.
+**What still counts from transactions:** every other categorized business row (expenses, cost-of-goods purchases, manual refund rows for prior-year sales, the eBay store subscription). Bank deposits never do: since 2026-11-10 every deposit is `settlement`, `transfer` or `personal` ([books-cleanup-handoff.md](books-cleanup-handoff.md#decision-log)). A deliberately tagged `payout` row (rare non-sale business income, e.g. a platform bonus) still counts on Part I.
 
 **Wiring:** `computeScheduleC` / `computeKPIs` / `computeMonthlyChart` take optional `SalesIncomeTotals` (merged into `payout`, `returns_allowances`, `commissions_fees`, `shipping_postage`); `computeScheduleCSummary` and `scheduleCExportRows` take the sales (and bundles). Without the optional argument they behave as before, which keeps older callers and tests valid. Net-zero pairs are excluded from the exports too (previously only the Dashboard excluded them).
 
@@ -124,10 +123,25 @@ Resolution lives in [`resolveCategory(value, customs)`](../src/lib/categories.ts
 
 **Friendly Schedule C line labels:** raw line identifiers (`'Line 18'`, `'Part I'`, etc.) aren't meaningful to a user picking a destination. `describeScheduleLine(line)` in [`src/lib/categories.ts`](../src/lib/categories.ts) maps each to a user-facing name (e.g. `'Office Expense (Line 18)'`, `'Income / Gross Receipts (Part I)'`, `'Other Expenses (Line 27a)'`). Most names are derived from the first matching `CATEGORIES[].label`; three lines that aggregate multiple built-ins (Part I, Part III, Line 27a) are special-cased so they read like the IRS form rather than the first-found category. Used by the explicit-line `<select>` in `ManageCategoriesModal` today; reuse here when other surfaces need friendly line labels.
 
-## Returns & Allowances (added 2026-06-23; return UI shipped 2026-07-10)
+### Custom categories in use
 
-`returns_allowances` (Part I, displayed as a subtraction from Line 1 Gross Receipts on the IRS form) is in `CATEGORIES`. The `record_return` edge function (v21) inserts a refund `transactions` row with `schedule_c_category: 'returns_allowances'` and `amount: -refund_amount` for every return, now driven by `ProcessReturnModal` (see [`docs/features/sales.md`](features/sales.md)) or, for a return detected in an imported CSV, by the Return Reconciliation review queue (`docs/features/settings.md#return-reconciliation`, not yet deployed) — which re-tags an existing `csv_import` row to this category instead of inserting a new one.
+Created during the 2025–26 books cleanup (owner decisions in [books-cleanup-handoff.md](books-cleanup-handoff.md#decision-log)), all mapped to Line 27a:
 
-**Important — how the refund row actually flows.** `record_return` sets `related_sale_id` on the refund row, and `bucketTransaction` returns `none` for any `related_sale_id` row. So the refund is **excluded** from the Dashboard's transaction aggregates (`computeKPIs` / `computeScheduleC` / `computeMonthlyChart`) — it does **not** reduce the Part I breakdown "through the math." Returns instead reduce the Sales Profitability card via `netRevenue` (partial refunds subtracted, full returns excluded from the active set). The refund row *is* included in the Schedule C **CSV export** (`scheduleCExportRows` keeps sale-linked rows), where it nets against the gross payout row. Only a **manually-categorized** `returns_allowances` transaction (no `related_sale_id`) actually lands in the Part I bucket with a negative signed amount.
+| Name | What goes in it |
+|---|---|
+| Software & Subscriptions | Sourcing bots, proxies, cook groups and similar reselling tools |
+| Tech & Dev Tools | AI assistants, cloud hosting, bank-data API fees and design tools used to build and run the business's own software. Not named "R&D": §174 research-expense rules are a separate regime; these are ordinary subscriptions |
+| Memberships | Warehouse-club and retailer memberships used for buying inventory. Membership refunds use the same category so they net. Merchants that sell both goods and memberships under one merchant ID get no auto-categorization rule |
+| Credit Card Rewards | Card cash-back, as a reduction of expenses (the purchases that earned it were deducted). Same net effect as other income without mixing it into gross receipts |
 
-Still open (was P0 item 4): there is no unified on-screen Schedule C that shows `returns_allowances` as a separate subtraction line below Gross Receipts (e.g. "Gross Receipts $X − Returns & Allowances $Y = Line 1 $Z"). This matters for 1099-K reconciliation. The Schedule C **Summary export** (one row per IRS line) is the intended home for that presentation and is not yet built — see TASKS.md. Inline `TODO(p1-returns)` markers in `DashboardPage.tsx` flag the render sites; note their premise (refund rows reduce Part I via `bucketTransaction`) is superseded by the sale-linked exclusion described above.
+Legacy iOS tags (`proxies`, `automation_software`, `cook_group`, `memberships`, `equipment`, `disbursement`) were re-tagged onto these or onto built-in lines on 2026-11-09.
+
+## Returns & Allowances
+
+`returns_allowances` is Part I; Schedule C shows it as **Line 2**, a subtraction from Line 1 gross receipts, never netted into Line 1 (1099-K guardrail).
+
+- **Where Line 2 comes from:** each sale's `refunded_amount` (`src/lib/salesIncome.ts`). A fully returned sale stays on Line 1 with its refund on Line 2, netting to zero. `record_return` (manual `ProcessReturnModal`, or the CSV Return Reconciliation queue) sets `refunded_amount` / `return_status` on the sale.
+- **The refund transaction rows** `record_return` posts or re-tags carry `related_sale_id`, so they are sale-derived and excluded from Schedule C (the sale already carries the refund). The CSV path re-tags the imported refund row instead of inserting one, so the money is never counted twice.
+- **Refunds of prior-year sales** have no sale in the year; they are entered as manual `returns_allowances` rows, which count (see [reconciliation.md](reconciliation.md)).
+- **Presentation:** the Schedule C Breakdown card and the Summary CSV (`buildScheduleCSummaryCSV`) both show Line 1 and Line 2 separately.
+- **Known gap:** a seller-paid return-shipping cost entered in `ProcessReturnModal` is posted as a sale-linked `shipping_postage` row and so never reaches Line 27a (TASKS.md).

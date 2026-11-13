@@ -1,6 +1,6 @@
 # Card Reselling Inventory SOP
 
-_Accounting method: §471(c) NIMS · Cash basis · Last updated 2026-09-28_
+_Inventory method: traditional §471 (owner decision 2026-11-09; this SOP was written for §471(c) NIMS and updated 2026-11-13) · Last updated 2026-11-13_
 
 ---
 
@@ -104,18 +104,18 @@ Being consistent matters more than being exact. Use the same method every time f
 
 ---
 
-## 7. Year-End (§471(c))
+## 7. Year-End (traditional §471)
 
-Under §471(c) you do **not** need to count ending inventory or calculate beginning/ending values.
+Cost of goods sold = beginning inventory + purchases − **ending inventory**, so the year-end inventory value matters: unsold cards and boxes are carried into next year, not deducted this year.
 
 At year-end:
-- All boxes purchased this year are already recorded in the app
-- Sales are linked to lots → COGS flows automatically
-- Unsold lots carry forward to next year — they'll hit COGS when they sell
-- Run "Apply Rules Now" in Settings if any sales are uncategorized
+- All boxes and cards bought this year are recorded in the app as lots
+- Sales are linked to lots, so the lots left on hand are the ending inventory
+- Dashboard → **Part III card**: save the year-end value. It suggests a lot-based figure (units on hand × cost); use it, or a count / estimate if lots are incomplete, and note how it was determined
+- Run "Apply Rules Now" in Settings if anything is uncategorized
 
 What to export for your return:
-- Dashboard → Summary CSV: shows total purchases (Schedule C Line 4 COGS) and all expense categories
+- Dashboard → **Summary CSV** with the "Last Year" period: Line 4 comes from Part III (beginning + purchases − ending)
 - Keep your lot records in the app as documentation if ever questioned
 
 ---
@@ -136,5 +136,4 @@ What to export for your return:
 
 - Count every individual card in a box
 - Track commons that will never sell individually
-- Calculate beginning or ending inventory (§471(c))
 - Create a separate lot for every $0.50 card

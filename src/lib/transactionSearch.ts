@@ -7,8 +7,8 @@ import type { Transaction } from './types'
  * for substring matching, so a search box covers anything a row or detail panel
  * can show — not just merchant/notes.
  *
- * Amounts appear in several shapes on purpose: `140.10` (raw), `$140.10`, and
- * `140.1`, so both "140.10" and "$140.10" hit. The sign is dropped — people
+ * Amounts appear in several shapes on purpose: `123.40` (raw), `$123.40`, and
+ * `123.4`, so both "123.40" and "$123.40" hit. The sign is dropped — people
  * search the magnitude they saw on the receipt. Dates likewise appear as both
  * ISO (`2026-05-15`) and display (`May 15, 2026`) form.
  */

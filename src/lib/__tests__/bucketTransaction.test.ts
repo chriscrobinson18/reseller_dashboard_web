@@ -99,18 +99,18 @@ describe('bucketTransaction', () => {
 describe('eBay store subscription: the one report row that counts (2026-11-13)', () => {
   const report = (o: Partial<Transaction>) => tx({ source: 'csv_import', platform: 'ebay', notes: undefined, ...o })
   it('counts the store subscription on Line 10', () => {
-    const b = bucketTransaction(report({ amount: -29.79, schedule_c_category: 'commissions_fees', merchant: 'Store (Basic): Subscription Fee Oct 31-Nov 29' }), [])
-    expect(b).toEqual({ bucket: 'expense', categoryValue: 'commissions_fees', signedAmount: -29.79 })
+    const b = bucketTransaction(report({ amount: -30, schedule_c_category: 'commissions_fees', merchant: 'Store (Basic): Subscription Fee Oct 31-Nov 29' }), [])
+    expect(b).toEqual({ bucket: 'expense', categoryValue: 'commissions_fees', signedAmount: -30 })
   })
   it('keeps every other report row out: labels without an order, card top-ups, holds, ads, insertion fees, Amazon fees', () => {
     const others: Partial<Transaction>[] = [
       { schedule_c_category: 'shipping_postage', merchant: 'eBay Shipping Label', amount: -12.5 },
-      { schedule_c_category: 'other_expense', merchant: 'Charge for refund cost from Visa ending in 6883', amount: 1355.6 },
+      { schedule_c_category: 'other_expense', merchant: 'Charge for refund cost from Visa ending in 0000', amount: 1000 },
       { schedule_c_category: 'balance_adjustment', merchant: 'Hold placed', amount: -400 },
       { schedule_c_category: 'advertising', merchant: 'Promoted Listings - General fee', amount: -3 },
       { schedule_c_category: 'commissions_fees', merchant: 'Insertion Fee', amount: -0.35 },
-      { schedule_c_category: 'commissions_fees', merchant: 'Store (Basic): Subscription Fee Jun', amount: -29.79, notes: '12-34567-89012' },
-      { schedule_c_category: 'commissions_fees', merchant: 'Store (Basic): Subscription Fee Jun', amount: -29.79, platform: 'amazon' },
+      { schedule_c_category: 'commissions_fees', merchant: 'Store (Basic): Subscription Fee Jun', amount: -30, notes: '12-34567-89012' },
+      { schedule_c_category: 'commissions_fees', merchant: 'Store (Basic): Subscription Fee Jun', amount: -30, platform: 'amazon' },
     ]
     for (const o of others) expect(bucketTransaction(report(o), []).bucket).toBeNull()
   })

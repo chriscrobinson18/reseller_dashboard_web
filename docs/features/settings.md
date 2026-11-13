@@ -21,8 +21,8 @@ institution from `plaid_accounts`.
   **Start fresh** now also cleans up any `receipts` storage objects attached to the
   deleted transactions (v18, 2026-08-27) — previously only the `transactions` rows were
   removed, orphaning receipt files in the bucket. Mirrors the same cleanup
-  `plaid_sync_transactions` already does for its removed-transaction path. **Not yet
-  deployed** — see the Deployment note in `docs/supabase-schema.md`.
+  `plaid_sync_transactions` already does for its removed-transaction path. Deployed
+  2026-09-23.
 - **Sync Now** — per-item button calling `plaid_sync_transactions`. On success, surfaces
   an inline count of newly-added transactions (`transactions_added` — the response has
   never actually had an `inserted` field; that was a client-side type bug, fixed
@@ -141,7 +141,7 @@ that used to be listed as pending are now shipped:
 
 A "Marketplace CSV Import" section (after Custom Categories) has four platform cards — eBay, Amazon, Mercari, TCGPlayer — each with an "Import" button (CSV for the first three; JSON for TCGPlayer). Selecting a file triggers a two-step flow:
 
-1. **`import_marketplace_csv` edge function (v16)** — parses the CSV and upserts rows into `transactions` with `source='csv_import'`, `platform=<platform>`, and `csv_group_id` linking rows that belong to the same settlement period
+1. **`import_marketplace_csv` edge function (v29, 2026-11-13; eBay Transaction Report parsing in `_shared/ebayTransactionReport.ts`, see [reconciliation.md](../reconciliation.md#ebay))** — parses the CSV and upserts rows into `transactions` with `source='csv_import'`, `platform=<platform>`, and `csv_group_id` linking rows that belong to the same settlement period
 2. **`sync_csv_orders_to_sales` edge function (v6, Amazon / Mercari; eBay is skipped because Order Earnings writes `sales` directly)** — groups those transactions by order ref (`notes` field) and writes `sales` rows with `source='amazon'|'csv_import'`, `external_order_id=<orderRef>`, `item_id=null` (unlinked). Since v5 (2026-11-09) the writes go through `_shared/salesImport.ts`, the same re-import-safe path as eBay Order Earnings and TCGplayer:
    - new orders are inserted in full
    - existing live sales get only money / description fields refreshed (price, fees, shipping, net, date, name, quantity); return status is refreshed only when no in-app return exists

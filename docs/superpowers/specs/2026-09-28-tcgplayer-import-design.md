@@ -64,7 +64,7 @@ The script extracts it from the first search response or from the seller portal 
 **Enriched order schema (output JSON):**
 ```json
 {
-  "orderNumber": "AE18D02E-28AA51-BAA99",
+  "orderNumber": "XXXXXXXX-XXXXXX-XXXXX",
   "orderDate": "2026-09-26T01:25:13.767Z",
   "orderStatus": "Completed - Paid",
   "productAmount": 5.30,

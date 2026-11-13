@@ -23,7 +23,7 @@ Lives in [`src/lib/transactionSearch.ts`](../../src/lib/transactionSearch.ts) �
 
 Two deliberate behaviors:
 
-- **Amounts are indexed in several shapes** — `140.10`, `$140.10`, and `140.1` — and the query has `$` and `,` stripped from each term, so `$1,234.56` and `1234.56` both hit the same row. The sign is dropped; people search the magnitude on the receipt, not `-140.10`. Dates are indexed both ISO (`2026-05-15`) and display (`May 15, 2026`).
+- **Amounts are indexed in several shapes** — `123.40`, `$123.40`, and `123.4` — and the query has `$` and `,` stripped from each term, so `$1,234.56` and `1234.56` both hit the same row. The sign is dropped; people search the magnitude on the receipt, not `-123.40`. Dates are indexed both ISO (`2026-05-15`) and display (`May 15, 2026`).
 - **Whitespace splits into terms that must ALL match**, so `ebay 140` narrows to eBay rows around $140 instead of unioning the two. The terms match independently anywhere in the haystack, so multi-word queries are a narrowing heuristic, not a phrase match — `may 15, 2026` matches any row containing all three tokens somewhere, not only rows dated May 15.
 
 ### Detail panel state
