@@ -18,6 +18,7 @@
  * Tests: src/lib/__tests__/tieOut.test.ts. UI: components/TieOutCard.tsx.
  */
 import { monthKey } from './utils'
+import { EBAY_STORE_SUBSCRIPTION } from './categories'
 
 const r2 = (n: number) => Math.round(n * 100) / 100
 const num = (v: unknown) => (typeof v === 'number' ? v : Number(v ?? 0)) || 0
@@ -405,6 +406,18 @@ export interface LedgerSale extends TieOutSale {
 
 export interface LedgerLine { label: string; amount: number; count: number }
 
+/** A non-report transaction (bank/card feed or manual) a report row can be matched to. */
+export interface LedgerBookRow {
+  date: string
+  amount: number
+  schedule_c_category: string | null
+  record_type?: string | null
+  platform?: string | null
+  merchant?: string | null
+}
+
+export interface LedgerGhost { date: string; amount: number; description: string; reason: string }
+
 export interface LedgerOrderDiff { orderId: string; date: string; recorded: number | null; report: number | null; difference: number }
 
 export interface LedgerPayoutMatch { date: string; amount: number; bankDate: string; bankAmount: number; fee: number }
@@ -446,6 +459,12 @@ export interface PlatformLedger {
   unmatchedBankDeposits: { date: string; amount: number }[]
   /** bankDeposits − reportPayouts not covered by transfer fees or pre-report deposits. Should be ~0. */
   unexplained: number
+  /**
+   * Report rows with no order number that reach your books by NO path: not on
+   * Schedule C, not covered by the Sales tab, not matched to a bank/card row.
+   * The class of row that hid the eBay store fee until 2026-11-13.
+   */
+  ghosts: LedgerGhost[]
   flags: string[]
 }
 
@@ -479,8 +498,11 @@ export function computePlatformLedger(
   sales: LedgerSale[],
   rows: LedgerRow[],
   deposits: TieOutDeposit[],
+  /** Non-report transactions (bank/card feed, manual) for matching charges and purchases. */
+  books: LedgerBookRow[] = [],
   tolerance = 5,
 ): PlatformLedger {
+  const noOrder: LedgerRow[] = []
   const inYear = (d: string) => d.slice(0, 4) === String(year)
   const mine = <T extends { platform?: string | null }>(xs: T[]) => xs.filter(x => (x.platform ?? '').toLowerCase() === platform)
   const myRows = mine(rows)
@@ -520,6 +542,7 @@ export function computePlatformLedger(
       reportByOrder.set(r.notes, e)
       continue
     }
+    noOrder.push(r)
     const label = cat === 'other_expense' && /^charge for /i.test(r.merchant ?? '')
       ? LABEL_PAID_IN
       : (NOT_ON_ORDER_LABELS[cat] ?? cat)
@@ -590,6 +613,52 @@ export function computePlatformLedger(
   const transferFees = r2(feeMatched.reduce((t, m) => t + m.fee, 0))
   const beforeTotal = beforeReport.reduce((t, d) => t + d.amount, 0)
   const payoutGap = r2(bankDeposits - reportPayouts)
+  // Ghost check: every report row without an order number must reach your
+  // books by some path, or it is listed here.
+  const usedBook = new Set<number>()
+  const matchBook = (want: number, date: string, ok: (b: LedgerBookRow) => boolean) => {
+    let best = -1, bestGap = Infinity
+    books.forEach((b, i) => {
+      if (usedBook.has(i) || !ok(b) || Math.abs(num(b.amount) - want) > 0.01) return
+      const g = Math.abs(dayNum(b.date) - dayNum(date))
+      if (g <= 7 && g < bestGap) { best = i; bestGap = g }
+    })
+    if (best >= 0) usedBook.add(best)
+    return best >= 0
+  }
+  const ghosts: LedgerGhost[] = []
+  for (const r of noOrder) {
+    const amt = num(r.amount)
+    if (Math.abs(amt) < 0.005) continue
+    const cat = r.schedule_c_category ?? 'uncategorized'
+    const desc = r.merchant || cat
+    if (cat === 'shipping_postage') continue      // Sales tab charges it to its order (checked via orderDifferenceAfterLabels)
+    if (cat === 'balance_adjustment') continue    // holds / debt carry: balance mechanics, net to zero
+    if (cat === 'commissions_fees' && platform === 'ebay' && EBAY_STORE_SUBSCRIPTION.test(r.merchant ?? '')) continue // on Schedule C
+    if (cat === 'other_expense' && /^charge for /i.test(r.merchant ?? '')) {
+      // eBay pulled money from a card/bank: that charge must be in the books as a settlement.
+      if (!matchBook(-amt, r.date, b => b.record_type === 'settlement' || b.schedule_c_category === 'settlement')) {
+        ghosts.push({ date: r.date, amount: r2(amt), description: desc, reason: 'This charge to your card/bank is not in your books (a card or account that does not sync?)' })
+      }
+      continue
+    }
+    if (cat === 'cost_of_goods') {
+      // Bought on the platform with your balance: must be recorded as a purchase.
+      if (!matchBook(amt, r.date, b => b.schedule_c_category === 'cost_of_goods')) {
+        ghosts.push({ date: r.date, amount: r2(amt), description: desc, reason: 'Purchase paid from your balance is not recorded as an inventory purchase' })
+      }
+      continue
+    }
+    ghosts.push({ date: r.date, amount: r2(amt), description: desc, reason: 'Not on Schedule C and not covered by the Sales tab or a bank row' })
+  }
+  // A charge and its later reversal (same description, equal and opposite,
+  // e.g. an insertion fee credited back) net to nothing: not a ghost.
+  for (let i = 0; i < ghosts.length; i++) {
+    const j = ghosts.findIndex((g, k) => k !== i && g.description === ghosts[i].description
+      && Math.abs(g.amount + ghosts[i].amount) < 0.005 && Math.abs(dayNum(g.date) - dayNum(ghosts[i].date)) <= 90)
+    if (j >= 0) { ghosts.splice(Math.max(i, j), 1); ghosts.splice(Math.min(i, j), 1); i = -1 }
+  }
+
   const out: PlatformLedger = {
     platform,
     hasReport: myRows.some(r => inYear(r.date)),
@@ -613,9 +682,11 @@ export function computePlatformLedger(
     unmatchedReportPayouts,
     unmatchedBankDeposits,
     unexplained: r2(payoutGap + transferFees - beforeTotal),
+    ghosts,
     flags: [],
   }
   const plural = (n: number, w: string) => `${n} ${w}${n === 1 ? '' : 's'}`
+  if (ghosts.length) out.flags.push(`${plural(ghosts.length, 'report row')} not accounted for anywhere (ghost${ghosts.length === 1 ? '' : 's'}): ${ghosts.map(g => '$' + Math.abs(g.amount).toFixed(2)).join(', ')}`)
   if (unmatchedReportPayouts.length) out.flags.push(`${plural(unmatchedReportPayouts.length, 'payout')} in the report not found in the bank`)
   if (unmatchedBankDeposits.length) out.flags.push(`${plural(unmatchedBankDeposits.length, 'bank deposit')} not in the report`)
   if (Math.abs(out.orderDifferenceAfterLabels) > tolerance) {

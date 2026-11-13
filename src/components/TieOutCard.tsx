@@ -120,6 +120,18 @@ function LedgerBridge({ l }: { l: PlatformLedger }) {
         <Line label="Unexplained" value={formatUSD(l.unexplained)} strong />
       </div>
 
+      {l.ghosts.length > 0 && (
+        <div>
+          <div className="font-medium text-gray-900 mb-1">Ghost rows: in the {name} report, but nowhere in your books ({l.ghosts.length})</div>
+          {l.ghosts.map((g, i) => (
+            <div key={`${g.date}${g.amount}${i}`} className="text-amber-800">
+              <div className="flex justify-between gap-3"><span className="min-w-0">{g.date}: {g.description}</span><span className="tabular-nums shrink-0">{signed(g.amount)}</span></div>
+              <div className="text-gray-500">{g.reason}</div>
+            </div>
+          ))}
+        </div>
+      )}
+
       {(l.unmatchedReportPayouts.length > 0 || l.unmatchedBankDeposits.length > 0) && (
         <div>
           <div className="font-medium text-gray-900 mb-1">Unmatched payouts</div>
@@ -263,7 +275,7 @@ export default function TieOutCard() {
 
   const platforms = useMemo(() => {
     if (!data) return []
-    const ledgers = [...LEDGER_PLATFORMS].map(p => computePlatformLedger(p, year, data.sales, data.ledgerRows, data.ledgerDeposits))
+    const ledgers = [...LEDGER_PLATFORMS].map(p => computePlatformLedger(p, year, data.sales, data.ledgerRows, data.ledgerDeposits, data.ledgerBooks))
     return applyLedgers(computeTieOut(data.sales, data.deposits, data.prior), ledgers)
   }, [data, year])
   const income = useMemo(() => (data ? incomeDepositsNeedingSales(data.incomeRows) : []), [data])

@@ -4,7 +4,7 @@ const r2 = (n: number) => Math.round(n * 100) / 100
 import {
   saleNet, computeTieOut, tieOutTargets, incomeDepositsNeedingSales, compareEbaySources,
   computePlatformLedger, applyLedgers,
-  type TieOutSale, type IncomeDepositInput, type LedgerRow,
+  type TieOutSale, type IncomeDepositInput, type LedgerRow, type LedgerSale,
 } from '../tieOut'
 
 const sale = (o: Partial<TieOutSale>): TieOutSale => ({ platform: 'ebay', sold_at: '2025-03-10T15:00:00Z', sale_price: 100, ...o })
@@ -335,12 +335,54 @@ describe('computePlatformLedger: labels bought separately, purchases, card charg
       row({ amount: -10, schedule_c_category: 'shipping_postage' }),        // report bills the label separately
       row({ amount: -140.1, schedule_c_category: 'cost_of_goods', notes: 'BOUGHT-1' }), // eBay funds purchase
       row({ amount: 140.1, schedule_c_category: 'other_expense', merchant: 'Charge for refund cost from Visa ending in 6883' }),
-    ], [])
+    ], [], [
+      // both are in the books, so neither is a ghost
+      { date: '2026-03-02', amount: -140.1, schedule_c_category: 'settlement', record_type: 'settlement', platform: 'ebay', merchant: 'eBay' },
+      { date: '2026-03-01', amount: -140.1, schedule_c_category: 'cost_of_goods', record_type: 'transaction', platform: null, merchant: 'eBay' },
+    ])
     expect([l.orderDifference, l.separateLabels, l.orderDifferenceAfterLabels]).toEqual([10, -10, 0])
     expect(l.orderDiffs.map(d => d.orderId)).toEqual(['S1'])               // the purchase is not one of your orders
     expect(l.notOnOrders.map(n => n.label)).toEqual([
       'eBay funds purchases (inventory bought with your balance)', 'Shipping labels not on an order', 'Paid in from your card/bank (eBay charges)',
     ])
     expect(l.flags).toEqual([])
+  })
+})
+
+describe('computePlatformLedger ghost check (report rows that reach the books by no path)', () => {
+  const row = (o: Partial<LedgerRow>): LedgerRow => ({ date: '2026-03-01', amount: 0, schedule_c_category: 'payout', notes: null, platform: 'ebay', ...o })
+  const noSales: LedgerSale[] = []
+  const rows = [
+    row({ amount: -29.79, schedule_c_category: 'commissions_fees', merchant: 'Store (Basic): Subscription Fee Feb 28-Mar 30' }), // on Schedule C
+    row({ amount: -12.5, schedule_c_category: 'shipping_postage', merchant: 'eBay Shipping Label' }),                          // Sales tab covers it
+    row({ amount: -400, schedule_c_category: 'balance_adjustment', merchant: 'Hold placed' }),                                 // balance mechanics
+    row({ amount: 0, schedule_c_category: 'commissions_fees', merchant: 'Insertion Fee' }),                                    // $0
+    row({ amount: 19.6, schedule_c_category: 'other_expense', merchant: 'Charge for accrued selling costs from Chase Bank ending in 7382' }),
+    row({ amount: 93.66, schedule_c_category: 'other_expense', merchant: 'Charge for refund cost from Visa ending in 1123' }),
+    row({ amount: -140.1, schedule_c_category: 'cost_of_goods', notes: 'BOUGHT', merchant: 'eBay funds purchase: ETB' }),
+    row({ amount: -3, schedule_c_category: 'advertising', merchant: 'Promoted Listings Advanced' }),
+  ]
+  const books = [
+    { date: '2026-03-02', amount: -19.6, schedule_c_category: 'settlement', record_type: 'settlement', platform: 'ebay', merchant: 'eBay' },
+    { date: '2026-03-02', amount: -140.1, schedule_c_category: 'cost_of_goods', record_type: 'transaction', platform: null, merchant: 'eBay' },
+  ]
+  it('lists only rows with no path: an unsynced card charge and an ad without an order', () => {
+    const l = computePlatformLedger('ebay', 2026, noSales, rows, [], books)
+    expect(l.ghosts.map(g => [g.amount, g.description])).toEqual([
+      [93.66, 'Charge for refund cost from Visa ending in 1123'],
+      [-3, 'Promoted Listings Advanced'],
+    ])
+    expect(l.flags.some(f => /2 report rows not accounted for anywhere/.test(f))).toBe(true)
+  })
+  it('a fee and its later reversal cancel out instead of showing as two ghosts', () => {
+    const l = computePlatformLedger('ebay', 2026, noSales, [
+      row({ date: '2026-06-30', amount: -0.27, schedule_c_category: 'commissions_fees', merchant: 'Insertion Fee' }),
+      row({ date: '2026-07-07', amount: 0.27, schedule_c_category: 'commissions_fees', merchant: 'Insertion Fee' }),
+    ], [])
+    expect(l.ghosts).toEqual([])
+  })
+  it('a charge or purchase with no matching book row is a ghost', () => {
+    const l = computePlatformLedger('ebay', 2026, noSales, rows.slice(4, 7), [])
+    expect(l.ghosts.map(g => g.amount)).toEqual([19.6, 93.66, -140.1])
   })
 })

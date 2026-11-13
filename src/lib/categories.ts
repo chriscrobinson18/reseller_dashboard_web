@@ -148,13 +148,35 @@ export type ScheduleCBucket = 'income' | 'expense' | 'cogs' | null
  * sale-derived; the trade's cost-of-goods legs (amount < 0: the non-cash COGS
  * wash and any boot paid) are not, so a pure swap still nets to zero.
  *
+ * One exception (2026-11-13, owner decision): eBay **store subscription** rows
+ * from the eBay Transaction Report DO count (Line 10). eBay takes the fee from
+ * the seller balance before paying out, so it is in neither Order Earnings
+ * (the Sales tab) nor the bank feed — the report row is its only record. Kept
+ * deliberately narrow: no other report row without an order number counts;
+ * the Year-End Tie-Out flags any such row that isn't accounted for instead.
+ *
  * Shared by bucketTransaction and the CSV exports so they can't drift.
  */
 export function isSaleDerivedTransaction(
-  t: Pick<Transaction, 'related_sale_id' | 'related_bundle_id' | 'source' | 'trade_id' | 'amount'>,
+  t: Pick<Transaction, 'related_sale_id' | 'related_bundle_id' | 'source' | 'trade_id' | 'amount'>
+    & Partial<Pick<Transaction, 'platform' | 'schedule_c_category' | 'notes' | 'merchant'>>,
 ): boolean {
+  if (isEbayStoreSubscriptionRow(t)) return false
   return !!t.related_sale_id || !!t.related_bundle_id || t.source === 'csv_import'
     || (!!t.trade_id && t.amount > 0)
+}
+
+/** eBay Transaction Report "Store (Basic|Premium|…): Subscription Fee …" row. */
+export const EBAY_STORE_SUBSCRIPTION = /^Store \([^)]*\): Subscription Fee/i
+
+export function isEbayStoreSubscriptionRow(
+  t: Partial<Pick<Transaction, 'source' | 'platform' | 'schedule_c_category' | 'notes' | 'merchant'>>,
+): boolean {
+  return t.source === 'csv_import'
+    && (t.platform ?? '').toLowerCase() === 'ebay'
+    && t.schedule_c_category === 'commissions_fees'
+    && !t.notes
+    && EBAY_STORE_SUBSCRIPTION.test(t.merchant ?? '')
 }
 
 export interface BucketedAmount {
