@@ -5,7 +5,8 @@ import { supabase } from '../lib/supabase'
 import { fetchTieOutData } from '../lib/tieOutData'
 import { formatUSD } from '../lib/utils'
 import {
-  computeTieOut, incomeDepositsNeedingSales, compareEbaySources, TIE_OUT_TOLERANCE, type TieOutPlatform,
+  computeTieOut, incomeDepositsNeedingSales, compareEbaySources, computePlatformLedger, applyLedgers,
+  LEDGER_PLATFORMS, TIE_OUT_TOLERANCE, type TieOutPlatform, type PlatformLedger,
 } from '../lib/tieOut'
 
 /**
@@ -24,6 +25,9 @@ const PLATFORM_LABELS: Record<string, string> = {
 const platformLabel = (p: string) => PLATFORM_LABELS[p] ?? p.charAt(0).toUpperCase() + p.slice(1)
 
 function Status({ p }: { p: TieOutPlatform }) {
+  if (p.ledger && !p.flags.length) {
+    return <span className="text-xs font-medium text-green-700">Explained by the {platformLabel(p.platform)} report</span>
+  }
   if (p.flags.length) {
     return (
       <div className="space-y-1">
@@ -79,6 +83,85 @@ function MonthTable({ p }: { p: TieOutPlatform }) {
   )
 }
 
+const signed = (n: number) => (n < 0 ? '−' : '+') + formatUSD(Math.abs(n))
+
+function Line({ label, value, strong, muted }: { label: React.ReactNode; value: string; strong?: boolean; muted?: boolean }) {
+  return (
+    <div className={`flex justify-between gap-3 py-0.5 ${strong ? 'font-semibold text-gray-900 border-t border-gray-200 mt-1 pt-1' : muted ? 'text-gray-500' : 'text-gray-700'}`}>
+      <span className="min-w-0">{label}</span><span className="tabular-nums shrink-0">{value}</span>
+    </div>
+  )
+}
+
+/**
+ * eBay/Amazon: recorded sales → report payouts → bank deposits, every line
+ * from data. The bridge is exact by construction; the only "unexplained"
+ * money is payouts that don't match a bank deposit.
+ */
+function LedgerBridge({ l }: { l: PlatformLedger }) {
+  const name = platformLabel(l.platform)
+  return (
+    <div className="text-xs space-y-3">
+      <div>
+        <Line label="Recorded sales net (Sales tab)" value={formatUSD(l.recordedNet)} />
+        <Line label={`Sales tab vs ${name} report, ${l.orderDiffs.length} order${l.orderDiffs.length === 1 ? '' : 's'}`} value={signed(l.orderDifference)} />
+        {l.notOnOrders.map(n => <Line key={n.label} label={<>{n.label} <span className="text-gray-400">({n.count})</span></>} value={signed(n.amount)} />)}
+        <Line label={l.balanceChange >= 0 ? `Added to balance held on ${name}` : `Paid out from balance held on ${name}`} value={signed(-l.balanceChange)} />
+        <Line label={`Payouts in the ${name} report (${l.reportPayoutCount})`} value={formatUSD(l.reportPayouts)} strong />
+        <Line label={`Bank deposits (${l.bankDepositCount})`} value={formatUSD(l.bankDeposits)} />
+        {l.transferFees > 0 && <Line label={`Instant-transfer fees kept by ${name} (${l.feeMatched.length})`} value={signed(-l.transferFees)} muted />}
+        {l.beforeReport.length > 0 && <Line label={`Payouts of a balance from before the report starts (${l.beforeReport.length})`} value={signed(l.beforeReport.reduce((t, d) => t + d.amount, 0))} muted />}
+        <Line label="Unexplained" value={formatUSD(l.unexplained)} strong />
+      </div>
+
+      {(l.unmatchedReportPayouts.length > 0 || l.unmatchedBankDeposits.length > 0) && (
+        <div>
+          <div className="font-medium text-gray-900 mb-1">Unmatched payouts</div>
+          {l.unmatchedReportPayouts.map(p => (
+            <div key={`r${p.date}${p.amount}`} className="flex justify-between text-amber-800">
+              <span>{p.date}: in the {name} report, no bank deposit found</span><span className="tabular-nums">{formatUSD(p.amount)}</span>
+            </div>
+          ))}
+          {l.unmatchedBankDeposits.map(p => (
+            <div key={`b${p.date}${p.amount}`} className="flex justify-between text-amber-800">
+              <span>{p.date}: bank deposit not in the {name} report</span><span className="tabular-nums">{formatUSD(p.amount)}</span>
+            </div>
+          ))}
+          <p className="text-gray-500 mt-1">A missing deposit is usually in the bank feed under another category or account. Tag it as a {name} settlement.</p>
+        </div>
+      )}
+
+      {l.orderDiffs.length > 0 && (
+        <details>
+          <summary className="cursor-pointer font-medium text-gray-900">Orders where the Sales tab and the report differ ({l.orderDiffs.length})</summary>
+          <p className="text-gray-500 my-1">
+            Usually fees or labels the two sources book differently (e.g. a label bought separately, a performance fee), a refund of a prior-year
+            sale, or a sale not recorded. Income and fees on Schedule C come from the Sales tab.
+          </p>
+          <table className="w-full tabular-nums">
+            <thead><tr className="text-gray-500"><th className="text-left font-medium">Order</th><th className="text-left font-medium">Date</th><th className="text-right font-medium">Sales tab</th><th className="text-right font-medium">Report</th><th className="text-right font-medium">Diff</th></tr></thead>
+            <tbody>
+              {l.orderDiffs.slice(0, 100).map(d => (
+                <tr key={d.orderId + d.date} className="border-t border-gray-100">
+                  <td className="py-0.5">{d.orderId}</td><td>{d.date}</td>
+                  <td className="text-right">{d.recorded == null ? 'not recorded' : formatUSD(d.recorded)}</td>
+                  <td className="text-right">{d.report == null ? 'not in report' : formatUSD(d.report)}</td>
+                  <td className="text-right">{signed(d.difference)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          {l.orderDiffs.length > 100 && <p className="text-gray-500 mt-1">Showing the 100 largest.</p>}
+        </details>
+      )}
+    </div>
+  )
+}
+
+function PlatformDetail({ p }: { p: TieOutPlatform }) {
+  return p.ledger ? <LedgerBridge l={p.ledger} /> : <MonthTable p={p} />
+}
+
 function PlatformSection({ platforms }: { platforms: TieOutPlatform[] }) {
   const [open, setOpen] = useState<string | null>(null)
   const toggle = (p: string) => setOpen(o => (o === p ? null : p))
@@ -100,7 +183,7 @@ function PlatformSection({ platforms }: { platforms: TieOutPlatform[] }) {
               <span>{p.depositCount} deposits</span><span className="text-right">{formatUSD(p.deposits)}</span>
             </div>
             <div className="mt-2"><Status p={p} /></div>
-            {open === p.platform && p.months.length > 0 && <div className="mt-2"><MonthTable p={p} /></div>}
+            {open === p.platform && (p.ledger || p.months.length > 0) && <div className="mt-2"><PlatformDetail p={p} /></div>}
           </div>
         ))}
       </div>
@@ -133,9 +216,9 @@ function PlatformSection({ platforms }: { platforms: TieOutPlatform[] }) {
                 <td className={`py-2 text-right tabular-nums font-medium ${diffClass(p.difference)}`}>{formatUSD(p.difference)}</td>
                 <td className="py-2 pl-4"><Status p={p} /></td>
               </tr>
-              {open === p.platform && p.months.length > 0 && (
+              {open === p.platform && (p.ledger || p.months.length > 0) && (
                 <tr className="border-b border-gray-100 bg-gray-50">
-                  <td colSpan={6} className="px-6 py-2"><MonthTable p={p} /></td>
+                  <td colSpan={6} className="px-6 py-2"><PlatformDetail p={p} /></td>
                 </tr>
               )}
             </Fragment>
@@ -172,7 +255,11 @@ export default function TieOutCard() {
     queryFn: () => fetchTieOutData(supabase, year),
   })
 
-  const platforms = useMemo(() => (data ? computeTieOut(data.sales, data.deposits, data.prior) : []), [data])
+  const platforms = useMemo(() => {
+    if (!data) return []
+    const ledgers = [...LEDGER_PLATFORMS].map(p => computePlatformLedger(p, year, data.sales, data.ledgerRows, data.ledgerDeposits))
+    return applyLedgers(computeTieOut(data.sales, data.deposits, data.prior), ledgers)
+  }, [data, year])
   const income = useMemo(() => (data ? incomeDepositsNeedingSales(data.incomeRows) : []), [data])
   const ebay = useMemo(() => (data ? compareEbaySources(data.ebaySales, data.ebayCsv, year) : null), [data, year])
 
@@ -199,10 +286,10 @@ export default function TieOutCard() {
       <p className="text-xs text-gray-500 mb-3">
         Proves every sale is recorded: each platform’s settlement deposits should roughly equal the net of its recorded sales
         (full tax year; flagged above the larger of {formatUSD(TIE_OUT_TOLERANCE.abs)} or {TIE_OUT_TOLERANCE.pct * 100}%).
-        Small gaps are usually timing (December sales paid in January). In-person sales are matched to the wallet
-        they were paid through (PayPal, Venmo, Cash App, Zelle) by their payment method. eBay, Amazon and TCGplayer pay out
-        on their own schedule (eBay and Amazon also spend from your balance for labels, ads and reserves), so they aren't
-        checked month by month and are only flagged when deposits exceed sales plus last year's held balance. Read-only.
+        Small gaps are usually timing (December sales paid in January). eBay and Amazon are reconciled line by line against
+        their imported reports (fees, labels, ads, holds, balance held, every payout matched to a bank deposit): click the row
+        for the breakdown. TCGplayer pays out on its own schedule, so it isn't checked month by month. In-person sales are
+        matched to the wallet they were paid through (PayPal, Venmo, Cash App, Zelle) by their payment method. Read-only.
       </p>
 
       {isLoading && <p className="text-xs text-gray-400">Loading {year}…</p>}

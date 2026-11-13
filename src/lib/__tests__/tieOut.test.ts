@@ -1,7 +1,10 @@
 import { describe, it, expect } from 'vitest'
+
+const r2 = (n: number) => Math.round(n * 100) / 100
 import {
   saleNet, computeTieOut, tieOutTargets, incomeDepositsNeedingSales, compareEbaySources,
-  type TieOutSale, type IncomeDepositInput,
+  computePlatformLedger, applyLedgers,
+  type TieOutSale, type IncomeDepositInput, type LedgerRow,
 } from '../tieOut'
 
 const sale = (o: Partial<TieOutSale>): TieOutSale => ({ platform: 'ebay', sold_at: '2025-03-10T15:00:00Z', sale_price: 100, ...o })
@@ -264,5 +267,60 @@ describe('held-balance / payout-lag platforms (eBay, Amazon, TCGplayer)', () => 
   it('sales with no deposits at all are still flagged', () => {
     const [p] = computeTieOut([sale({ platform: 'tcgplayer', net_payout: 50 })], [])
     expect(p.flags[0]).toMatch(/no deposits/)
+  })
+})
+
+describe('computePlatformLedger (eBay/Amazon report reconciliation)', () => {
+  const row = (o: Partial<LedgerRow>): LedgerRow => ({ date: '2026-03-01', amount: 0, schedule_c_category: 'payout', notes: null, platform: 'ebay', ...o })
+  const sales = [
+    sale({ platform: 'ebay', sold_at: '2026-03-01T12:00:00Z', net_payout: 85, external_order_id: 'O1' } as Partial<TieOutSale>),
+    sale({ platform: 'ebay', sold_at: '2026-03-05T12:00:00Z', net_payout: 50, external_order_id: 'O2' } as Partial<TieOutSale>),
+  ]
+  const rows = [
+    row({ amount: 100, notes: 'O1' }), row({ amount: -10, schedule_c_category: 'commissions_fees', notes: 'O1' }),
+    row({ amount: -5, schedule_c_category: 'shipping_postage', notes: null }),       // label bought separately
+    row({ date: '2026-03-05', amount: 60, notes: 'O2' }),                              // Sales tab says 50
+    row({ date: '2026-03-06', amount: -3, schedule_c_category: 'advertising', notes: 'O2' }),
+    row({ date: '2026-03-10', amount: -100, schedule_c_category: 'transfer' }),
+    row({ date: '2026-03-20', amount: -40, schedule_c_category: 'transfer' }),
+  ]
+
+  it('bridges recorded sales to report payouts exactly', () => {
+    const l = computePlatformLedger('ebay', 2026, sales, rows, [])
+    expect([l.recordedNet, l.reportOrderNet, l.orderDifference]).toEqual([135, 150, 15])
+    expect(l.notOnOrdersTotal).toBe(-8)       // −5 label, −3 ads (ads never count as order rows)
+    expect(l.balanceChange).toBe(2)           // 150 − 8 − 140 paid out
+    expect(l.reportPayouts).toBe(140)
+    expect(r2(l.recordedNet + l.orderDifference + l.notOnOrdersTotal - l.balanceChange)).toBe(l.reportPayouts)
+    expect(l.orderDiffs).toEqual([{ orderId: 'O2', date: '2026-03-05', recorded: 50, report: 60, difference: 10 }, { orderId: 'O1', date: '2026-03-01', recorded: 85, report: 90, difference: 5 }])
+  })
+
+  it('matches payouts exactly, then net of a small transfer fee; leftovers are unexplained', () => {
+    const l = computePlatformLedger('ebay', 2026, sales, rows, [
+      { date: '2026-03-12', amount: 100, platform: 'ebay' },  // exact
+      { date: '2026-03-20', amount: 38, platform: 'ebay' },   // 40 − $2 instant-transfer fee
+      { date: '2026-06-01', amount: 9.99, platform: 'ebay' }, // not in the report
+    ])
+    expect(l.feeMatched).toEqual([{ date: '2026-03-20', amount: 40, bankDate: '2026-03-20', bankAmount: 38, fee: 2 }])
+    expect(l.unmatchedReportPayouts).toEqual([])
+    expect(l.unmatchedBankDeposits).toEqual([{ date: '2026-06-01', amount: 9.99 }])
+    expect(l.unexplained).toBe(9.99)
+    expect(l.flags[0]).toMatch(/1 bank deposit not in the report/)
+  })
+
+  it('a report payout with no deposit is flagged; a deposit in the report\'s first week is pre-report', () => {
+    const l = computePlatformLedger('ebay', 2026, sales, rows, [{ date: '2026-03-03', amount: 15, platform: 'ebay' }])
+    expect(l.unmatchedReportPayouts.map(p => p.amount)).toEqual([100, 40])
+    expect(l.beforeReport).toEqual([{ date: '2026-03-03', amount: 15 }])
+    expect(l.unexplained).toBe(-140)
+  })
+
+  it('applyLedgers swaps timing notes for ledger flags only where a report exists', () => {
+    const base = computeTieOut(sales, [{ date: '2026-03-12', amount: 100, platform: 'ebay' }])
+    const withReport = applyLedgers(base, [computePlatformLedger('ebay', 2026, sales, rows, [])])
+    expect(withReport[0].ledger?.platform).toBe('ebay')
+    expect(withReport[0].notes).toEqual([])
+    const noReport = applyLedgers(base, [computePlatformLedger('ebay', 2026, sales, [], [])])
+    expect(noReport[0].ledger).toBeUndefined()
   })
 })

@@ -104,6 +104,8 @@ export interface TieOutPlatform {
   flags: string[]
   /** Informational, not a problem (e.g. a balance held on eBay, a TCGplayer payout still pending). */
   notes: string[]
+  /** Full report reconciliation (eBay/Amazon with an imported report) — replaces the timing rules. */
+  ledger?: PlatformLedger
 }
 
 /**
@@ -362,4 +364,253 @@ export function compareEbaySources(sales: EbaySaleInput[], csvRows: EbayCsvRowIn
   for (const [order, a] of rep) if (!earn.has(order) && inYear(a.date)) out.onlyInReport.push(order)
   out.mismatched.sort((x, y) => x.date.localeCompare(y.date))
   return out
+}
+
+
+// ─── 4. Platform ledger: explain every dollar (eBay, Amazon) ─────────────────
+//
+// eBay and Amazon reports (`csv_import` rows) are complete ledgers of the
+// seller balance: sale credits, fees, labels, ads, subscriptions, holds and
+// every payout. So the gap between recorded sales and bank deposits is fully
+// explainable:
+//
+//   recorded sales net                       (A, Sales tab)
+// + order differences = report order net − A, per order        (sales check)
+// + not tied to an order (ads, store fees, labels, charges, holds)   (C)
+// − change in balance held on the platform   (E = Σ every report row)
+// = payouts in the platform report           (D = −Σ transfer rows)
+//
+// D = A + orderDiff + C − E holds by construction. Report payouts are then
+// matched 1:1 to bank deposits; anything left unmatched is the only truly
+// unexplained money. Order differences are listed per order (usually fees or
+// labels that Order Earnings and the Transaction Report book differently).
+
+/** Platforms whose imported report includes every balance movement and payout. */
+export const LEDGER_PLATFORMS = new Set(['ebay', 'amazon'])
+
+export interface LedgerRow {
+  date: string
+  amount: number
+  schedule_c_category: string | null
+  /** Order id for order-level rows (CSV import convention); null otherwise. */
+  notes: string | null
+  merchant?: string | null
+  platform?: string | null
+}
+
+export interface LedgerSale extends TieOutSale {
+  external_order_id?: string | null
+}
+
+export interface LedgerLine { label: string; amount: number; count: number }
+
+export interface LedgerOrderDiff { orderId: string; date: string; recorded: number | null; report: number | null; difference: number }
+
+export interface LedgerPayoutMatch { date: string; amount: number; bankDate: string; bankAmount: number; fee: number }
+
+export interface PlatformLedger {
+  platform: string
+  /** Report rows exist for this year; without them the platform falls back to timing rules. */
+  hasReport: boolean
+  recordedNet: number
+  reportOrderNet: number
+  /** reportOrderNet − recordedNet (sum of `orderDiffs`). */
+  orderDifference: number
+  orderDiffs: LedgerOrderDiff[]
+  notOnOrders: LedgerLine[]
+  notOnOrdersTotal: number
+  /** Σ every report row in the year incl. payouts. Positive = more held at year end than at the start. */
+  balanceChange: number
+  reportPayouts: number
+  reportPayoutCount: number
+  bankDeposits: number
+  bankDepositCount: number
+  /** bankDeposits − reportPayouts. */
+  payoutGap: number
+  /** Payouts that reached the bank short by a small transfer fee (eBay instant payouts). */
+  feeMatched: LedgerPayoutMatch[]
+  transferFees: number
+  /** Bank deposits dated before the first report row: payouts of a balance from before the report starts. */
+  beforeReport: { date: string; amount: number }[]
+  unmatchedReportPayouts: { date: string; amount: number }[]
+  unmatchedBankDeposits: { date: string; amount: number }[]
+  /** bankDeposits − reportPayouts not covered by transfer fees or pre-report deposits. Should be ~0. */
+  unexplained: number
+  flags: string[]
+}
+
+const NOT_ON_ORDER_LABELS: Record<string, string> = {
+  advertising: 'Promoted listings / ads',
+  commissions_fees: 'Store subscription & fees not on an order',
+  shipping_postage: 'Shipping labels not on an order',
+  other_expense: 'Other charges & credits',
+  balance_adjustment: 'Holds & balance adjustments',
+  payout: 'Credits not tied to an order',
+}
+
+const dayNum = (d: string) => Date.parse(d.slice(0, 10) + 'T00:00:00Z') / 86_400_000
+
+/** Matching windows: exact amounts can arrive late (Amazon's $0.01 test deposit took 22 days). */
+export const PAYOUT_MATCH = { exactDays: 30, feeDays: 10, maxFee: 5 }
+
+/**
+ * One platform's ledger for `year`. `rows` and `deposits` may include a margin
+ * around the year (for payout matching across New Year); totals use in-year
+ * rows only. `tolerance` is the order difference treated as zero.
+ */
+export function computePlatformLedger(
+  platform: string,
+  year: number,
+  sales: LedgerSale[],
+  rows: LedgerRow[],
+  deposits: TieOutDeposit[],
+  tolerance = 5,
+): PlatformLedger {
+  const inYear = (d: string) => d.slice(0, 4) === String(year)
+  const mine = <T extends { platform?: string | null }>(xs: T[]) => xs.filter(x => (x.platform ?? '').toLowerCase() === platform)
+  const myRows = mine(rows)
+
+  // A, per order.
+  const recordedByOrder = new Map<string, { net: number; date: string }>()
+  let recordedNet = 0
+  for (const s of mine(sales)) {
+    if (s.deleted_at || s.trade_id || !inYear(s.sold_at)) continue
+    const net = saleNet(s)
+    recordedNet += net
+    const key = s.external_order_id || `sale:${s.sold_at}:${s.sale_price}`
+    const e = recordedByOrder.get(key) ?? { net: 0, date: s.sold_at.slice(0, 10) }
+    e.net += net
+    recordedByOrder.set(key, e)
+  }
+
+  let reportOrderNet = 0, balanceChange = 0, reportPayouts = 0, reportPayoutCount = 0
+  const reportByOrder = new Map<string, { net: number; date: string }>()
+  const notOn = new Map<string, LedgerLine>()
+  const reportPayoutRows: { date: string; amount: number }[] = []
+  for (const r of myRows) {
+    const amt = num(r.amount)
+    const cat = r.schedule_c_category ?? 'uncategorized'
+    if (cat === 'transfer') reportPayoutRows.push({ date: r.date, amount: -amt })
+    if (!inYear(r.date)) continue
+    balanceChange += amt
+    if (cat === 'transfer') { reportPayouts += -amt; reportPayoutCount++; continue }
+    if (r.notes && cat !== 'advertising') {
+      reportOrderNet += amt
+      const e = reportByOrder.get(r.notes) ?? { net: 0, date: r.date }
+      e.net += amt
+      reportByOrder.set(r.notes, e)
+      continue
+    }
+    const label = NOT_ON_ORDER_LABELS[cat] ?? cat
+    const line = notOn.get(label) ?? { label, amount: 0, count: 0 }
+    line.amount += amt; line.count++
+    notOn.set(label, line)
+  }
+
+  const orderDiffs: LedgerOrderDiff[] = []
+  for (const id of new Set([...recordedByOrder.keys(), ...reportByOrder.keys()])) {
+    const a = recordedByOrder.get(id), b = reportByOrder.get(id)
+    const d = r2((b?.net ?? 0) - (a?.net ?? 0))
+    if (Math.abs(d) < 0.01) continue
+    orderDiffs.push({
+      orderId: id.startsWith('sale:') ? '(no order id)' : id,
+      date: (a ?? b)!.date,
+      recorded: a ? r2(a.net) : null,
+      report: b ? r2(b.net) : null,
+      difference: d,
+    })
+  }
+  orderDiffs.sort((x, y) => Math.abs(y.difference) - Math.abs(x.difference))
+
+  // Payout matching.
+  const bank = mine(deposits).map(d => ({ date: d.date, amount: num(d.amount) }))
+  let bankDeposits = 0, bankDepositCount = 0
+  for (const d of bank) if (inYear(d.date)) { bankDeposits += d.amount; bankDepositCount++ }
+  const used = new Set<number>()
+  const pick = (p: { date: string; amount: number }, ok: (d: { date: string; amount: number }) => boolean, days: number) => {
+    let best = -1, bestGap = Infinity
+    bank.forEach((d, i) => {
+      if (used.has(i) || !ok(d)) return
+      const g = Math.abs(dayNum(d.date) - dayNum(p.date))
+      if (g <= days && g < bestGap) { best = i; bestGap = g }
+    })
+    if (best >= 0) used.add(best)
+    return best
+  }
+  const payouts = [...reportPayoutRows].sort((a, b) => a.date.localeCompare(b.date))
+  const leftover: typeof payouts = []
+  for (const p of payouts) {
+    if (pick(p, d => Math.abs(d.amount - p.amount) <= 0.01, PAYOUT_MATCH.exactDays) < 0) leftover.push(p)
+  }
+  const feeMatched: LedgerPayoutMatch[] = []
+  const unmatchedReportPayouts: { date: string; amount: number }[] = []
+  for (const p of leftover) {
+    const i = pick(p, d => d.amount < p.amount && p.amount - d.amount <= PAYOUT_MATCH.maxFee, PAYOUT_MATCH.feeDays)
+    if (i >= 0) {
+      if (inYear(p.date)) feeMatched.push({ date: p.date, amount: r2(p.amount), bankDate: bank[i].date, bankAmount: r2(bank[i].amount), fee: r2(p.amount - bank[i].amount) })
+    } else if (inYear(p.date)) {
+      unmatchedReportPayouts.push({ date: p.date, amount: r2(p.amount) })
+    }
+  }
+  const firstReport = myRows.reduce<string | null>((m, r) => (m === null || r.date < m ? r.date : m), null)
+  const beforeReport: { date: string; amount: number }[] = []
+  const unmatchedBankDeposits: { date: string; amount: number }[] = []
+  bank.forEach((d, i) => {
+    if (used.has(i) || !inYear(d.date)) return
+    const row = { date: d.date, amount: r2(d.amount) }
+    if (firstReport && dayNum(d.date) <= dayNum(firstReport) + 7) beforeReport.push(row)
+    else unmatchedBankDeposits.push(row)
+  })
+
+  const notOnOrders = [...notOn.values()]
+    .map(l => ({ ...l, amount: r2(l.amount) }))
+    .filter(l => Math.abs(l.amount) >= 0.005)
+    .sort((a, b) => a.amount - b.amount)
+  const transferFees = r2(feeMatched.reduce((t, m) => t + m.fee, 0))
+  const beforeTotal = beforeReport.reduce((t, d) => t + d.amount, 0)
+  const payoutGap = r2(bankDeposits - reportPayouts)
+  const out: PlatformLedger = {
+    platform,
+    hasReport: myRows.some(r => inYear(r.date)),
+    recordedNet: r2(recordedNet),
+    reportOrderNet: r2(reportOrderNet),
+    orderDifference: r2(reportOrderNet - recordedNet),
+    orderDiffs,
+    notOnOrders,
+    notOnOrdersTotal: r2(notOnOrders.reduce((t, l) => t + l.amount, 0)),
+    balanceChange: r2(balanceChange),
+    reportPayouts: r2(reportPayouts),
+    reportPayoutCount,
+    bankDeposits: r2(bankDeposits),
+    bankDepositCount,
+    payoutGap,
+    feeMatched,
+    transferFees,
+    beforeReport,
+    unmatchedReportPayouts,
+    unmatchedBankDeposits,
+    unexplained: r2(payoutGap + transferFees - beforeTotal),
+    flags: [],
+  }
+  const plural = (n: number, w: string) => `${n} ${w}${n === 1 ? '' : 's'}`
+  if (unmatchedReportPayouts.length) out.flags.push(`${plural(unmatchedReportPayouts.length, 'payout')} in the report not found in the bank`)
+  if (unmatchedBankDeposits.length) out.flags.push(`${plural(unmatchedBankDeposits.length, 'bank deposit')} not in the report`)
+  if (Math.abs(out.orderDifference) > tolerance) {
+    out.flags.push(`Sales tab differs from the report on ${plural(orderDiffs.length, 'order')} (net ${out.orderDifference > 0 ? '+' : '−'}$${Math.abs(out.orderDifference).toFixed(2)})`)
+  }
+  return out
+}
+
+/**
+ * Swap the timing rules for the report reconciliation on platforms that have
+ * an imported report for the year: flags come from the ledger (unmatched
+ * payouts, order differences) and the held-balance notes are dropped, since
+ * the bridge explains the gap line by line.
+ */
+export function applyLedgers(platforms: TieOutPlatform[], ledgers: PlatformLedger[]): TieOutPlatform[] {
+  const byPlatform = new Map(ledgers.filter(l => l.hasReport).map(l => [l.platform, l]))
+  return platforms.map(p => {
+    const ledger = byPlatform.get(p.platform)
+    return ledger ? { ...p, ledger, flags: [...ledger.flags], notes: [] } : p
+  })
 }
