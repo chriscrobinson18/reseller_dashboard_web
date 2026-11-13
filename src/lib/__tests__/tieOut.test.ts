@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import {
-  saleNet, computeTieOut, incomeDepositsNeedingSales, compareEbaySources,
+  saleNet, computeTieOut, tieOutTargets, incomeDepositsNeedingSales, compareEbaySources,
   type TieOutSale, type IncomeDepositInput,
 } from '../tieOut'
 
@@ -85,9 +85,10 @@ describe('computeTieOut', () => {
     expect(small(150.01)).toHaveLength(1)
   })
 
-  it('does not apply the difference flag when one side is empty', () => {
+  it('does not apply the difference flag when one side is empty (only the no-deposits flag)', () => {
     const [p] = computeTieOut([sale({ net_payout: 5000 })], [])
-    expect(p.flags).toEqual([])
+    expect(p.flags).toHaveLength(1)
+    expect(p.flags[0]).toMatch(/no deposits/)
   })
 
   it('rounds to cents (no float drift)', () => {
@@ -191,5 +192,38 @@ describe('compareEbaySources', () => {
       [row('M', 'payout', 100), row('M', 'commissions_fees', -15), row('M', 'shipping_postage', -5)],
     )
     expect([r.ordersCompared, r.matching]).toEqual([1, 1])
+  })
+})
+
+describe('in-person sales route to their payment rail', () => {
+  const base = { sold_at: '2026-05-02T12:00:00Z', sale_price: 100, fees: 0 }
+  it('marketplaces stay under their own platform even with a payment method', () => {
+    expect(tieOutTargets({ ...base, platform: 'ebay', payment_method: 'paypal' })).toEqual([{ key: 'ebay', share: 1 }])
+  })
+  it('manual + venmo files under venmo; no method stays manual', () => {
+    expect(tieOutTargets({ ...base, platform: 'manual', payment_method: 'venmo' })).toEqual([{ key: 'venmo', share: 1 }])
+    expect(tieOutTargets({ ...base, platform: 'manual', payment_method: 'card' })).toEqual([{ key: 'manual', share: 1 }])
+  })
+  it('split payments divide the sale across rails by amount', () => {
+    expect(tieOutTargets({ ...base, platform: 'manual', payment_method: 'split', payments: [{ method: 'cash', amount: 60 }, { method: 'venmo', amount: 40 }] }))
+      .toEqual([{ key: 'cash', share: 0.6 }, { key: 'venmo', share: 0.4 }])
+  })
+  it('ties a manual PayPal sale to PayPal deposits; cash needs no deposit; unrouted sales are flagged', () => {
+    const out = computeTieOut(
+      [
+        { ...base, platform: 'manual', payment_method: 'paypal', net_payout: 100 },
+        { ...base, platform: 'manual', payment_method: 'cash', net_payout: 50 },
+        { ...base, platform: 'manual', net_payout: 20 },
+      ],
+      [{ date: '2026-05-03', amount: 100, platform: 'paypal' }],
+    )
+    const by = Object.fromEntries(out.map(p => [p.platform, p]))
+    expect([by.paypal.saleCount, by.paypal.difference, by.paypal.flags]).toEqual([1, 0, []])
+    expect(by.cash.flags).toEqual([])
+    expect(by.manual.flags[0]).toMatch(/payment method/)
+  })
+  it('flags a marketplace with sales but no deposits', () => {
+    const [p] = computeTieOut([{ ...base, platform: 'tcgplayer', net_payout: 10 }], [])
+    expect(p.flags[0]).toMatch(/no deposits/)
   })
 })

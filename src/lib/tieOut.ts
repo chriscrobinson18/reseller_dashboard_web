@@ -36,6 +36,49 @@ export interface TieOutSale {
   deleted_at?: string | null
   /** Given side of a trade: non-cash, never deposited, so skipped. */
   trade_id?: string | null
+  /** How the buyer paid — routes in-person sales to their wallet's deposits. */
+  payment_method?: string | null
+  /** Split-payment breakdown (payment_method = 'split'). */
+  payments?: { method: string; amount: number }[] | null
+}
+
+/**
+ * Venues with no settlement of their own: the money lands through whatever
+ * rail the buyer used, so the tie-out files the sale under that rail's deposit
+ * label instead of e.g. 'manual' (whose deposits never exist).
+ */
+export const IN_PERSON_PLATFORMS = new Set(['manual', 'facebook marketplace', 'facebook groups', 'discord'])
+
+/** payment_method → deposit platform label. 'cash' has no deposits by nature. */
+export const RAIL_DEPOSIT_PLATFORM: Record<string, string> = {
+  paypal: 'paypal', venmo: 'venmo', cashapp: 'cashapp', zelle: 'zelle', cash: 'cash',
+}
+
+/** Rails whose money never arrives as a tagged deposit, so "no deposits" is expected. */
+export const NO_DEPOSIT_PLATFORMS = new Set(['cash'])
+
+/**
+ * Where a sale's money should show up, as [platform key, share of the sale].
+ * Marketplaces settle under their own name. In-person sales go to their
+ * payment rail (split payments proportionally); with no usable rail they stay
+ * under their platform and get flagged.
+ */
+export function tieOutTargets(s: TieOutSale): Array<{ key: string; share: number }> {
+  const platform = (s.platform || 'unassigned').toLowerCase()
+  if (!IN_PERSON_PLATFORMS.has(platform)) return [{ key: platform, share: 1 }]
+  if (s.payments && s.payments.length > 0) {
+    const total = s.payments.reduce((t, p) => t + num(p.amount), 0)
+    if (total > 0) {
+      const byKey = new Map<string, number>()
+      for (const p of s.payments) {
+        const key = RAIL_DEPOSIT_PLATFORM[p.method] ?? platform
+        byKey.set(key, (byKey.get(key) ?? 0) + num(p.amount) / total)
+      }
+      return [...byKey].map(([key, share]) => ({ key, share }))
+    }
+  }
+  const rail = s.payment_method ? RAIL_DEPOSIT_PLATFORM[s.payment_method] : undefined
+  return [{ key: rail ?? platform, share: 1 }]
 }
 
 export interface TieOutDeposit {
@@ -89,17 +132,20 @@ export function computeTieOut(sales: TieOutSale[], deposits: TieOutDeposit[]): T
   }
   for (const s of sales) {
     if (s.deleted_at || s.trade_id) continue
-    const e = get((s.platform || 'unassigned').toLowerCase())
     const net = saleNet(s)
-    e.saleCount++
-    e.gross += num(s.sale_price) + num(s.shipping_charged)
-    e.fees += num(s.fees)
-    e.shipping += num(s.shipping_cost)
-    e.refunds += num(s.refunded_amount)
-    e.salesNet += net
-    const mm = month(e, monthKey(s.sold_at.slice(0, 10)))
-    mm.salesNet += net
-    mm.saleCount++
+    // A split sale counts once on each rail it touched, with its share of the money.
+    for (const { key, share } of tieOutTargets(s)) {
+      const e = get(key)
+      e.saleCount++
+      e.gross += (num(s.sale_price) + num(s.shipping_charged)) * share
+      e.fees += num(s.fees) * share
+      e.shipping += num(s.shipping_cost) * share
+      e.refunds += num(s.refunded_amount) * share
+      e.salesNet += net * share
+      const mm = month(e, monthKey(s.sold_at.slice(0, 10)))
+      mm.salesNet += net * share
+      mm.saleCount++
+    }
   }
   for (const d of deposits) {
     const e = get((d.platform || 'unassigned').toLowerCase())
@@ -122,6 +168,11 @@ export function computeTieOut(sales: TieOutSale[], deposits: TieOutDeposit[]): T
       flags: [],
     }
     if (p.depositCount > 0 && p.saleCount === 0) p.flags.push('Deposits with no recorded sales')
+    if (p.saleCount > 0 && p.depositCount === 0 && !NO_DEPOSIT_PLATFORMS.has(p.platform)) {
+      p.flags.push(IN_PERSON_PLATFORMS.has(p.platform)
+        ? 'In-person sales with no payment method: set one so they match a wallet deposit'
+        : 'Recorded sales but no deposits: payouts untagged, missing, or paid out under another name')
+    }
     const gapMonths = p.months.filter(x => x.deposits > 0 && x.saleCount === 0).map(x => x.month)
     if (gapMonths.length && p.saleCount > 0) p.flags.push(`Deposits but no sales in ${gapMonths.join(', ')}`)
     if (p.saleCount > 0 && p.depositCount > 0 && Math.abs(p.difference) > Math.max(TIE_OUT_TOLERANCE.abs, TIE_OUT_TOLERANCE.pct * Math.abs(p.salesNet))) {

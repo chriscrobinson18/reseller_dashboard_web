@@ -102,13 +102,14 @@ describe('computeKPIs', () => {
     expect(result.net).toBe(970)
   })
 
-  it('treats cogs bucket as expense in KPI display', () => {
+  it('keeps inventory purchases out of expenses: they become cost of goods sold', () => {
     const result = computeKPIs([
       tx({ id: 'a', amount: 1000, schedule_c_category: 'payout' }),
       tx({ id: 'b', amount: -400, schedule_c_category: 'cost_of_goods' }),
     ], [])
     expect(result.income).toBe(1000)
-    expect(result.expenses).toBe(400)
+    expect(result.expenses).toBe(0)
+    expect(result.cogs).toBe(400) // no inventory change supplied → cogs = purchases
     expect(result.net).toBe(600)
   })
 
@@ -119,15 +120,16 @@ describe('computeKPIs', () => {
       tx({ id: 'c', amount: -100, schedule_c_category: 'supplies' }),
     ]
     const r = computeKPIs(txs, [], undefined, 250) // 250 of the 400 bought is still on the shelf
-    expect([r.net, r.inventoryPurchases, r.inventoryChange, r.netAfterInventory]).toEqual([500, 400, 250, 750])
-    // Without an inventory change, both nets agree (backward compatible).
+    // expenses 100 (opex only); cogs = 400 − 250 = 150; net = 1000 − 100 − 150
+    expect([r.expenses, r.inventoryPurchases, r.cogs, r.net, r.cashNet]).toEqual([100, 400, 150, 750, 500])
+    // Without an inventory change, both nets agree.
     const plain = computeKPIs(txs, [])
-    expect([plain.inventoryChange, plain.netAfterInventory]).toEqual([0, plain.net])
+    expect([plain.inventoryChange, plain.net]).toEqual([0, plain.cashNet])
   })
 
   it('a falling inventory lowers the inventory-basis net (old stock sold this period)', () => {
     const r = computeKPIs([tx({ id: 'a', amount: 1000, schedule_c_category: 'payout' })], [], undefined, -300)
-    expect(r.netAfterInventory).toBe(700)
+    expect([r.cogs, r.net]).toEqual([300, 700]) // old stock sold: cogs with no purchases
   })
 })
 
@@ -139,8 +141,8 @@ describe('computeMonthlyChart', () => {
       tx({ id: 'c', date: '2026-02-05', amount: 500, schedule_c_category: 'payout' }),
     ], [])
     expect(result).toEqual([
-      { month: '2026-01', income: 1000, expenses: 200 },
-      { month: '2026-02', income: 500, expenses: 0 },
+      { month: '2026-01', income: 1000, expenses: 200, cogs: 0 },
+      { month: '2026-02', income: 500, expenses: 0, cogs: 0 },
     ])
   })
 
@@ -150,7 +152,7 @@ describe('computeMonthlyChart', () => {
       tx({ id: 'b', date: '2026-01-20', amount: 50, schedule_c_category: 'supplies' }),
     ], [])
     expect(result).toEqual([
-      { month: '2026-01', income: 0, expenses: 150 },
+      { month: '2026-01', income: 0, expenses: 150, cogs: 0 },
     ])
   })
 
@@ -187,8 +189,8 @@ describe('sales-based income (2026-11-09)', () => {
   it('computeMonthlyChart adds sales by month, including months with no transactions', () => {
     const bars = computeMonthlyChart([tx({ date: '2026-01-10', amount: -50 })], [], { '2026-02': SALES })
     expect(bars).toEqual([
-      { month: '2026-01', income: 0, expenses: 50 },
-      { month: '2026-02', income: 900, expenses: 170 },
+      { month: '2026-01', income: 0, expenses: 50, cogs: 0 },
+      { month: '2026-02', income: 900, expenses: 170, cogs: 0 },
     ])
   })
 })
@@ -207,5 +209,19 @@ describe('Total Income KPI matches Schedule C Part I (P0 regression)', () => {
     const partI = (sc.payout ?? 0) + (sc.returns_allowances ?? 0)
     expect(k.income).toBe(partI)
     expect(k.income).toBe(400 - 25 + SALES.grossReceipts - SALES.returns) // 1275, computed a second way
+  })
+})
+
+describe('computeMonthlyChart with inventory', () => {
+  it('splits purchases out of expenses into per-month cost of goods sold', () => {
+    const bars = computeMonthlyChart([
+      tx({ id: 'a', date: '2026-01-10', amount: -400, schedule_c_category: 'cost_of_goods' }),
+      tx({ id: 'b', date: '2026-01-12', amount: -100, schedule_c_category: 'supplies' }),
+    ], [], undefined, { '2026-01': 250, '2026-02': -150 })
+    // Jan: bought 400, 250 still on the shelf → cogs 150. Feb: no purchases, 150 of stock sold → cogs 150.
+    expect(bars).toEqual([
+      { month: '2026-01', income: 0, expenses: 100, cogs: 150 },
+      { month: '2026-02', income: 0, expenses: 0, cogs: 150 },
+    ])
   })
 })

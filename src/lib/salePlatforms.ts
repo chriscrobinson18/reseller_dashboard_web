@@ -10,5 +10,5 @@
  */
 export const SALE_PLATFORMS = [
   'ebay', 'amazon', 'tcgplayer', 'mercari', 'stockx', 'goat', 'whatnot', 'goldin',
-  'facebook marketplace', 'facebook groups', 'discord', 'manual',
+  'psa', 'facebook marketplace', 'facebook groups', 'discord', 'manual',
 ] as const

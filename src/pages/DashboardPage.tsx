@@ -8,7 +8,7 @@ import { supabase } from '../lib/supabase'
 import { getPeriodRange, PERIOD_LABELS, type PeriodPreset } from '../lib/periods'
 import { CATEGORIES, resolveCategory, type CustomCategory, type CategoryDef } from '../lib/categories'
 import { useCustomCategories, useInventoryValuations, useLotValuationData } from '../lib/queries'
-import { inventoryChangeForPeriod } from '../lib/partIII'
+import { inventoryChangeForPeriod, inventoryChangeByMonth, monthKeysBetween } from '../lib/partIII'
 import PartIIICard from '../components/PartIIICard'
 import TieOutCard from '../components/TieOutCard'
 import { computeScheduleC, computeKPIs, computeMonthlyChart } from '../lib/scheduleCMath'
@@ -198,7 +198,24 @@ export default function DashboardPage() {
   // count as on hand — ending inventory (and Net) is overstated by their cost.
   const unlinkedSales = useMemo(() => sales.filter(s => !s.item_id && !s.trade_id), [sales])
   const profitability = useMemo(() => computeProfitability(sales), [sales])
-  const monthlyData = useMemo(() => computeMonthlyChart(transactions, customs, salesByMonth), [transactions, customs, salesByMonth])
+  // Per-month inventory change, so each month's bar shows cost of goods SOLD
+  // rather than purchases. Contiguous months from the period start (or the
+  // earliest activity, for All time) to the period's ending date.
+  const monthInventory = useMemo(() => {
+    if (!lotData || !periodInventory) return undefined
+    const earliest = [
+      range.start,
+      transactions.length ? transactions[transactions.length - 1].date : null, // fetched date desc
+      sales.length ? sales[sales.length - 1].sold_at : null,                   // fetched sold_at desc
+    ].filter((d): d is string => !!d).map(d => d.slice(0, 10)).sort()[0]
+    if (!earliest) return undefined
+    const months = monthKeysBetween(range.start ?? earliest, periodInventory.endingAsOf)
+    return inventoryChangeByMonth(lotData.lots, lotData.movements, months, periodInventory.endingAsOf)
+  }, [lotData, periodInventory, range.start, transactions, sales])
+  const monthlyData = useMemo(
+    () => computeMonthlyChart(transactions, customs, salesByMonth, monthInventory),
+    [transactions, customs, salesByMonth, monthInventory],
+  )
   const scheduleC = useMemo(() => computeScheduleC(transactions, customs, salesIncome), [transactions, customs, salesIncome])
 
   // Note: scheduleC values are SIGNED. For Part I, positive = income (display as is).
@@ -301,33 +318,36 @@ export default function DashboardPage() {
         </Link>
       )}
 
-      {/* KPI row */}
-      {/* Phones: Income | Expenses side by side, Net full-width beneath. */}
-      {/* Net is inventory-basis: cash net + (ending − beginning inventory). */}
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 md:gap-4">
+      {/* KPI row — inventory purchases are not an expense: they become cost of
+          goods sold (beginning + bought − ending), so Net counts unsold stock as
+          an asset. Phones: two per row, Net full-width last. */}
+      <div className="grid grid-cols-2 lg:grid-cols-5 gap-3 md:gap-4">
         <KpiCard label="Total Income" value={kpis.income} positive />
         <KpiCard
-          label="Total Expenses" value={kpis.expenses} positive={false}
-          sub={kpis.inventoryPurchases > 0 ? <>incl. {formatUSD(kpis.inventoryPurchases)} inventory bought</> : undefined}
+          label="Cost of Goods Sold" value={kpis.cogs} positive={false} loading={loadingLots}
+          sub={periodInventory && <>
+            {periodInventory.beginningAsOf ? <>{formatUSD(periodInventory.beginning)} start + </> : null}
+            {formatUSD(kpis.inventoryPurchases)} bought − {formatUSD(periodInventory.ending)} on hand
+          </>}
         />
+        <KpiCard label="Total Expenses" value={kpis.expenses} positive={false} sub="Excludes inventory purchases" />
         <KpiCard
           label={periodInventory ? `Inventory on hand · ${shortDate(periodInventory.endingAsOf)}` : 'Inventory on hand'}
           value={periodInventory?.ending ?? 0} positive loading={loadingLots}
           sub={periodInventory && (periodInventory.beginningAsOf
-            ? <>{periodInventory.change >= 0 ? '+' : '−'}{formatUSD(Math.abs(periodInventory.change))} vs {shortDate(periodInventory.beginningAsOf)} ({formatUSD(periodInventory.beginning)})</>
+            ? <>{periodInventory.change >= 0 ? '+' : '−'}{formatUSD(Math.abs(periodInventory.change))} vs {shortDate(periodInventory.beginningAsOf)}</>
             : <>All time</>)}
         />
-        <KpiCard
-          label="Net (inventory counted)" value={kpis.netAfterInventory} loading={loadingLots}
-          sub={<>Cash basis: {formatUSD(kpis.net)}</>}
-        />
+        <div className="col-span-2 lg:col-span-1">
+          <KpiCard label="Net" value={kpis.net} loading={loadingLots} sub={<>Cash basis: {formatUSD(kpis.cashNet)}</>} />
+        </div>
       </div>
       <p className="text-xs text-gray-500 -mt-2 md:-mt-4">
-        Net counts inventory still on hand as an asset, not an expense: cash net {kpis.inventoryChange >= 0 ? '+' : '−'} change in inventory over the period. Inventory is valued from your lots at cost.
+        Net = income − cost of goods sold − expenses. Inventory still on hand is an asset, not an expense; it's valued from your lots at cost.
         {' '}Tax filing uses Part III below (full year).
         {unlinkedSales.length > 0 && (
           <span className="block text-amber-700 mt-0.5">
-            ⚠️ {unlinkedSales.length} sale{unlinkedSales.length === 1 ? '' : 's'} in this period {unlinkedSales.length === 1 ? 'isn\'t' : 'aren\'t'} linked to inventory, so {unlinkedSales.length === 1 ? 'its item still counts' : 'their items still count'} as on hand — inventory and Net are overstated by that cost.{' '}
+            ⚠️ {unlinkedSales.length} sale{unlinkedSales.length === 1 ? '' : 's'} in this period {unlinkedSales.length === 1 ? 'isn\'t' : 'aren\'t'} linked to inventory, so {unlinkedSales.length === 1 ? 'its item still counts' : 'their items still count'} as on hand — cost of goods sold is understated and Net overstated by that cost.{' '}
             <Link to="/sales" className="underline">Link them on Sales</Link>.
           </span>
         )}
@@ -389,6 +409,7 @@ export default function DashboardPage() {
               />
               <Legend wrapperStyle={{ fontSize: 12 }} />
               <Bar dataKey="income" name="Income" fill="#10b981" radius={[3, 3, 0, 0]} />
+              <Bar dataKey="cogs" name="Cost of goods sold" fill="#f59e0b" radius={[3, 3, 0, 0]} />
               <Bar dataKey="expenses" name="Expenses" fill="#f87171" radius={[3, 3, 0, 0]} />
             </BarChart>
           </ResponsiveContainer>

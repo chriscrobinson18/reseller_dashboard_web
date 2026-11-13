@@ -19,6 +19,7 @@ import {
 const PLATFORM_LABELS: Record<string, string> = {
   ebay: 'eBay', tcgplayer: 'TCGplayer', amazon: 'Amazon', paypal: 'PayPal', cashapp: 'Cash App',
   psa: 'PSA', manual: 'Manual', mercari: 'Mercari', unassigned: 'Unassigned',
+  venmo: 'Venmo', zelle: 'Zelle', goldin: 'Goldin', cash: 'Cash (in person)',
 }
 const platformLabel = (p: string) => PLATFORM_LABELS[p] ?? p.charAt(0).toUpperCase() + p.slice(1)
 
@@ -33,6 +34,7 @@ function Status({ p }: { p: TieOutPlatform }) {
     )
   }
   if (p.saleCount > 0 && p.depositCount > 0) return <span className="text-xs font-medium text-green-700">Ties</span>
+  if (p.platform === 'cash') return <span className="text-xs text-gray-500">Cash: no deposits expected</span>
   if (p.depositCount === 0) return <span className="text-xs text-gray-500">No deposits under this platform</span>
   return null
 }
@@ -190,7 +192,8 @@ export default function TieOutCard() {
       <p className="text-xs text-gray-500 mb-3">
         Proves every sale is recorded: each platform’s settlement deposits should roughly equal the net of its recorded sales
         (full tax year; flagged above the larger of {formatUSD(TIE_OUT_TOLERANCE.abs)} or {TIE_OUT_TOLERANCE.pct * 100}%).
-        Small gaps are usually timing (December sales paid in January). Read-only.
+        Small gaps are usually timing (December sales paid in January). In-person sales are matched to the wallet
+        they were paid through (PayPal, Venmo, Cash App, Zelle) by their payment method. Read-only.
       </p>
 
       {isLoading && <p className="text-xs text-gray-400">Loading {year}…</p>}

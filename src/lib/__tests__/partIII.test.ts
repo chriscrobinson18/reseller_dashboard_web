@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { computePartIII, inventoryOnHandAsOf, inventoryChangeForPeriod, type LotForValuation } from '../partIII'
+import { computePartIII, inventoryOnHandAsOf, inventoryChangeForPeriod, inventoryChangeByMonth, monthKeysBetween, type LotForValuation } from '../partIII'
 
 describe('computePartIII (traditional method)', () => {
   it('Line 42 = beginning (prior year row) + purchases − ending', () => {
@@ -67,5 +67,32 @@ describe('inventoryChangeForPeriod', () => {
 
   it('steps back across a month boundary for the beginning date', () => {
     expect(inventoryChangeForPeriod(lots, movements, '2026-03-01', null, '2026-11-13').beginningAsOf).toBe('2026-02-28')
+  })
+})
+
+describe('computePartIII estimates', () => {
+  it('fills missing values from estimates, but a saved value always wins', () => {
+    const p = computePartIII(2026, 1000, [{ tax_year: 2025, ending_inventory: 400 }], { beginning: 999, ending: 300 })
+    expect([p.beginningInventory, p.beginningEstimated, p.endingInventory, p.endingEstimated, p.cogs, p.complete])
+      .toEqual([400, false, 300, true, 1100, false])
+  })
+  it('without estimates behaves as before', () => {
+    const p = computePartIII(2026, 1000, [])
+    expect([p.beginningInventory, p.endingInventory, p.beginningEstimated, p.endingEstimated]).toEqual([0, 0, false, false])
+  })
+})
+
+describe('monthly inventory change', () => {
+  const lot = (o: Partial<LotForValuation>): LotForValuation => ({ id: 'L1', quantity_remaining: 0, unit_cost: 10, purchase_date: '2025-06-01', created_at: '2025-06-01T00:00:00Z', ...o })
+  it('lists months across a year boundary', () => {
+    expect(monthKeysBetween('2025-11-15', '2026-02-01')).toEqual(['2025-11', '2025-12', '2026-01', '2026-02'])
+  })
+  it('monthly changes telescope to the period change', () => {
+    const lots = [lot({ id: 'A', quantity_remaining: 3 }), lot({ id: 'B', quantity_remaining: 3, unit_cost: 20, purchase_date: '2026-02-01' })]
+    const mv = [{ inventory_lot_id: 'A', quantity: 3, sold_at: '2026-03-15' }, { inventory_lot_id: 'B', quantity: 2, sold_at: '2026-04-10' }]
+    const byMonth = inventoryChangeByMonth(lots, mv, monthKeysBetween('2026-01', '2026-05'), '2026-05-20')
+    expect(byMonth).toEqual({ '2026-01': 0, '2026-02': 100, '2026-03': -30, '2026-04': -40, '2026-05': 0 })
+    const sum = Object.values(byMonth).reduce((a, b) => a + b, 0)
+    expect(sum).toBe(inventoryChangeForPeriod(lots, mv, '2026-01-01', '2026-05-31', '2026-05-20').change)
   })
 })

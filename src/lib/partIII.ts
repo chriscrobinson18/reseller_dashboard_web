@@ -21,27 +21,43 @@ export interface InventoryValuationRow {
 
 export interface PartIII {
   taxYear: number
-  beginningInventory: number      // Line 35 (0 when not set)
+  beginningInventory: number      // Line 35 (stored; else the estimate; else 0)
   purchases: number               // Line 36 (positive magnitude)
   line40: number
-  endingInventory: number         // Line 41 (0 when not set)
+  endingInventory: number         // Line 41 (stored; else the estimate; else 0)
   cogs: number                    // Line 42
   beginningSet: boolean
   endingSet: boolean
+  /** Line 35 / 41 is a lot-based estimate standing in for a value not yet saved. */
+  beginningEstimated: boolean
+  endingEstimated: boolean
   /** Both inventory values are stored: Line 42 is final for filing. */
   complete: boolean
+}
+
+/**
+ * Lot-based stand-ins (inventoryOnHandAsOf at Dec 31) for years with no saved
+ * valuation. A saved value always wins — the estimate never overrides it and
+ * is never saved automatically; `complete` stays false until both are saved.
+ */
+export interface PartIIIEstimates {
+  beginning?: number
+  ending?: number
 }
 
 export function computePartIII(
   taxYear: number,
   purchases: number,
   valuations: InventoryValuationRow[],
+  estimates: PartIIIEstimates = {},
 ): PartIII {
   const find = (y: number) => valuations.find(v => v.tax_year === y)
   const begin = find(taxYear - 1)
   const end = find(taxYear)
-  const beginningInventory = begin ? Number(begin.ending_inventory) : 0
-  const endingInventory = end ? Number(end.ending_inventory) : 0
+  const beginningEstimated = !begin && estimates.beginning !== undefined
+  const endingEstimated = !end && estimates.ending !== undefined
+  const beginningInventory = begin ? Number(begin.ending_inventory) : (estimates.beginning ?? 0)
+  const endingInventory = end ? Number(end.ending_inventory) : (estimates.ending ?? 0)
   const p = Math.abs(purchases)
   const line40 = beginningInventory + p
   return {
@@ -53,6 +69,8 @@ export function computePartIII(
     cogs: line40 - endingInventory,
     beginningSet: !!begin,
     endingSet: !!end,
+    beginningEstimated,
+    endingEstimated,
     complete: !!begin && !!end,
   }
 }
@@ -159,4 +177,39 @@ export function inventoryChangeForPeriod(
     beginningAsOf,
     endingAsOf,
   }
+}
+
+/** Months 'yyyy-MM' from `from` through `to` inclusive (both 'yyyy-MM…'). */
+export function monthKeysBetween(from: string, to: string): string[] {
+  const out: string[] = []
+  let y = Number(from.slice(0, 4)), m = Number(from.slice(5, 7))
+  const endY = Number(to.slice(0, 4)), endM = Number(to.slice(5, 7))
+  while (y < endY || (y === endY && m <= endM)) {
+    out.push(`${y}-${String(m).padStart(2, '0')}`)
+    m++; if (m > 12) { m = 1; y++ }
+  }
+  return out
+}
+
+/**
+ * Inventory change per calendar month (end of month − end of prior month,
+ * month end capped at `today`), for the Monthly Overview's cost-of-goods-sold
+ * bars: COGS(month) = purchases(month) − change(month). The changes telescope,
+ * so they sum to the whole period's change when months are contiguous.
+ */
+export function inventoryChangeByMonth(
+  lots: LotForValuation[],
+  movements: MovementForValuation[],
+  months: string[],
+  today: string,
+): Record<string, number> {
+  const out: Record<string, number> = {}
+  for (const mk of months) {
+    const start = `${mk}-01`
+    if (start > today) continue
+    const y = Number(mk.slice(0, 4)), m = Number(mk.slice(5, 7))
+    const lastDay = new Date(Date.UTC(y, m, 0)).toISOString().slice(0, 10)
+    out[mk] = inventoryChangeForPeriod(lots, movements, start, lastDay, today).change
+  }
+  return out
 }

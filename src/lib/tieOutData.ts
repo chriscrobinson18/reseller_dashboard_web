@@ -30,7 +30,9 @@ export async function fetchTieOutData(supabase: SupabaseClient, year: number): P
   const wStart = shiftDate(start, -EBAY_WINDOW_DAYS), wEnd = shiftDate(end, EBAY_WINDOW_DAYS)
   const [sales, deposits, incomeRows, ebaySales, ebayCsv] = await Promise.all([
     fetchAllRows<TieOutSale>((from, to) => supabase.from('sales')
-      .select('platform, sold_at, sale_price, fees, shipping_cost, shipping_charged, refunded_amount, net_payout, deleted_at, trade_id')
+      // '*' rather than a column list: includes payment_method and, once the
+      // sale_payment_splits migration is applied, payments (absent before).
+      .select('*')
       .is('deleted_at', null)
       .gte('sold_at', `${start}T00:00:00Z`).lt('sold_at', `${next}T00:00:00Z`)
       .order('id').range(from, to)),
@@ -39,6 +41,9 @@ export async function fetchTieOutData(supabase: SupabaseClient, year: number): P
       .select('date, amount, platform')
       .or('record_type.eq.settlement,schedule_c_category.eq.settlement')
       .or('source.is.null,source.neq.csv_import')
+      // A sale's/bundle's own payout row recategorized to settlement is not a
+      // bank deposit — counting it showed bundles as "unassigned" deposits.
+      .is('related_sale_id', null).is('related_bundle_id', null)
       .gt('amount', 0)
       .gte('date', start).lte('date', end)
       .order('id').range(from, to)),

@@ -36,14 +36,19 @@ async function fetchYearTransactions(year: number): Promise<Transaction[]> {
     .range(from, to))
 }
 
-function Row({ line, label, value, strong, warn }: { line: string; label: string; value: number; strong?: boolean; warn?: string }) {
+function Row({ line, label, value, strong, warn, estimated }: {
+  line: string; label: string; value: number; strong?: boolean; warn?: string
+  /** Value is a lot-based estimate, not a saved figure: shown italic with a tag. */
+  estimated?: boolean
+}) {
   return (
     <div className="flex justify-between items-start gap-3 py-1.5 border-b border-gray-100 last:border-0">
       <span className={`text-sm min-w-0 ${strong ? 'font-semibold text-gray-900' : 'text-gray-700'}`}>
         <span className="text-gray-400 mr-1.5 tabular-nums">{line}</span>{label}
+        {estimated && <span className="ml-1.5 text-[10px] font-medium uppercase tracking-wide text-amber-700 bg-amber-50 border border-amber-200 rounded px-1 py-px">Estimate</span>}
         {warn && <span className="block text-xs text-amber-700 mt-0.5">{warn}</span>}
       </span>
-      <span className={`text-sm tabular-nums shrink-0 ${strong ? 'font-semibold text-gray-900' : 'font-medium text-gray-800'}`}>
+      <span className={`text-sm tabular-nums shrink-0 ${estimated ? 'italic text-gray-600' : ''} ${strong ? 'font-semibold text-gray-900' : 'font-medium text-gray-800'}`}>
         {formatUSD(value)}
       </span>
     </div>
@@ -157,9 +162,14 @@ export default function PartIIICard({ customs }: { customs: CustomCategory[] }) 
   // Purchases use exactly the Summary CSV's rules (sale-derived / settlement /
   // net-zero / excluded rows skipped), so the card and the export agree.
   const purchases = useMemo(() => computeScheduleCSummary(txYear, customs).purchases, [txYear, customs])
-  const p = useMemo(() => computePartIII(year, purchases, valuations), [year, purchases, valuations])
   const suggest = (y: number) => lotData ? inventoryOnHandAsOf(lotData.lots, lotData.movements, `${y}-12-31`) : undefined
   const sEnd = suggest(year), sBegin = suggest(year - 1)
+  // Saved values always win; the lot-based figure only fills a missing one.
+  const p = useMemo(
+    () => computePartIII(year, purchases, valuations, { beginning: sBegin?.value, ending: sEnd?.value }),
+    [year, purchases, valuations, sBegin?.value, sEnd?.value],
+  )
+  const yearOpen = year >= thisYear
   const rowFor = (y: number) => valuations.find(v => v.tax_year === y)
   const onSaved = () => qc.invalidateQueries({ queryKey: ['inventory_valuations'] })
 
@@ -176,15 +186,17 @@ export default function PartIIICard({ customs }: { customs: CustomCategory[] }) 
         Traditional method: beginning + purchases − ending, always for the full tax year. Feeds Schedule C Line 4 in the Summary CSV when you export “Last Year”.
       </p>
 
-      <Row line="35" label="Inventory at beginning of year" value={p.beginningInventory}
-        warn={p.beginningSet ? undefined : `Not set — enter the ${year - 1} year-end value${year - 1 <= 2024 ? ' from your filed return' : ''}.`} />
+      <Row line="35" label="Inventory at beginning of year" value={p.beginningInventory} estimated={p.beginningEstimated}
+        warn={p.beginningSet ? undefined : `Estimated from lots at Dec 31, ${year - 1}. Save the ${year - 1} year-end value${year - 1 <= 2024 ? ' from your filed return' : ''} to lock it.`} />
       <div className="pb-1"><ValuationEditor key={`b${year}`} year={year - 1} current={rowFor(year - 1)} suggestion={sBegin?.value} onSaved={onSaved} /></div>
       <Row line="36" label={`Purchases${isLoading ? ' (loading…)' : ''}`} value={p.purchases} />
       <Row line="40" label="Lines 35 through 39" value={p.line40} />
-      <Row line="41" label="Inventory at end of year" value={p.endingInventory}
-        warn={p.endingSet ? undefined : 'Not set — count or estimate inventory on hand at Dec 31.'} />
+      <Row line="41" label="Inventory at end of year" value={p.endingInventory} estimated={p.endingEstimated}
+        warn={p.endingSet ? undefined : yearOpen
+          ? 'Estimated from lots on hand today (the year isn’t over). Save a counted value at Dec 31 to lock it.'
+          : `Estimated from lots at Dec 31, ${year}. Count or confirm, then save to lock it.`} />
       <div className="pb-1"><ValuationEditor key={`e${year}`} year={year} current={rowFor(year)} suggestion={sEnd?.value} onSaved={onSaved} /></div>
-      <Row line="42" label="Cost of goods sold → Line 4" value={p.cogs} strong />
+      <Row line="42" label="Cost of goods sold → Line 4" value={p.cogs} strong estimated={p.beginningEstimated || p.endingEstimated} />
 
       {sEnd && (
         <p className="text-xs text-gray-400 mt-2">
@@ -192,7 +204,11 @@ export default function PartIIICard({ customs }: { customs: CustomCategory[] }) 
         </p>
       )}
       {!p.complete && (
-        <p className="text-xs text-amber-700 mt-2">Part III is incomplete until both inventory values are set.</p>
+        <p className="text-xs text-amber-700 mt-2">
+          {p.beginningEstimated || p.endingEstimated
+            ? 'Line 42 uses lot-based estimates. Estimates only count lots you’ve entered and aren’t used in the Summary CSV until you save them.'
+            : 'Part III is incomplete until both inventory values are set.'}
+        </p>
       )}
     </div>
   )

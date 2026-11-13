@@ -42,24 +42,27 @@ export function computeScheduleC(
 
 export interface KPITotals {
   income: number    // display value, always >= 0 in normal cases
-  expenses: number  // display value, always >= 0 in normal cases (cash: includes inventory purchases)
-  net: number       // income - expenses (cash basis)
-  /** Inventory purchases (cost_of_goods bucket) included in `expenses`, positive magnitude. */
+  /** Operating expenses only — inventory purchases are NOT here (see cogs). */
+  expenses: number
+  /** Inventory purchases (cost_of_goods bucket) in the period, positive magnitude. */
   inventoryPurchases: number
   /** ending − beginning inventory for the period; 0 when not supplied. */
   inventoryChange: number
-  /** net + inventoryChange: profit with unsold inventory treated as an asset, not an expense. */
-  netAfterInventory: number
+  /** Cost of goods SOLD = purchases − inventory change (= beginning + purchases − ending). */
+  cogs: number
+  /** income − cogs − expenses: unsold inventory is an asset, not a cost. */
+  net: number
+  /** income − expenses − purchases: every inventory purchase treated as a cost (old Net). */
+  cashNet: number
 }
 
 /**
- * Period-scoped income, expenses, and net for the dashboard KPI row. Refunds
- * against expenses reduce expenses. With sales: income += gross − returns,
- * expenses += fees + platform shipping.
+ * Period-scoped KPI row. Refunds against expenses reduce expenses. With sales:
+ * income += gross − returns, expenses += fees + platform shipping.
  *
- * `inventoryChange` (from inventoryChangeForPeriod in partIII.ts) turns the
- * cash net into an inventory-basis net: purchases still on the shelf at the
- * end of the period aren't a cost of this period's sales.
+ * Inventory purchases are kept out of `expenses` and become `cogs` once
+ * adjusted by `inventoryChange` (inventoryChangeForPeriod in partIII.ts):
+ * stock still on the shelf at the end of the period isn't a cost of it.
  */
 export function computeKPIs(
   transactions: Transaction[],
@@ -73,55 +76,71 @@ export function computeKPIs(
   for (const t of transactions) {
     const b = bucketTransaction(t, customs)
     if (b.bucket === 'income') incomeSum += b.signedAmount
-    else if (b.bucket === 'expense' || b.bucket === 'cogs') expenseSum += b.signedAmount
-    if (b.bucket === 'cogs') cogsSum += b.signedAmount
+    else if (b.bucket === 'expense') expenseSum += b.signedAmount
+    else if (b.bucket === 'cogs') cogsSum += b.signedAmount
   }
   if (sales) {
     incomeSum += sales.grossReceipts - sales.returns
     expenseSum -= sales.fees + sales.platformShipping
   }
-  const net = incomeSum + expenseSum // expenseSum already negative
+  const expenses = Math.abs(expenseSum)
+  const inventoryPurchases = 0 - cogsSum // 0 - x avoids -0 when nothing was bought
+  const cogs = inventoryPurchases - inventoryChange
   return {
     income: incomeSum,
-    expenses: Math.abs(expenseSum),
-    net,
-    inventoryPurchases: -cogsSum,
+    expenses,
+    inventoryPurchases,
     inventoryChange,
-    netAfterInventory: net + inventoryChange,
+    cogs,
+    net: incomeSum - expenses - cogs,
+    cashNet: incomeSum - expenses - inventoryPurchases,
   }
 }
 
 export interface MonthlyBar {
   month: string   // 'yyyy-MM'
   income: number  // >= 0 display value
-  expenses: number // >= 0 display value
+  /** Operating expenses only (inventory purchases excluded). */
+  expenses: number
+  /** Cost of goods sold: purchases − that month's inventory change. */
+  cogs: number
 }
 
-/** Monthly income/expense bar chart data. Refunds against expenses reduce expenses, not income. */
+/**
+ * Monthly income / operating expenses / cost of goods sold. Refunds against
+ * expenses reduce expenses, not income. `inventoryChangeByMonth` (partIII.ts)
+ * turns each month's inventory purchases into cost of goods sold; without it
+ * cogs falls back to purchases. Months present only in the inventory map are
+ * included so the monthly cogs always sum to the period's.
+ */
 export function computeMonthlyChart(
   transactions: Transaction[],
   customs: CustomCategory[],
   salesByMonth?: Record<string, SalesIncomeTotals>,
+  inventoryChangeByMonth?: Record<string, number>,
 ): MonthlyBar[] {
-  const months: Record<string, { income: number; expense: number }> = {}
+  const months: Record<string, { income: number; expense: number; purchases: number }> = {}
+  const at = (key: string) => (months[key] ??= { income: 0, expense: 0, purchases: 0 })
   for (const t of transactions) {
     const b = bucketTransaction(t, customs)
     if (b.bucket === null) continue
-    const key = monthKey(t.date)
-    if (!months[key]) months[key] = { income: 0, expense: 0 }
-    if (b.bucket === 'income') months[key].income += b.signedAmount
-    else months[key].expense += b.signedAmount // negative in normal case
+    const m = at(monthKey(t.date))
+    if (b.bucket === 'income') m.income += b.signedAmount
+    else if (b.bucket === 'cogs') m.purchases -= b.signedAmount // positive magnitude
+    else m.expense += b.signedAmount // negative in normal case
   }
   for (const [key, s] of Object.entries(salesByMonth ?? {})) {
-    if (!months[key]) months[key] = { income: 0, expense: 0 }
-    months[key].income += s.grossReceipts - s.returns
-    months[key].expense -= s.fees + s.platformShipping
+    const m = at(key)
+    m.income += s.grossReceipts - s.returns
+    m.expense -= s.fees + s.platformShipping
   }
+  for (const key of Object.keys(inventoryChangeByMonth ?? {})) at(key)
   return Object.keys(months)
     .sort()
     .map(month => ({
       month,
       income: months[month].income,
       expenses: Math.abs(months[month].expense),
+      cogs: months[month].purchases - (inventoryChangeByMonth?.[month] ?? 0) + 0, // + 0 normalises -0
     }))
 }
