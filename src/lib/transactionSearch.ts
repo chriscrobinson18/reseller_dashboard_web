@@ -63,3 +63,20 @@ export function matchesSearch(t: Transaction, terms: string[], customs: CustomCa
   const hay = transactionHaystack(t, customs)
   return terms.every(term => hay.includes(term))
 }
+
+/**
+ * Haystacks for a whole list, built once per data load (not per keystroke):
+ * typing then only runs `includes` checks. Pair with `matchesTerms`.
+ */
+export function buildSearchIndex(transactions: Transaction[], customs: CustomCategory[]): Map<string, string> {
+  const index = new Map<string, string>()
+  for (const t of transactions) index.set(t.id, transactionHaystack(t, customs))
+  return index
+}
+
+/** `matchesSearch` against a prebuilt haystack. */
+export function matchesTerms(hay: string | undefined, terms: string[]): boolean {
+  if (terms.length === 0) return true
+  if (!hay) return false
+  return terms.every(term => hay.includes(term))
+}

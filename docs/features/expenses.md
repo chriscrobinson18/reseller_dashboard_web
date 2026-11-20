@@ -21,7 +21,11 @@ Transaction list + editing surface. The only page where `transactions` rows are 
 
 ### Search
 
-Lives in [`src/lib/transactionSearch.ts`](../../src/lib/transactionSearch.ts) — shared with the Inventory page's lot-funding picker, so both search boxes behave identically. `transactionHaystack(t, customs)` flattens every user-visible detail of a transaction into one lowercase string, which `parseSearchTerms` + `matchesSearch` substring-match. Covered: merchant, notes, resolved category label (built-in *and* custom) or the literal `uncategorized`, type, source, platform, account display, record type, amount, date, `expense`/`income`, `pending`, and the Plaid enrichment fields (website, city, region, payment channel, plaid category).
+Lives in [`src/lib/transactionSearch.ts`](../../src/lib/transactionSearch.ts) — shared with the Inventory page's lot-funding picker, so both search boxes behave identically. `transactionHaystack(t, customs)` flattens every user-visible detail of a transaction into one lowercase string, which `parseSearchTerms` + `matchesSearch` substring-match. **Performance (2026-11-20):**
+- The Expenses page builds every row's haystack once per data load (`buildSearchIndex`) and filters with `matchesTerms`. On about 4,700 rows that is roughly 0.7 ms per keystroke, down from roughly 800 ms.
+- The query is passed through `useDeferredValue`, so the input never waits on the list, which fades while it catches up.
+- The list draws 200 rows at first, with **Show more** adding 400 at a time. The footer shows "showing N". The filter totals, select-all and shift-click still use every matching row.
+- `formatUSD` and the date formatters in `utils.ts` reuse module-level `Intl` formatters instead of building one per call, which speeds up every page. Covered: merchant, notes, resolved category label (built-in *and* custom) or the literal `uncategorized`, type, source, platform, account display, record type, amount, date, `expense`/`income`, `pending`, and the Plaid enrichment fields (website, city, region, payment channel, plaid category).
 
 Two deliberate behaviors:
 

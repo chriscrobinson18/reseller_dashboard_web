@@ -1,25 +1,30 @@
+// Intl formatters are expensive to construct (tens of µs each) and these run
+// for every row of every list, so build each once and reuse it.
+const USD = new Intl.NumberFormat('en-US', {
+  style: 'currency',
+  currency: 'USD',
+  minimumFractionDigits: 2,
+  maximumFractionDigits: 2,
+})
+const DATE_LONG = new Intl.DateTimeFormat('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
+const DATE_SHORT = new Intl.DateTimeFormat('en-US', { month: 'short', day: 'numeric' })
+const MONTH_YEAR = new Intl.DateTimeFormat('en-US', { month: 'short', year: 'numeric' })
+const toDate = (dateStr: string) => new Date(dateStr.includes('T') ? dateStr : dateStr + 'T12:00:00')
+
 export function formatUSD(amount: number): string {
-  return new Intl.NumberFormat('en-US', {
-    style: 'currency',
-    currency: 'USD',
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2,
-  }).format(amount)
+  return USD.format(amount)
 }
 
 export function formatDate(dateStr: string): string {
-  const d = new Date(dateStr.includes('T') ? dateStr : dateStr + 'T12:00:00')
-  return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
+  return DATE_LONG.format(toDate(dateStr))
 }
 
 export function formatShortDate(dateStr: string): string {
-  const d = new Date(dateStr.includes('T') ? dateStr : dateStr + 'T12:00:00')
-  return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
+  return DATE_SHORT.format(toDate(dateStr))
 }
 
 export function formatMonthYear(dateStr: string): string {
-  const d = new Date(dateStr.includes('T') ? dateStr : dateStr + 'T12:00:00')
-  return d.toLocaleDateString('en-US', { month: 'short', year: 'numeric' })
+  return MONTH_YEAR.format(toDate(dateStr))
 }
 
 export function monthKey(dateStr: string): string {

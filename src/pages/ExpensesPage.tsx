@@ -1,10 +1,10 @@
-import { useState, useMemo, useEffect } from 'react'
+import { useState, useMemo, useEffect, useDeferredValue } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { Search, Filter, ChevronDown, Plus, Pencil, Trash2, Tag, X, ExternalLink, ArrowUp, ArrowDown, Lock, Scale } from 'lucide-react'
 import { supabase } from '../lib/supabase'
 import { getPeriodRange, type PeriodPreset } from '../lib/periods'
 import { resolveCategory } from '../lib/categories'
-import { parseSearchTerms, matchesSearch } from '../lib/transactionSearch'
+import { parseSearchTerms, buildSearchIndex, matchesTerms } from '../lib/transactionSearch'
 import { formatUSD, formatDate, formatShortDate, selectRange } from '../lib/utils'
 import { updateTransaction, deleteTransaction, unpairNetZero } from '../lib/mutations'
 import PeriodPicker from '../components/PeriodPicker'
@@ -512,6 +512,8 @@ function TransactionDetail({ tx, onClose, onOpenTrade, onManage }: { tx: Transac
 // Stable fallback so useMemo([transactions]) doesn't recompute every render
 // while the query is loading (data=undefined → [] creates a new ref each render).
 const EMPTY_TRANSACTIONS: Transaction[] = []
+/** Rows drawn per page in the list; more on "Show more". */
+const ROW_PAGE = 200
 
 export default function ExpensesPage() {
   const [period, setPeriod] = useState<PeriodPreset>('ytd')
@@ -651,8 +653,14 @@ export default function ExpensesPage() {
     return c
   }, [transactions])
 
+  // Search text per row, rebuilt only when the data changes. Typing filters
+  // against a deferred copy of the query, so the input never waits on the list.
+  const searchIndex = useMemo(() => buildSearchIndex(transactions, customsAll), [transactions, customsAll])
+  const deferredSearch = useDeferredValue(search)
+  const searchPending = deferredSearch !== search
+
   const filtered = useMemo(() => {
-    const terms = parseSearchTerms(search)
+    const terms = parseSearchTerms(deferredSearch)
     return transactions.filter(t => {
       if (lotFilter !== 'all' && lotStatus.get(t.id) !== lotFilter) return false
       if (reviewFilter !== 'all' && (t.review_status ?? 'none') !== reviewFilter) return false
@@ -668,9 +676,9 @@ export default function ExpensesPage() {
       if (sourceFilter === 'plaid' && t.source !== 'plaid') return false
       if (sourceFilter === 'manual' && t.source !== 'manual') return false
       if (accountFilter && t.plaid_account_id !== accountFilter) return false
-      return matchesSearch(t, terms, customsAll)
+      return matchesTerms(searchIndex.get(t.id), terms)
     })
-  }, [transactions, showSaleLinked, showNetZeroRows, catFilter, dirFilter, sourceFilter, accountFilter, lotFilter, reviewFilter, lotStatus, search, customsAll])
+  }, [transactions, showSaleLinked, showNetZeroRows, catFilter, dirFilter, sourceFilter, accountFilter, lotFilter, reviewFilter, lotStatus, deferredSearch, searchIndex])
 
   // Sorted view of the filtered set. Default (date, desc) matches the
   // server's own `.order('date', { ascending: false })`, so leaving sort
@@ -703,13 +711,17 @@ export default function ExpensesPage() {
   // Clear any selection when the visible set changes, so a bulk action never
   // silently applies to rows the user can no longer see. Render-phase reset
   // (React's "storing info from previous renders" pattern) rather than an effect.
-  const filterSig = `${range.start}|${range.end}|${search}|${catFilter}|${showSaleLinked}|${showNetZeroRows}|${dirFilter}|${sourceFilter}|${accountFilter}|${lotFilter}|${reviewFilter}`
+  const filterSig = `${range.start}|${range.end}|${deferredSearch}|${catFilter}|${showSaleLinked}|${showNetZeroRows}|${dirFilter}|${sourceFilter}|${accountFilter}|${lotFilter}|${reviewFilter}`
   const [lastFilterSig, setLastFilterSig] = useState(filterSig)
+  // Rows drawn so far (phone list + desktop table each draw these); "Show more" adds a page.
+  const [renderLimit, setRenderLimit] = useState(ROW_PAGE)
+  const visibleRows = useMemo(() => sorted.slice(0, renderLimit), [sorted, renderLimit])
   if (filterSig !== lastFilterSig) {
     setLastFilterSig(filterSig)
     setSelectedIds(new Set())
     setSelectAnchorId(null)
     setShowBulkCat(false)
+    setRenderLimit(ROW_PAGE)
   }
 
   // Clear accountFilter if selected account has no transactions in the current period.
@@ -957,9 +969,9 @@ export default function ExpensesPage() {
         </div>
 
         {/* Table (or the net-zero pairs review list) */}
-        <div className="md:flex-1 md:overflow-y-auto" onClick={() => setDdTxId(null)}>
+        <div className={`md:flex-1 md:overflow-y-auto transition-opacity ${searchPending ? 'opacity-60' : ''}`} onClick={() => setDdTxId(null)}>
           {view === 'pairs' ? (
-            <NetZeroPairsView start={range.start} end={range.end} search={search} onOpen={id => setSelectedId(id)} />
+            <NetZeroPairsView start={range.start} end={range.end} search={deferredSearch} onOpen={id => setSelectedId(id)} />
           ) : isLoading ? (
             <div className="p-8 text-center text-gray-400 text-sm">Loading transactions…</div>
           ) : filtered.length === 0 ? (
@@ -971,7 +983,7 @@ export default function ExpensesPage() {
                 short date, account. Notes/non-cash/settlement live in the detail
                 panel; checkbox stays for bulk categorize. */}
             <ul className="md:hidden divide-y divide-gray-100 bg-white">
-              {sorted.map(tx => {
+              {visibleRows.map(tx => {
                 const isExpense = tx.amount < 0
                 return (
                   <li
@@ -1057,7 +1069,7 @@ export default function ExpensesPage() {
                 </tr>
               </thead>
               <tbody>
-                {sorted.map(tx => {
+                {visibleRows.map(tx => {
                   const isExpense = tx.amount < 0
                   const isSettlement = tx.record_type === 'settlement'
                   return (
@@ -1136,12 +1148,23 @@ export default function ExpensesPage() {
                 })}
               </tbody>
             </table>
+            {sorted.length > visibleRows.length && (
+              <div className="p-3 text-center">
+                <button
+                  type="button"
+                  onClick={() => setRenderLimit(n => n + ROW_PAGE * 2)}
+                  className="px-4 py-1.5 rounded-lg border border-gray-200 text-xs font-medium text-gray-600 hover:border-gray-400"
+                >
+                  Show more ({sorted.length - visibleRows.length} not shown)
+                </button>
+              </div>
+            )}
             </>
           )}
         </div>
 
         <div className="px-4 py-2 border-t border-gray-200 bg-white text-xs text-gray-400">
-          {view === 'pairs' ? 'Net-zero pairs' : `${filtered.length} transactions`}
+          {view === 'pairs' ? 'Net-zero pairs' : `${filtered.length} transactions${visibleRows.length < sorted.length ? ` · showing ${visibleRows.length}` : ''}`}
         </div>
 
         {/* Bulk action bar */}
