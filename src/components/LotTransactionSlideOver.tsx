@@ -3,6 +3,7 @@ import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { Link2Off, Search, Check, Plus, X } from 'lucide-react'
 import SlideOver from './SlideOver'
 import CategoryBadge from './CategoryBadge'
+import LinkedRecords from './LinkedRecords'
 import { inputCls } from './Modal'
 import { useTransactionsByIds, useLotLinkCandidates, useCustomCategories } from '../lib/queries'
 import { parseSearchTerms, matchesSearch } from '../lib/transactionSearch'
@@ -132,6 +133,9 @@ export default function LotTransactionSlideOver({ lot, itemName, onClose }: Prop
               {' · '}{formatDate(lot.purchase_date ?? lot.created_at)}
             </div>
           </div>
+
+          {/* Jump to the lot's purchase/sale/trade/breakdown records */}
+          <LinkedRecords kind="lot" id={lot.id} onNavigate={() => { reset(); onClose() }} />
 
           {error && (
             <div className="text-xs text-red-600 bg-red-50 border border-red-200 rounded-lg px-3 py-2">{error}</div>

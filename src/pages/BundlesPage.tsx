@@ -1,10 +1,15 @@
 import { useState } from 'react'
 import { formatUSD, formatDate } from '../lib/utils'
+import { useDeepLink } from '../lib/nav'
 import { useBundles } from '../lib/queries'
 import BundleDetailSlideOver from '../components/BundleDetailSlideOver'
 
 export default function BundlesPage() {
-  const [openBundleId, setOpenBundleId] = useState<string | null>(null)
+  const [localOpenBundleId, setLocalOpenBundleId] = useState<string | null>(null)
+  // ?bundle=<id> deep link (lib/nav.ts) wins over a row click until closed.
+  const [deepId, clearDeep] = useDeepLink('bundle')
+  const openBundleId = deepId ?? localOpenBundleId
+  const setOpenBundleId = (id: string | null) => { clearDeep(); setLocalOpenBundleId(id) }
   const { data: bundles = [], isLoading } = useBundles()
 
   return (

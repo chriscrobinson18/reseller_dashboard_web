@@ -18,6 +18,8 @@ import { saleProfit } from '../lib/saleProfit'
 import { paymentMethodLabel, formatPaymentSplits } from '../lib/paymentMethods'
 import type { Sale } from '../lib/types'
 import { fetchAllRows } from '../lib/fetchAll'
+import LinkedRecords from '../components/LinkedRecords'
+import { useDeepLink } from '../lib/nav'
 import TradeDetailSlideOver from '../components/TradeDetailSlideOver'
 
 const FEE_LABELS: Record<string, string> = {
@@ -33,7 +35,19 @@ const FEE_LABELS: Record<string, string> = {
   charity_donation: 'Charity',
 }
 
-async function fetchSales(start: string | null, end: string | null): Promise<{
+/**
+ * One sale by id, for a ?sale= deep link outside the selected period. A bundle
+ * line is fetched with its whole bundle so the fee allocation matches the list.
+ */
+async function fetchSaleById(id: string): Promise<{ sale: Sale | null; netPayoutBySale: Record<string, number> }> {
+  const { data, error } = await supabase.from('sales').select('bundle_id').eq('id', id).maybeSingle()
+  if (error) throw error
+  if (!data) return { sale: null, netPayoutBySale: {} }
+  const r = await fetchSales(null, null, data.bundle_id ? { bundleId: data.bundle_id } : { id })
+  return { sale: r.sales.find(s => s.id === id) ?? null, netPayoutBySale: r.netPayoutBySale }
+}
+
+async function fetchSales(start: string | null, end: string | null, narrow?: { id?: string; bundleId?: string }): Promise<{
   sales: Sale[]
   netPayoutBySale: Record<string, number>
 }> {
@@ -51,6 +65,8 @@ async function fetchSales(start: string | null, end: string | null): Promise<{
       .order('id')
     if (start) q = q.gte('sold_at', start + 'T00:00:00Z')
     if (end) q = q.lte('sold_at', end + 'T23:59:59Z')
+    if (narrow?.bundleId) q = q.eq('bundle_id', narrow.bundleId)
+    else if (narrow?.id) q = q.eq('id', narrow.id)
     return q.range(from, to)
   })
 
@@ -152,7 +168,7 @@ function StatusBadge({ status, type }: { status: string | null; type: 'inventory
 
 // ─── Sale detail ──────────────────────────────────────────────────────────────
 
-function SaleDetail({ sale, netPayoutBySale, onLinkItem, onEdit, onDelete, onProcessReturn, onOpenTrade, onOpenBundle }: {
+function SaleDetail({ sale, netPayoutBySale, onLinkItem, onEdit, onDelete, onProcessReturn, onOpenTrade, onOpenBundle, onNavigate }: {
   sale: Sale
   netPayoutBySale: Record<string, number>
   onLinkItem: () => void
@@ -161,6 +177,7 @@ function SaleDetail({ sale, netPayoutBySale, onLinkItem, onEdit, onDelete, onPro
   onProcessReturn: () => void
   onOpenTrade: (id: string) => void
   onOpenBundle: (id: string) => void
+  onNavigate: () => void
 }) {
   const { cogs, netRevenue, profit } = saleProfit(sale)
   const hasCogsData = (sale.inventory_movements?.length ?? 0) > 0
@@ -375,6 +392,8 @@ function SaleDetail({ sale, netPayoutBySale, onLinkItem, onEdit, onDelete, onPro
           </div>
         )
       })()}
+
+      <LinkedRecords kind="sale" id={sale.id} onNavigate={onNavigate} />
     </div>
   )
 }
@@ -386,7 +405,10 @@ export default function SalesPage() {
   const [search, setSearch] = useState('')
   const [platformFilter, setPlatformFilter] = useState<string | null>(null)
   const [returnFilter, setReturnFilter] = useState<'all' | 'none' | 'has_return'>('all')
-  const [selected, setSelected] = useState<Sale | null>(null)
+  const [localSelected, setLocalSelected] = useState<Sale | null>(null)
+  // ?sale=<id> deep link (lib/nav.ts) wins over a row click until closed.
+  const [deepSaleId, clearDeepSale] = useDeepLink('sale')
+  const setSelected = (s: Sale | null) => { clearDeepSale(); setLocalSelected(s) }
   const [showRecordSale, setShowRecordSale] = useState(false)
   const [linkSale, setLinkSale] = useState<Sale | null>(null)
   const [editSale, setEditSale] = useState<Sale | null>(null)
@@ -411,6 +433,15 @@ export default function SalesPage() {
     queryKey: ['sales', range.start, range.end],
     queryFn: () => fetchSales(range.start, range.end),
   })
+
+  const inList = deepSaleId ? sales.find(s => s.id === deepSaleId) ?? null : null
+  const { data: deepSale } = useQuery({
+    queryKey: ['sales', 'by-id', deepSaleId],
+    enabled: !!deepSaleId && !inList,
+    queryFn: () => fetchSaleById(deepSaleId!),
+  })
+  const selected = deepSaleId ? (inList ?? deepSale?.sale ?? null) : localSelected
+  const detailNetPayouts = deepSaleId && !inList && deepSale ? deepSale.netPayoutBySale : netPayoutBySale
 
   const platformOptions = useMemo(() => {
     const seen = new Set<string>()
@@ -715,13 +746,14 @@ export default function SalesPage() {
           <SaleDetail
             key={selected.id}
             sale={selected}
-            netPayoutBySale={netPayoutBySale}
+            netPayoutBySale={detailNetPayouts}
             onLinkItem={() => setLinkSale(selected)}
             onEdit={() => setEditSale(selected)}
             onDelete={() => setDeleteSaleTarget(selected)}
             onProcessReturn={() => setReturnSale(selected)}
             onOpenTrade={(id) => { setSelected(null); setOpenTradeId(id) }}
             onOpenBundle={(id) => { setSelected(null); setOpenBundleId(id) }}
+            onNavigate={() => setSelected(null)}
           />
         )}
       </SlideOver>

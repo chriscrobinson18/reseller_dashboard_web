@@ -3,6 +3,7 @@ import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { Info, TrendingUp, TrendingDown, DollarSign } from 'lucide-react'
 import SlideOver from './SlideOver'
 import ConfirmDialog from './ConfirmDialog'
+import LinkedRecords from './LinkedRecords'
 import { useTrade } from '../lib/queries'
 import { deleteTrade } from '../lib/mutations'
 import { formatUSD, formatDate } from '../lib/utils'
@@ -157,6 +158,8 @@ export default function TradeDetailSlideOver({ tradeId, onClose }: Props) {
               )}
 
               {/* Footer */}
+              <LinkedRecords kind="trade" id={tradeId!} onNavigate={onClose} />
+
               <div className="mt-6 pt-4 border-t border-gray-200 flex justify-end flex-col items-end gap-2">
                 {del.isError && <div className="text-xs text-red-600">{(del.error as Error).message}</div>}
                 <button

@@ -21,7 +21,7 @@ Knowledge base for the Reseller Dashboard web app, for humans and for AI agents 
 
 **Pages** (`features/`)
 - [dashboard.md](features/dashboard.md) — KPIs, Schedule C breakdown, CSV exports, Part III, Year-End Tie-Out
-- [sales.md](features/sales.md) · [expenses.md](features/expenses.md) · [inventory.md](features/inventory.md) (incl. lot data rules) · [breakdowns.md](features/breakdowns.md) · [settings.md](features/settings.md) (imports, Plaid, Shortcuts)
+- [sales.md](features/sales.md) · [expenses.md](features/expenses.md) · [inventory.md](features/inventory.md) (incl. lot data rules) · [breakdowns.md](features/breakdowns.md) · [settings.md](features/settings.md) (imports, Plaid, Shortcuts) · [navigation.md](features/navigation.md) (linked records + deep links between pages)
 
 **Procedures and designs**
 - [sop-card-inventory.md](sop-card-inventory.md) — standard procedure for card inventory

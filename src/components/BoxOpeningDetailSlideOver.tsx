@@ -3,6 +3,7 @@ import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { Package, TrendingDown } from 'lucide-react'
 import SlideOver from './SlideOver'
 import ConfirmDialog from './ConfirmDialog'
+import LinkedRecords from './LinkedRecords'
 import AddPullModal from './modals/AddPullModal'
 import { useBoxOpening } from '../lib/queries'
 import { deleteBoxOpening, closeBoxOpening } from '../lib/mutations'
@@ -173,6 +174,8 @@ export default function BoxOpeningDetailSlideOver({ boxOpeningId, onClose }: Pro
                 <div className="text-xs text-gray-700">{data.opening.notes}</div>
               </div>
             )}
+
+            <LinkedRecords kind="breakdown" id={boxOpeningId!} onNavigate={onClose} />
 
             {/* Footer actions */}
             <div className="mt-6 pt-4 border-t border-gray-200 space-y-2">

@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { formatUSD, formatDate } from '../lib/utils'
+import { useDeepLink } from '../lib/nav'
 import { useTrades } from '../lib/queries'
 import TradeDetailSlideOver from '../components/TradeDetailSlideOver'
 
@@ -10,7 +11,11 @@ function formatBoot(cash_boot: number | null): { text: string; className: string
 }
 
 export default function TradesPage() {
-  const [openTradeId, setOpenTradeId] = useState<string | null>(null)
+  const [localOpenTradeId, setLocalOpenTradeId] = useState<string | null>(null)
+  // ?trade=<id> deep link (lib/nav.ts) wins over a row click until closed.
+  const [deepId, clearDeep] = useDeepLink('trade')
+  const openTradeId = deepId ?? localOpenTradeId
+  const setOpenTradeId = (id: string | null) => { clearDeep(); setLocalOpenTradeId(id) }
   const { data: trades = [], isLoading } = useTrades()
 
   return (

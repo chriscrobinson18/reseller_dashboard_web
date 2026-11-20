@@ -1,10 +1,15 @@
 import { useState, useMemo } from 'react'
 import { formatUSD, formatDate } from '../lib/utils'
+import { useDeepLink } from '../lib/nav'
 import { useBoxOpeningsWithItems } from '../lib/queries'
 import BoxOpeningDetailSlideOver from '../components/BoxOpeningDetailSlideOver'
 
 export default function BreakdownsPage() {
-  const [openBoxOpeningId, setOpenBoxOpeningId] = useState<string | null>(null)
+  const [localOpenBoxOpeningId, setLocalOpenBoxOpeningId] = useState<string | null>(null)
+  // ?breakdown=<id> deep link (lib/nav.ts) wins over a row click until closed.
+  const [deepId, clearDeep] = useDeepLink('breakdown')
+  const openBoxOpeningId = deepId ?? localOpenBoxOpeningId
+  const setOpenBoxOpeningId = (id: string | null) => { clearDeep(); setLocalOpenBoxOpeningId(id) }
   const { data: rows = [], isLoading, isError } = useBoxOpeningsWithItems()
 
   const breakdowns = useMemo(() => {

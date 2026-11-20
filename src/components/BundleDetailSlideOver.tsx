@@ -3,6 +3,7 @@ import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { Package, Pencil, TrendingUp, TrendingDown } from 'lucide-react'
 import SlideOver from './SlideOver'
 import ConfirmDialog from './ConfirmDialog'
+import LinkedRecords from './LinkedRecords'
 import EditBundleModal from './modals/EditBundleModal'
 import { useBundle } from '../lib/queries'
 import { deleteBundleSale } from '../lib/mutations'
@@ -150,6 +151,8 @@ export default function BundleDetailSlideOver({ bundleId, onClose }: Props) {
                   <div className="text-xs text-gray-700">{bundle.notes}</div>
                 </div>
               )}
+
+              <LinkedRecords kind="bundle" id={bundleId!} onNavigate={onClose} />
 
               {/* Footer */}
               <div className="mt-6 pt-4 border-t border-gray-200 flex justify-end flex-col items-end gap-2">

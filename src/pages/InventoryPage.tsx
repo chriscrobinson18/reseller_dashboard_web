@@ -2,6 +2,7 @@ import { useState, useMemo, Fragment } from 'react'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { ArrowLeftRight, ChevronDown, ChevronRight, Plus, Pencil, Trash2, Receipt, PackageOpen } from 'lucide-react'
 import { formatUSD, formatDate } from '../lib/utils'
+import { useDeepLink } from '../lib/nav'
 import { deleteItem, deleteLot, deleteLotCostAdjustment } from '../lib/mutations'
 import { basisFromAdjustments } from '../lib/lotCost'
 import { adjustmentLabel } from '../lib/lotAdjustments'
@@ -665,13 +666,27 @@ export default function InventoryPage() {
   const [openTradeId, setOpenTradeId] = useState<string | null>(null)
   const [showOpenBox, setShowOpenBox] = useState(false)
   const [openBoxOpeningId, setOpenBoxOpeningId] = useState<string | null>(null)
-  const [txLot, setTxLot] = useState<{ lot: InventoryLot; itemName: string } | null>(null)
+  const [localTxLot, setLocalTxLot] = useState<{ lot: InventoryLot; itemName: string } | null>(null)
   const [addCostFor, setAddCostFor] = useState<{ lot: InventoryLot; itemName: string } | null>(null)
   const [deleteAdjTarget, setDeleteAdjTarget] = useState<LotCostAdjustment | null>(null)
   const [expandedBasis, setExpandedBasis] = useState<Set<string>>(new Set())
   const qc = useQueryClient()
 
   const { data: items = [], isLoading } = useItems()
+
+  // ?lot=<id> deep link (lib/nav.ts): opens that lot's panel (funding + linked
+  // records) and wins over a click until closed.
+  const [deepLotId, clearDeepLot] = useDeepLink('lot')
+  const deepLot = useMemo(() => {
+    if (!deepLotId) return null
+    for (const item of items) {
+      const lot = (item.inventory_lots ?? []).find(l => l.id === deepLotId)
+      if (lot) return { lot, itemName: item.name }
+    }
+    return null
+  }, [deepLotId, items])
+  const txLot = deepLotId ? deepLot : localTxLot
+  const setTxLot = (v: { lot: InventoryLot; itemName: string } | null) => { clearDeepLot(); setLocalTxLot(v) }
   const { data: incompleteBreakdowns = [] } = useIncompleteBreakdowns()
   const [breakdownBannerOpen, setBreakdownBannerOpen] = useState(true)
 

@@ -26,6 +26,8 @@ import CategoryDropdown, { UNCATEGORIZED_SENTINEL } from '../components/Category
 import type { Transaction } from '../lib/types'
 import { fetchAllRows } from '../lib/fetchAll'
 import { NetZeroCandidates, NetZeroFinderModal } from '../components/NetZeroMatch'
+import LinkedRecords from '../components/LinkedRecords'
+import { useDeepLink } from '../lib/nav'
 
 // ─── Data ────────────────────────────────────────────────────────────────────
 
@@ -391,6 +393,8 @@ function TransactionDetail({ tx, onClose, onOpenTrade, onManage }: { tx: Transac
       {/* Net-zero match: exact opposite-amount lookup (unpaired, eligible rows only) */}
       <NetZeroCandidates tx={tx} />
 
+      <LinkedRecords kind="transaction" id={tx.id} onNavigate={onClose} />
+
       {/* Notes */}
       <div>
         <div className="text-xs font-medium text-gray-500 mb-1.5">Notes</div>
@@ -525,7 +529,11 @@ export default function ExpensesPage() {
   // Hold only the id, never a snapshot: the detail panel must re-render from
   // freshly-fetched data after a category/notes/field edit, otherwise it keeps
   // showing the values captured when the row was clicked until it's reopened.
-  const [selectedId, setSelectedId] = useState<string | null>(null)
+  const [localSelectedId, setLocalSelectedId] = useState<string | null>(null)
+  // ?tx=<id> deep link (lib/nav.ts) wins over a row click until closed.
+  const [deepTxId, clearDeepTx] = useDeepLink('transaction')
+  const selectedId = deepTxId ?? localSelectedId
+  const setSelectedId = (id: string | null) => { clearDeepTx(); setLocalSelectedId(id) }
   const [ddTxId, setDdTxId] = useState<string | null>(null)
   const [showAddTx, setShowAddTx] = useState(false)
   const [showNetZero, setShowNetZero] = useState(false)
@@ -591,9 +599,20 @@ export default function ExpensesPage() {
 
   // Resolved against the unfiltered fetch, so recategorizing a row that the
   // active category filter then excludes doesn't yank the panel closed.
+  // A deep-linked transaction outside the selected period isn't in the list: fetch it by id.
+  const { data: deepTx = null } = useQuery({
+    queryKey: ['transactions', 'by-id', deepTxId],
+    enabled: !!deepTxId && !transactions.some(t => t.id === deepTxId),
+    queryFn: async () => {
+      const { data, error } = await supabase.from('transactions').select('*').eq('id', deepTxId!).maybeSingle()
+      if (error) throw error
+      return (data ?? null) as Transaction | null
+    },
+  })
+
   const selected = useMemo(
-    () => transactions.find(t => t.id === selectedId) ?? null,
-    [transactions, selectedId],
+    () => transactions.find(t => t.id === selectedId) ?? deepTx ?? null,
+    [transactions, selectedId, deepTx],
   )
 
   const accountOptions = useMemo(() => {
