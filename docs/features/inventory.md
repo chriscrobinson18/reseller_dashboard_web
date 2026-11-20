@@ -222,7 +222,7 @@ Lots with `box_opening_id != null` show a small teal **"Breakdown"** pill in the
 
 ## Lot data rules (books cleanup)
 
-Rules the owner set on 2026-11-12 for building lots from historical data and linking sales to them. Use them for any future bulk entry.
+Rules the owner set on 2026-11-12 for building lots from historical data and linking sales to them. Use them for any future bulk entry. The step-by-step procedure is the `/add-cogs-lots` skill (`.claude/skills/add-cogs-lots/SKILL.md`). Keep the two in sync.
 
 **Lots from cost-of-goods charges**
 - Match each unlinked `cost_of_goods` charge to its order email by **merchant + exact amount**; re-check every match for the same merchant.

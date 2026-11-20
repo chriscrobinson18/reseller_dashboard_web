@@ -28,3 +28,6 @@ Knowledge base for the Reseller Dashboard web app, for humans and for AI agents 
 - [`superpowers/specs/`](superpowers/specs/) and [`superpowers/plans/`](superpowers/plans/) — design specs and implementation plans for past features (historical; current behavior is in the docs above)
 
 Docs describe *current* behavior, including known gaps; TASKS.md says what is slated to change.
+
+**Repeatable workflows (Claude Code skills in `.claude/skills/`)**
+- `/add-cogs-lots [period]`: match unlinked cost-of-goods charges to order emails in Gmail and add inventory lots (propose, then owner approval, then a guarded write, then verify). It follows the lot data rules in [features/inventory.md](features/inventory.md#lot-data-rules-books-cleanup).
