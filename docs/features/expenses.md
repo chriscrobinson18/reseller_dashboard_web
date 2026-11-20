@@ -13,6 +13,7 @@ Transaction list + editing surface. The only page where `transactions` rows are 
 ### Bulk categorize
 
 - A leading checkbox column plus a header select-all lets the user multi-select rows. Trade-linked rows (`tx.trade_id`) have a disabled checkbox and are excluded from select-all — their category is locked (edited via the trade). Plaid rows are selectable (category is editable for them).
+- **Shift-click range select (2026-11-20):** shift-click a row's checkbox to apply that row's new state (select or clear) to every row between it and the previously clicked checkbox, in the current sort/filter order (`selectRange` in `src/lib/utils.ts`). Trade-linked rows are skipped. The anchor resets whenever the filters change; with no anchor a shift-click is a plain toggle.
 - When ≥1 row is selected, a floating dark pill bar appears at the bottom of the list: "N selected", a **Set category** dropdown (the same shared `CategoryDropdown`, so custom categories and "Clear category" both work), and a clear-selection ✕.
 - Applying a category runs `bulkUpdateCategory(ids, cat)` — a single `.update({ schedule_c_category }).in('id', ids)` round-trip (not N requests) — then invalidates `['transactions']` and clears the selection.
 - Selection is reset whenever the visible set changes (period / search / category filter / Sale-rows toggle) via a render-phase previous-signature check, so a bulk action can never silently hit rows the user can no longer see.

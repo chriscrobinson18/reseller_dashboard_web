@@ -5,7 +5,7 @@ import { supabase } from '../lib/supabase'
 import { getPeriodRange, type PeriodPreset } from '../lib/periods'
 import { resolveCategory } from '../lib/categories'
 import { parseSearchTerms, matchesSearch } from '../lib/transactionSearch'
-import { formatUSD, formatDate, formatShortDate } from '../lib/utils'
+import { formatUSD, formatDate, formatShortDate, selectRange } from '../lib/utils'
 import { updateTransaction, deleteTransaction, unpairNetZero } from '../lib/mutations'
 import PeriodPicker from '../components/PeriodPicker'
 import CategoryBadge from '../components/CategoryBadge'
@@ -530,6 +530,8 @@ export default function ExpensesPage() {
   // Phones only: filter controls collapse behind a "Filters" toggle (md+ always shows them).
   const [showFiltersMobile, setShowFiltersMobile] = useState(false)
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
+  // Last checkbox clicked: the anchor for shift-click range selection.
+  const [selectAnchorId, setSelectAnchorId] = useState<string | null>(null)
   const [showBulkCat, setShowBulkCat] = useState(false)
   const [sortField, setSortField] = useState<'date' | 'amount' | 'merchant'>('date')
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc')
@@ -678,6 +680,7 @@ export default function ExpensesPage() {
   if (filterSig !== lastFilterSig) {
     setLastFilterSig(filterSig)
     setSelectedIds(new Set())
+    setSelectAnchorId(null)
     setShowBulkCat(false)
   }
 
@@ -707,13 +710,11 @@ export default function ExpensesPage() {
   const allSelected = selectable.length > 0 && selectable.every(t => selectedIds.has(t.id))
   const someSelected = selectedIds.size > 0
 
-  function toggleRow(id: string) {
-    setSelectedIds(prev => {
-      const next = new Set(prev)
-      if (next.has(id)) next.delete(id)
-      else next.add(id)
-      return next
-    })
+  /** Checkbox click: plain toggle, or with Shift held, apply the clicked row's new state to the whole range since the last click. */
+  function toggleRow(id: string, shiftKey = false) {
+    const lockedIds = new Set(sorted.filter(t => t.trade_id).map(t => t.id))
+    setSelectedIds(prev => selectRange(sorted.map(t => t.id), prev, shiftKey ? selectAnchorId : null, id, rowId => !lockedIds.has(rowId)))
+    setSelectAnchorId(id)
   }
 
   function toggleAll() {
@@ -926,7 +927,8 @@ export default function ExpensesPage() {
                       <input
                         type="checkbox"
                         checked={selectedIds.has(tx.id)}
-                        onChange={() => toggleRow(tx.id)}
+                        onChange={() => {}}
+                        onClick={e => toggleRow(tx.id, e.shiftKey)}
                         disabled={!!tx.trade_id}
                         aria-label="Select transaction"
                         className="w-4 h-4 accent-gray-900 disabled:opacity-40"
@@ -987,7 +989,7 @@ export default function ExpensesPage() {
                       checked={allSelected}
                       onChange={toggleAll}
                       disabled={selectable.length === 0}
-                      title="Select all"
+                      title="Select all (or shift-click rows to select a range)"
                       className="align-middle accent-gray-900 disabled:opacity-40"
                     />
                   </th>
@@ -1012,7 +1014,9 @@ export default function ExpensesPage() {
                         <input
                           type="checkbox"
                           checked={selectedIds.has(tx.id)}
-                          onChange={() => toggleRow(tx.id)}
+                          onChange={() => {}}
+                          onClick={e => toggleRow(tx.id, e.shiftKey)}
+                          onMouseDown={e => { if (e.shiftKey) e.preventDefault() /* no text selection on shift-click */ }}
                           disabled={!!tx.trade_id}
                           title={tx.trade_id ? 'Locked — part of a trade' : undefined}
                           className="align-middle accent-gray-900 disabled:opacity-40 disabled:cursor-not-allowed"
