@@ -6,7 +6,7 @@ import { fetchAllRows } from '../lib/fetchAll'
 import { pairNetZero } from '../lib/mutations'
 import { formatUSD, formatShortDate } from '../lib/utils'
 import {
-  NET_ZERO_SELECT, isPairable, rankNetZeroCandidates, proposeNetZeroPairs,
+  NET_ZERO_SELECT, isPairable, cancelsOut, rankNetZeroCandidates, proposeNetZeroPairs,
   type NetZeroRow, type NetZeroProposal,
 } from '../lib/netZero'
 import Modal from './Modal'
@@ -38,7 +38,7 @@ export function NetZeroCandidates({ tx, onPaired }: { tx: NetZeroRow; onPaired?:
   const qc = useQueryClient()
   const eligible = isPairable(tx)
   const target = -Number(tx.amount)
-  const { data: rows = [], isLoading } = useQuery({
+  const { data, isLoading } = useQuery({
     queryKey: ['transactions', 'net-zero-candidates', tx.id, tx.amount],
     enabled: eligible,
     queryFn: async () => {
@@ -47,14 +47,30 @@ export function NetZeroCandidates({ tx, onPaired }: { tx: NetZeroRow; onPaired?:
         .select(NET_ZERO_SELECT)
         .gte('amount', target - 0.005)
         .lte('amount', target + 0.005)
-        .is('net_zero_pair_id', null)
         .neq('id', tx.id)
         .limit(200)
       if (error) throw error
-      return (data ?? []) as NetZeroRow[]
+      const all = (data ?? []) as NetZeroRow[]
+      // Opposite-amount rows that are already paired: fetch their partners so
+      // the panel can say where the match went instead of just "none".
+      const pairIds = [...new Set(all.map(r => r.net_zero_pair_id).filter((x): x is string => !!x))]
+      let partners: NetZeroRow[] = []
+      if (pairIds.length) {
+        const { data: pd, error: pe } = await supabase
+          .from('transactions').select(NET_ZERO_SELECT).in('net_zero_pair_id', pairIds.slice(0, 50))
+        if (pe) throw pe
+        partners = (pd ?? []) as NetZeroRow[]
+      }
+      return { all, partners }
     },
   })
-  const ranked = useMemo(() => rankNetZeroCandidates(tx, rows).slice(0, 8), [tx, rows])
+  const all = useMemo(() => data?.all ?? [], [data])
+  const ranked = useMemo(() => rankNetZeroCandidates(tx, all).slice(0, 8), [tx, all])
+  const taken = useMemo(() => all
+    .filter(r => r.net_zero_pair_id && cancelsOut(tx.amount, r.amount))
+    .map(r => ({ row: r, partner: (data?.partners ?? []).find(p => p.net_zero_pair_id === r.net_zero_pair_id && p.id !== r.id) ?? null }))
+    .sort((a, b) => a.row.date.localeCompare(b.row.date))
+    .slice(0, 5), [tx.amount, all, data])
   const [err, setErr] = useState<string | null>(null)
   const pair = useMutation({
     mutationFn: (otherId: string) => pairNetZero(tx.id, otherId),
@@ -71,7 +87,9 @@ export function NetZeroCandidates({ tx, onPaired }: { tx: NetZeroRow; onPaired?:
       {isLoading ? (
         <div className="text-xs text-gray-400">Looking for opposite amounts…</div>
       ) : ranked.length === 0 ? (
-        <div className="text-xs text-gray-400">No unpaired transaction with the exact opposite amount.</div>
+        <div className="text-xs text-gray-400">
+          {taken.length ? 'No unpaired match: every exact opposite amount is already in a net-zero pair (below).' : 'No transaction with the exact opposite amount.'}
+        </div>
       ) : (
         <div className="space-y-1.5">
           {ranked.map(c => (
@@ -87,6 +105,19 @@ export function NetZeroCandidates({ tx, onPaired }: { tx: NetZeroRow; onPaired?:
                 >
                   Pair
                 </button>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+      {!isLoading && taken.length > 0 && (
+        <div className="mt-2 space-y-1.5">
+          <div className="text-[11px] text-gray-400">Already paired: Unpair it first (on either row) to use it here</div>
+          {taken.map(({ row, partner }) => (
+            <div key={row.id} className="border border-dashed border-gray-200 rounded-lg p-2 opacity-75">
+              <RowLine r={row} />
+              <div className="text-[11px] text-gray-500 mt-1">
+                Paired with {partner ? <>{formatShortDate(partner.date)} · {partner.merchant ?? '—'} · {partner.account_display ?? ''} · {formatUSD(partner.amount)}</> : <span className="text-amber-600">a missing row (orphaned pair)</span>}
               </div>
             </div>
           ))}
