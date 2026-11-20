@@ -879,7 +879,7 @@ export default function ExpensesPage() {
                 <ChevronDown size={12} className="ml-auto text-gray-400 shrink-0" />
               </button>
               {showCatFilter && (
-                <div className="absolute left-0 md:left-auto md:right-0 top-full mt-1 z-50">
+                <div className="absolute left-0 top-full mt-1 z-50">
                   <CategoryDropdown
                     current={catFilter}
                     onSelect={(v) => { setCatFilter(v); setShowCatFilter(false) }}
