@@ -352,32 +352,37 @@ Given total + cash you paid = Received total + cash you received
         <table className="w-full text-[11px]">
           <thead>
             <tr className="text-left text-gray-500">
-              <th className="py-1 pr-2 font-medium">Component</th>
-              <th className="py-1 pr-2 font-medium">Amount</th>
-              <th className="py-1 font-medium">Cash?</th>
+              <th className="py-1 pr-2 font-medium">What</th>
+              <th className="py-1 pr-2 font-medium">Treated as</th>
+              <th className="py-1 font-medium">Schedule C</th>
             </tr>
           </thead>
           <tbody>
             <tr className="border-t border-gray-100">
-              <td className="py-1 pr-2">Non-cash income</td>
-              <td className="py-1 pr-2">given − cash received</td>
-              <td className="py-1">non-cash</td>
+              <td className="py-1 pr-2">Items you give</td>
+              <td className="py-1 pr-2">sale at FMV</td>
+              <td className="py-1">Line 1</td>
             </tr>
             <tr className="border-t border-gray-100">
-              <td className="py-1 pr-2">Non-cash COGS</td>
-              <td className="py-1 pr-2">same (always washes)</td>
-              <td className="py-1">non-cash</td>
+              <td className="py-1 pr-2">Items you receive</td>
+              <td className="py-1 pr-2">purchase at FMV</td>
+              <td className="py-1">Part III</td>
             </tr>
             <tr className="border-t border-gray-100">
-              <td className="py-1 pr-2">Cash boot</td>
-              <td className="py-1 pr-2">signed</td>
-              <td className="py-1">real bank txn</td>
+              <td className="py-1 pr-2">Cash you receive</td>
+              <td className="py-1 pr-2">settles the sale</td>
+              <td className="py-1">not counted</td>
+            </tr>
+            <tr className="border-t border-gray-100">
+              <td className="py-1 pr-2">Cash you pay</td>
+              <td className="py-1 pr-2">part of the purchase</td>
+              <td className="py-1">Part III</td>
             </tr>
           </tbody>
         </table>
         <p className="mt-1">
-          The two non-cash legs cancel each other; only the cash boot moves your Schedule C totals
-          at trade time. The deferred gain materializes later when received items are sold.
+          The sale is counted once, from the Sales tab. The trade's settlement rows only record
+          how it was paid (items and any cash), so they never add to income.
         </p>
       </div>
 
