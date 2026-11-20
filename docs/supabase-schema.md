@@ -33,8 +33,8 @@ Bank/manual/CSV-sourced money movements — the Schedule C source of truth for i
 | `csv_transaction_id`, `csv_group_id`, `parent_settlement_id` | marketplace CSV import keys: `csv_transaction_id` is unique per user (index `transactions_csv_transaction_id_idx`), so re-imports insert only missing rows; `csv_group_id` is the payout/settlement group; for eBay/Amazon the order number is in `notes` |
 | `plaid_transaction_id`, `plaid_category` | Plaid-sourced rows only; read-only in the UI (`TransactionDetail` blocks editing date/amount/merchant/direction when `source === 'plaid'`) |
 | `receipt_url` | storage path of the attached receipt (upload UI in the Expenses detail panel; see Storage below) |
-| `is_non_cash` | boolean, default `false`; marks non-cash trade-leg income and COGS rows. Included in Schedule C totals; excluded from bank-reconciliation/cash-flow views. |
-| `trade_id` | nullable FK to `trades`; set on all transactions related to a trade (income, COGS, optional cash boot). `ON DELETE SET NULL`. |
+| `is_non_cash` | boolean, default `false`; marks a trade's non-cash rows: the settlement leg (`settlement`, never counted) and the COGS leg (`cost_of_goods`, counted in Part III). Excluded from bank-reconciliation/cash-flow views. |
+| `trade_id` | nullable FK to `trades`; set on all transactions related to a trade (settlement, COGS, optional cash boot). `ON DELETE SET NULL`. |
 | **no `deleted_at`** | transactions are **hard-deleted** (`deleteTransaction`), unlike every other table here |
 
 #### Plaid metadata fields (added 2026-06-26 by `plaid_metadata_capture`)
@@ -203,7 +203,7 @@ Barter exchange record — one row per trade event. See [`docs/superpowers/specs
 | `received_fmv` | sum of received-side line FMVs — total basis going onto new lots |
 | `cash_boot` | signed numeric; `+` = you received cash, `−` = you paid cash, `0` = pure swap |
 | `cash_transaction_id` | nullable FK to the bank transaction for the boot; `ON DELETE SET NULL` |
-| `income_transaction_id` | FK to the non-cash income `transactions` row (always `is_non_cash = true`); `ON DELETE SET NULL` |
+| `income_transaction_id` | FK to the non-cash settlement `transactions` row (always `is_non_cash = true`; tagged `settlement` since 2026-11-20 — the column name is historical); `ON DELETE SET NULL` |
 | `cogs_transaction_id` | FK to the non-cash COGS `transactions` row (always `is_non_cash = true`); `ON DELETE SET NULL` |
 | `fmv_source_notes` | nullable; IRS defensibility breadcrumb (e.g. "eBay sold comps saved 2026-06-23") |
 | `notes` | nullable free text |

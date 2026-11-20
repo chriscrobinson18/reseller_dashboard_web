@@ -77,7 +77,7 @@ Bucketing rules (in order — first match wins):
 
 ## Non-cash trade transactions
 
-`payout` and `cost_of_goods` totals in the Schedule C breakdown **may include non-cash transactions from trades** (`transactions.is_non_cash = true`). Both legs are still correct Schedule C inputs — barter income is taxable at FMV (IRC § 1001), and the matching COGS deduction is legitimate. The non-cash pair always washes, so the only net Schedule C impact from a trade event is the cash boot leg (if any), which is a normal cash transaction (`is_non_cash = false`).
+Trades write non-cash rows (`transactions.is_non_cash = true`). The **COGS leg** (`cost_of_goods`, negative) is the purchase of the received items at FMV and counts in Part III. The **settlement leg** and any **cash received** (`settlement`, positive; tagged `payout` before 2026-11-20) only record how the given-side sale was paid — that sale is already on Line 1 at FMV (barter income is taxable at FMV, IRC § 1001) — so they never count. Cash **paid** in a trade is `cost_of_goods` (part of the purchase). See [data-flows.md](data-flows.md#recording-a-trade-recordtrade-in-mutationsts).
 
 The `is_non_cash` flag exists so a future bank-reconciliation or cash-flow view can filter to `is_non_cash = false` rows only. `bucketTransaction` does **not** filter on this flag — both cash and non-cash transactions flow through the same bucketing logic and land in the same Schedule C totals, which is correct.
 

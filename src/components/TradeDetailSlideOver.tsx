@@ -53,10 +53,14 @@ export default function TradeDetailSlideOver({ tradeId, onClose }: Props) {
             typePill = <span className="px-1.5 py-0.5 rounded text-[10px] font-medium bg-orange-100 text-orange-700">Paid boot {formatUSD(Math.abs(cashBoot))}</span>
           }
 
-          const incomeAmt = data.incomeTransaction?.amount ?? 0
-          const cogsAmt = data.cogsTransaction?.amount ?? 0
+          // Schedule C: the given-side sales carry Line 1 at FMV; the received
+          // items are an inventory purchase at FMV (non-cash COGS leg + any cash
+          // paid). The settlement rows (non-cash + cash received) only record how
+          // the sale was paid and are not counted.
+          const givenFmv = data.trade.given_fmv ?? 0
+          const settlementAmt = data.incomeTransaction?.amount ?? 0
           const cashAmt = data.cashTransaction?.amount ?? 0
-          const netAmt = incomeAmt + cogsAmt + cashAmt
+          const purchaseAmt = Math.abs(data.cogsTransaction?.amount ?? 0) + Math.max(-cashAmt, 0)
 
           return (
             <div className="space-y-4">
@@ -112,41 +116,35 @@ export default function TradeDetailSlideOver({ tradeId, onClose }: Props) {
               <div className="p-3 rounded-lg bg-gray-50 border border-gray-200">
                 <div className="text-[10px] font-semibold text-gray-500 uppercase tracking-wide mb-2">Schedule C impact</div>
                 <div className="space-y-1.5">
-                  {data.incomeTransaction && (
-                    <div className="flex justify-between items-center text-xs">
-                      <div className="flex items-center gap-1.5 text-gray-700">
-                        <TrendingUp size={12} className="text-green-600 shrink-0" />
-                        <span>Income (non-cash)</span>
-                      </div>
-                      <span className="tabular-nums text-green-700">+{formatUSD(data.incomeTransaction.amount)}</span>
+                  <div className="flex justify-between items-center text-xs">
+                    <div className="flex items-center gap-1.5 text-gray-700">
+                      <TrendingUp size={12} className="text-green-600 shrink-0" />
+                      <span>Sale of given items at FMV (Line 1)</span>
                     </div>
-                  )}
-                  {data.cogsTransaction && (
-                    <div className="flex justify-between items-center text-xs">
-                      <div className="flex items-center gap-1.5 text-gray-700">
-                        <TrendingDown size={12} className="text-red-600 shrink-0" />
-                        <span>COGS (non-cash)</span>
-                      </div>
-                      <span className="tabular-nums text-red-700">−{formatUSD(Math.abs(data.cogsTransaction.amount))}</span>
+                    <span className="tabular-nums text-green-700">+{formatUSD(givenFmv)}</span>
+                  </div>
+                  <div className="flex justify-between items-center text-xs">
+                    <div className="flex items-center gap-1.5 text-gray-700">
+                      <TrendingDown size={12} className="text-red-600 shrink-0" />
+                      <span>Purchase of received items (Part III)</span>
                     </div>
-                  )}
-                  {data.cashTransaction && (
-                    <div className="flex justify-between items-center text-xs">
-                      <div className="flex items-center gap-1.5 text-gray-700">
+                    <span className="tabular-nums text-red-700">−{formatUSD(purchaseAmt)}</span>
+                  </div>
+                  {(settlementAmt > 0 || cashAmt > 0) && (
+                    <div className="flex justify-between items-center text-xs text-gray-500">
+                      <div className="flex items-center gap-1.5">
                         <DollarSign size={12} className="shrink-0" />
-                        <span>Cash boot</span>
+                        <span>Sale settled by: items{cashAmt > 0 ? ' + cash' : ''} (not counted)</span>
                       </div>
-                      <span className={`tabular-nums ${cashAmt >= 0 ? 'text-green-700' : 'text-red-700'}`}>
-                        {cashAmt >= 0 ? '+' : '−'}{formatUSD(Math.abs(cashAmt))}
+                      <span className="tabular-nums">
+                        {formatUSD(settlementAmt)}{cashAmt > 0 ? ` + ${formatUSD(cashAmt)}` : ''}
                       </span>
                     </div>
                   )}
                 </div>
-                <div className="border-t border-gray-200 my-2" />
-                <div className="flex justify-between items-center text-xs font-semibold text-gray-900">
-                  <span>Net at trade date</span>
-                  <span className="tabular-nums">{netAmt >= 0 ? '+' : '−'}{formatUSD(Math.abs(netAmt))}</span>
-                </div>
+                <p className="mt-2 text-[10px] text-gray-500">
+                  Profit on the given items = their FMV − their cost, which leaves inventory through Part III.
+                </p>
               </div>
 
               {/* Notes */}

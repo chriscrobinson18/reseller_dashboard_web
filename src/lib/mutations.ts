@@ -1457,10 +1457,12 @@ export async function recordTrade(params: {
         type: 'other',
         source: 'manual',
         record_type: 'transaction',
-        schedule_c_category: 'payout',
+        // Settlement, not income: the given-side sales (step 7) carry the
+        // trade's Line 1 income at FMV; this row only records how it was paid.
+        schedule_c_category: 'settlement',
         is_non_cash: true,
         trade_id: tradeId,
-        notes: 'Trade — non-cash income leg',
+        notes: 'Trade — non-cash settlement leg',
       },
       {
         user_id,
@@ -1494,7 +1496,9 @@ export async function recordTrade(params: {
         type: params.cashBoot > 0 ? 'other' : 'expense',
         source: 'manual',
         record_type: 'transaction',
-        schedule_c_category: params.cashBoot > 0 ? 'payout' : 'cost_of_goods',
+        // Cash received settles the given-side sales; cash paid is part of the
+        // received items' purchase price (Part III).
+        schedule_c_category: params.cashBoot > 0 ? 'settlement' : 'cost_of_goods',
         is_non_cash: false,
         trade_id: tradeId,
         notes: 'Trade — cash boot',

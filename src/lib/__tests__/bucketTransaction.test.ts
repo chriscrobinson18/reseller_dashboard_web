@@ -70,6 +70,13 @@ describe('bucketTransaction', () => {
     expect(cogs.signedAmount).toBe(-3000)
   })
 
+  it('never counts a trade settlement leg (2026-11-20 tag) or cash boot received', () => {
+    expect(bucketTransaction(tx({ trade_id: 'tr1', amount: 3000, schedule_c_category: 'settlement', is_non_cash: true }), []).bucket).toBeNull()
+    expect(bucketTransaction(tx({ trade_id: 'tr1', amount: 500, schedule_c_category: 'settlement', is_non_cash: false }), []).bucket).toBeNull()
+    // Cash boot PAID stays a purchase (Part III).
+    expect(bucketTransaction(tx({ trade_id: 'tr1', amount: -500, schedule_c_category: 'cost_of_goods', is_non_cash: false }), []).bucket).toBe('cogs')
+  })
+
   it('filters csv_import transactions', () => {
     const result = bucketTransaction(tx({ source: 'csv_import' }), [])
     expect(result.bucket).toBeNull()

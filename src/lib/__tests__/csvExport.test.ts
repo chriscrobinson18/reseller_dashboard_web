@@ -299,6 +299,25 @@ describe('trades under sales-based income', () => {
     expect(s.cogs).toBe(3000)
     expect(s.grossProfit).toBe(0)
   })
+
+  it('received boot: Line 1 = given FMV once, whether legs are tagged payout (legacy) or settlement', () => {
+    // Give FMV 3000; receive FMV 2500 + 500 cash.
+    const sales = computeSalesIncome([sale({ sale_price: 3000, fees: 0, shipping_cost: 0, platform: 'trade' })])
+    for (const tag of ['payout', 'settlement']) {
+      const txs = [
+        tx({ amount: 2500, schedule_c_category: tag, trade_id: 'tr1', is_non_cash: true }),
+        tx({ amount: -2500, schedule_c_category: 'cost_of_goods', trade_id: 'tr1', is_non_cash: true }),
+        tx({ amount: 500, schedule_c_category: tag, trade_id: 'tr1', is_non_cash: false }),
+      ]
+      const s = computeScheduleCSummary(txs, [], sales)
+      expect(s.grossReceipts).toBe(3000)
+      expect(s.purchases).toBe(2500)
+      expect(s.cogs).toBe(2500)
+      expect(s.grossProfit).toBe(500)
+      expect(scheduleCExportRows(txs, [], [sale({ sale_price: 3000, fees: 0, shipping_cost: 0, platform: 'trade' })])
+        .filter(r => r.includes(2500) && r.includes(tag))).toHaveLength(0)
+    }
+  })
 })
 
 describe('Part III in the summary (traditional method)', () => {

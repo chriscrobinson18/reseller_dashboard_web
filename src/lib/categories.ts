@@ -142,11 +142,12 @@ export type ScheduleCBucket = 'income' | 'expense' | 'cogs' | null
  * marketplace CSV imports (`source = 'csv_import'`) create for the same money
  * are audit detail only and must never be counted on Schedule C as well.
  *
- * Trades: `recordTrade` writes given-side `sales` at FMV AND income
- * transactions (non-cash income + any cash boot received) whose sum equals
- * those sales. The income legs (`trade_id`, amount > 0) are therefore
- * sale-derived; the trade's cost-of-goods legs (amount < 0: the non-cash COGS
- * wash and any boot paid) are not, so a pure swap still nets to zero.
+ * Trades: `recordTrade` writes given-side `sales` at FMV AND settlement
+ * transactions (non-cash settlement + any cash boot received) whose sum equals
+ * those sales. Since 2026-11-20 they are tagged `settlement`; rows written
+ * before that were tagged `payout`. Either way the positive legs (`trade_id`,
+ * amount > 0) are sale-derived; the trade's cost-of-goods legs (amount < 0:
+ * the received items' purchase at FMV and any boot paid) are not.
  *
  * One exception (2026-11-13, owner decision): eBay **store subscription** rows
  * from the eBay Transaction Report DO count (Line 10). eBay takes the fee from
