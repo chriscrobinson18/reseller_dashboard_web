@@ -36,6 +36,7 @@ Read this, then the open items in [`TASKS.md`](../TASKS.md) "Books cleanup", the
 | 2026-11-13 | Refunds of prior-year sales | Deducted in the year paid (the sale was in that earlier year's income); 2024 not amended. |
 | 2026-11-13 | eBay charges to card/bank | `settlement` (platform `ebay`), not an expense: the refund/label/fee they fund is already deducted via the Sales tab. |
 | 2026-11-13 | eBay store subscription | Counted from the Transaction Report rows themselves (Line 10). **Store rows only**: no other report row without an order number is counted; the tie-out flags unaccounted rows as ghosts instead. |
+| 2026-11-20 | Lots skill vs. net-zero pairs | `/add-cogs-lots` skips every net-zero pair: already-paired charges and charges with an exact refund get no lots and no pairing writes; they're listed for the owner. Pairing stays a separate step ([features/inventory.md](features/inventory.md#lot-data-rules-books-cleanup)). |
 
 ## Open questions for the preparer
 

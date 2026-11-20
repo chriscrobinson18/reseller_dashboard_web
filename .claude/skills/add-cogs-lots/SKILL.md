@@ -31,7 +31,7 @@ If those docs disagree with this file, the docs win. Update this file in the sam
 
 ## Tools and access
 
-- **Production SQL:** the Supabase Management API, which the proxy authenticates. Send `Authorization: Bearer dummy`; the proxy swaps in the real credential. Use `POST https://api.supabase.com/v1/projects/<project-ref>/database/query/read-only` with the body `{"query": "..."}` for reads, and the same URL without `/read-only` for approved writes. The project ref is in `supabase/.temp/linked-project.json` (see `docs/operations.md`). Put SQL in a scratchpad file and send it as JSON with a small Python helper. Don't inline it in a shell heredoc: `$$`, `${}` and backticks get mangled.
+- **Production SQL:** the Supabase Management API, which the proxy authenticates. Send `Authorization: Bearer dummy`; the proxy swaps in the real credential. Use `POST https://api.supabase.com/v1/projects/<project-ref>/database/query/read-only` with the body `{"query": "..."}` for reads, and the same URL without `/read-only` for approved writes. The project ref is in `src/lib/supabase.ts` (see `docs/operations.md`). Put SQL in a scratchpad file and send it as JSON with a small Python helper. Don't inline it in a shell heredoc: `$$`, `${}` and backticks get mangled.
 - **Gmail:** the `mcp__Gmail__search_threads` and `mcp__Gmail__get_thread` tools; load them with ToolSearch if they're deferred. If no Gmail tools exist, **stop**: tell the owner the Gmail connector isn't connected to this session (call `read_documentation` with topic `connectors.add`), and offer to continue once it is.
 - **Writes** run as one `begin; … commit;` with a `do $$ … $$` block that checks counts and raises an exception on any mismatch, so a failed check rolls everything back.
 
@@ -69,10 +69,11 @@ order by t.date;
 
 For each candidate, before touching lots:
 
-1. **Exact refund?** Look for an unpaired positive row with the exact opposite amount in cents, from the same merchant, within 90 days.
-   - If found, propose a **net-zero pair**, not lots. In the app: Expenses → Net-zero pairs → Find matches in bulk, or the transaction's "Net-zero match" panel. In SQL: one shared `net_zero_pair_id`, set only where it is null; check that exactly 2 rows changed.
-   - **Exception:** don't pair when the charge and refund fall in different tax years. The refund correctly reduces the later year's cost of goods.
-   - **Exception:** if the owner says the goods were **refunded but kept**, pair the rows **and** create the lots at `unit_cost = 0` with `allocated_amount = 0`. Don't delete anything.
+1. **Skip all net-zero pairs.** This skill never creates lots for, pairs, or otherwise writes to a charge that belongs to a net-zero pair or could become one:
+   - charges already paired (`net_zero_pair_id is not null`; the Step 1 query excludes them);
+   - charges with an **exact refund**: an unpaired positive row with the exact opposite amount in cents, from the same merchant, within 90 days. This includes a refund that is still pending.
+   
+   List these as "skip: net-zero pair" in the proposal, with the refund's date. Pairing is done separately (Expenses → Net-zero pairs → Find matches in bulk, or the transaction's "Net-zero match" panel), not by this skill. If the owner says the goods were **refunded but kept**, flag the charge for them; don't create lots here.
 2. **Partial refund** (e.g. a restocking fee kept back): don't pair. Lots cover only the items actually kept; flag the charge for the owner.
 3. **Not inventory** (memberships, subscriptions, store services, supplies): never a lot. Memberships go to the custom category "Memberships" (Line 27a). If one charge mixes goods and a membership, flag it for the owner, because transactions can't be split yet.
 
@@ -90,7 +91,7 @@ For each remaining charge, search Gmail. Card charges usually post 0–5 days af
 - the email doesn't give each item's price or subtotal;
 - several orders could plausibly match;
 - the totals don't reconcile;
-- it's a multi-order drop where this order was cancelled (cancelled orders become net-zero pairs instead).
+- it's a multi-order drop where this order was cancelled (cancelled orders are net-zero pairs, which this skill skips).
 
 A foreign-currency order still works: its prices give the ratio.
 
@@ -118,7 +119,7 @@ Save the full plan as a scratchpad file, never in the repo. Show the owner a tab
 
 | Date | Merchant | Charge | Order email (subject, date) | Item | Qty | Allocated | Lot rows (qty × unit) | Status |
 
-- **Status** is one of: ready; net-zero pair; refunded-but-kept; skip (with the reason); pending, so wait; owner-reviewed, so locked; not inventory.
+- **Status** is one of: ready; skip: net-zero pair; skip (with another reason); pending, so wait; owner-reviewed, so locked; not inventory.
 - Show the total of the "ready" charges and the total of their allocations, computed separately. They must be equal.
 - Ask for approval. The owner may approve all of it, some rows, or none.
 
@@ -184,7 +185,7 @@ commit;
 3. Report in the owner's format: (1) direct answer, (2) reasoning, (3) alternatives and risks, (4) next steps. Include:
    - counts and totals per year;
    - the skipped list with reasons;
-   - anything waiting on the owner (pending, locked, mixed charges, refunded-but-kept questions).
+   - anything waiting on the owner (pending, locked, mixed charges, skipped net-zero pairs, refunded-but-kept questions).
 
 ## Step 8 (optional, separate approval): link existing sales to the new lots
 
