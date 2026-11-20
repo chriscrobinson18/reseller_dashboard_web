@@ -3,13 +3,12 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Scale } from 'lucide-react'
 import { supabase } from '../lib/supabase'
 import { fetchAllRows } from '../lib/fetchAll'
-import { pairNetZero } from '../lib/mutations'
+import { pairNetZero, unpairNetZero } from '../lib/mutations'
 import { formatUSD, formatShortDate } from '../lib/utils'
 import {
-  NET_ZERO_SELECT, isPairable, cancelsOut, rankNetZeroCandidates, proposeNetZeroPairs,
-  type NetZeroRow, type NetZeroProposal,
+  NET_ZERO_SELECT, isPairable, cancelsOut, rankNetZeroCandidates, daysApart,
+  type NetZeroRow,
 } from '../lib/netZero'
-import Modal from './Modal'
 import CategoryBadge from './CategoryBadge'
 
 function RowLine({ r }: { r: NetZeroRow }) {
@@ -128,111 +127,112 @@ export function NetZeroCandidates({ tx, onPaired }: { tx: NetZeroRow; onPaired?:
   )
 }
 
-const shiftDays = (d: string, n: number) => {
-  const t = new Date(d + 'T00:00:00Z'); t.setUTCDate(t.getUTCDate() + n); return t.toISOString().slice(0, 10)
-}
-const keyOf = (p: NetZeroProposal) => `${p.negative.id}|${p.positive.id}`
-
 /**
- * Bulk finder: scans unpaired rows in the period (± maxDays so a refund in
- * the next month still matches), proposes one-to-one exact-opposite pairs,
- * and pairs the ticked ones. Same-merchant pairs ≤ 90 days are pre-ticked.
+ * "Net-zero pairs" view on the Expenses page: every pair with at least one
+ * side in the selected period, both rows shown (the partner is fetched even
+ * when it falls outside the period). Pairs are created from a transaction's
+ * detail panel ("Net-zero match"); here they are reviewed or unpaired.
  */
-export function NetZeroFinderModal({ open, onClose, start, end }: { open: boolean; onClose: () => void; start: string | null; end: string | null }) {
+export function NetZeroPairsView({ start, end, search, onOpen }: {
+  start: string | null
+  end: string | null
+  search: string
+  onOpen: (id: string) => void
+}) {
   const qc = useQueryClient()
-  const maxDays = 120
-  const { data: rows, isLoading, error } = useQuery({
-    queryKey: ['transactions', 'net-zero-scan', start, end],
-    enabled: open,
-    queryFn: () => fetchAllRows<NetZeroRow>((from, to) => {
-      // null start/end = "All time": no bound on that side.
-      let q = supabase.from('transactions').select(NET_ZERO_SELECT).is('net_zero_pair_id', null)
-      if (start) q = q.gte('date', shiftDays(start, -maxDays))
-      if (end) q = q.lte('date', shiftDays(end, maxDays))
-      return q.order('id').range(from, to)
-    }),
-  })
-  const proposals = useMemo(() => proposeNetZeroPairs(rows ?? [], {
-    maxDays, inScope: r => (!start || r.date >= start) && (!end || r.date <= end),
-  }), [rows, start, end])
-
-  const [ticked, setTicked] = useState<Set<string> | null>(null)
-  const defaultTicked = useMemo(() => new Set(proposals.filter(p => p.sameMerchant && p.days <= 90).map(keyOf)), [proposals])
-  const sel = ticked ?? defaultTicked
-  const toggle = (k: string) => { const s = new Set(sel); if (s.has(k)) s.delete(k); else s.add(k); setTicked(s) }
-
-  const [result, setResult] = useState<{ ok: number; failed: string[] } | null>(null)
-  const run = useMutation({
-    mutationFn: async () => {
-      let ok = 0; const failed: string[] = []
-      for (const p of proposals) {
-        if (!sel.has(keyOf(p))) continue
-        try { await pairNetZero(p.negative.id, p.positive.id); ok++ }
-        catch (e) { failed.push(`${p.negative.merchant ?? '—'} ${formatUSD(p.negative.amount)}: ${(e as Error).message}`) }
+  const { data: rows = [], isLoading, error } = useQuery({
+    queryKey: ['transactions', 'net-zero-pairs', start, end],
+    queryFn: async () => {
+      const inPeriod = await fetchAllRows<NetZeroRow>((from, to) => {
+        let q = supabase.from('transactions').select(NET_ZERO_SELECT).not('net_zero_pair_id', 'is', null)
+        if (start) q = q.gte('date', start)
+        if (end) q = q.lte('date', end)
+        return q.order('id').range(from, to)
+      })
+      const pairIds = [...new Set(inPeriod.map(r => r.net_zero_pair_id!))]
+      const have = new Set(inPeriod.map(r => r.id))
+      const partners: NetZeroRow[] = []
+      for (let i = 0; i < pairIds.length; i += 200) {
+        const { data, error: e } = await supabase.from('transactions').select(NET_ZERO_SELECT).in('net_zero_pair_id', pairIds.slice(i, i + 200))
+        if (e) throw e
+        for (const r of (data ?? []) as NetZeroRow[]) if (!have.has(r.id)) partners.push(r)
       }
-      return { ok, failed }
+      return [...inPeriod, ...partners]
     },
-    onSuccess: r => { setResult(r); setTicked(null); qc.invalidateQueries({ queryKey: ['transactions'] }) },
   })
 
-  const close = () => { setResult(null); setTicked(null); onClose() }
+  const pairs = useMemo(() => {
+    const byPair = new Map<string, NetZeroRow[]>()
+    for (const r of rows) {
+      const g = byPair.get(r.net_zero_pair_id!) ?? []
+      g.push(r); byPair.set(r.net_zero_pair_id!, g)
+    }
+    const terms = search.trim().toLowerCase().split(/\s+/).filter(Boolean)
+    return [...byPair.entries()]
+      .map(([pairId, members]) => {
+        const sorted = [...members].sort((a, b) => a.amount - b.amount)
+        const netCents = sorted.reduce((t, r) => t + Math.round(r.amount * 100), 0)
+        const dates = sorted.map(r => r.date).sort()
+        return {
+          pairId, members: sorted, netCents,
+          gross: sorted.filter(r => r.amount < 0).reduce((t, r) => t - r.amount, 0),
+          days: dates.length > 1 ? daysApart(dates[0], dates[dates.length - 1]) : 0,
+          latest: dates[dates.length - 1],
+          problem: sorted.length !== 2 ? (sorted.length === 1 ? 'Partner missing (orphaned)' : `${sorted.length} rows share this pair`) : netCents !== 0 ? 'Amounts do not cancel' : null,
+        }
+      })
+      .filter(p => !terms.length || terms.every(t => p.members.some(r =>
+        (r.merchant ?? '').toLowerCase().includes(t) || Math.abs(r.amount).toFixed(2).includes(t.replace(/[$,-]/g, '')) || (r.account_display ?? '').toLowerCase().includes(t))))
+      .sort((a, b) => Number(!!b.problem) - Number(!!a.problem) || b.latest.localeCompare(a.latest))
+  }, [rows, search])
 
+  const [confirmId, setConfirmId] = useState<string | null>(null)
+  const unpair = useMutation({
+    mutationFn: (pairId: string) => unpairNetZero(pairId),
+    onSuccess: () => { setConfirmId(null); qc.invalidateQueries({ queryKey: ['transactions'] }) },
+  })
+
+  if (isLoading) return <div className="p-8 text-center text-gray-400 text-sm">Loading net-zero pairs…</div>
+  if (error) return <div className="p-8 text-center text-red-600 text-sm">{(error as Error).message}</div>
+
+  const problems = pairs.filter(p => p.problem).length
+  const gross = pairs.reduce((t, p) => t + p.gross, 0)
   return (
-    <Modal open={open} onClose={close} title="Net-zero matches" width="max-w-2xl">
-      <p className="text-xs text-gray-500 mb-3">
-        Unpaired transactions in this period whose amount is cancelled exactly (to the cent) by another
-        transaction within {maxDays} days. Pairing removes both from Schedule C (e.g. a charge and its full refund).
-        Partial refunds don't match: those stay as separate rows. Marketplace report rows, trades and sale-linked rows are never proposed.
-      </p>
-      {result && (
-        <div className={`text-xs rounded-lg p-2.5 mb-3 ${result.failed.length ? 'bg-amber-50 text-amber-800' : 'bg-emerald-50 text-emerald-800'}`}>
-          Paired {result.ok}.{result.failed.length > 0 && <> Not paired: {result.failed.join('; ')}</>}
+    <div className="p-4 md:p-6 space-y-3">
+      <div className="text-xs text-gray-500">
+        {pairs.length} pair{pairs.length === 1 ? '' : 's'} · {formatUSD(gross)} of charges excluded from Schedule C
+        {problems > 0 && <span className="text-amber-600"> · {problems} need attention</span>}
+        <div className="text-gray-400 mt-0.5">Pair a transaction from its detail panel (Net-zero match). Click a row to open it.</div>
+      </div>
+      {pairs.length === 0 ? (
+        <div className="p-8 text-center text-gray-400 text-sm">No net-zero pairs in this period.</div>
+      ) : pairs.map(p => (
+        <div key={p.pairId} className={`border rounded-xl p-3 ${p.problem ? 'border-amber-300 bg-amber-50/40' : 'border-gray-200'}`}>
+          <div className="space-y-1.5">
+            {p.members.map(r => (
+              <button key={r.id} type="button" onClick={() => onOpen(r.id)} className="w-full text-left flex rounded-lg px-1.5 py-1 -mx-1.5 hover:bg-gray-50">
+                <RowLine r={r} />
+              </button>
+            ))}
+          </div>
+          <div className="flex items-center gap-2 mt-2 pt-2 border-t border-gray-100 text-[11px]">
+            {p.problem
+              ? <span className="text-amber-700 font-medium">{p.problem}</span>
+              : <span className="text-gray-400">Nets to $0.00 · {p.days} day{p.days === 1 ? '' : 's'} apart</span>}
+            <span className="ml-auto" />
+            {confirmId === p.pairId ? (
+              <>
+                <span className="text-gray-500">Both rows count again?</span>
+                <button type="button" onClick={() => unpair.mutate(p.pairId)} disabled={unpair.isPending} className="px-2 py-0.5 rounded bg-gray-900 text-white font-medium disabled:opacity-50">Unpair</button>
+                <button type="button" onClick={() => setConfirmId(null)} className="px-2 py-0.5 text-gray-500 hover:text-gray-800">Cancel</button>
+              </>
+            ) : (
+              <button type="button" onClick={() => setConfirmId(p.pairId)} className="text-blue-600 hover:text-blue-800 font-medium">Unpair</button>
+            )}
+          </div>
         </div>
-      )}
-      {isLoading ? (
-        <div className="text-sm text-gray-400 py-6 text-center">Scanning…</div>
-      ) : error ? (
-        <div className="text-sm text-red-600">{(error as Error).message}</div>
-      ) : proposals.length === 0 ? (
-        <div className="text-sm text-gray-400 py-6 text-center">No exact opposite-amount matches found.</div>
-      ) : (
-        <>
-          <div className="flex items-center justify-between text-xs text-gray-500 mb-2">
-            <span>{proposals.length} possible pair{proposals.length === 1 ? '' : 's'} · {sel.size} selected</span>
-            <span className="space-x-3">
-              <button className="text-blue-600 hover:underline" onClick={() => setTicked(new Set(proposals.map(keyOf)))}>All</button>
-              <button className="text-blue-600 hover:underline" onClick={() => setTicked(new Set())}>None</button>
-            </span>
-          </div>
-          <div className="space-y-2">
-            {proposals.map(p => {
-              const k = keyOf(p)
-              return (
-                <label key={k} className={`flex gap-2.5 border rounded-lg p-2.5 cursor-pointer ${sel.has(k) ? 'border-gray-900 bg-gray-50' : 'border-gray-200'}`}>
-                  <input type="checkbox" className="mt-1" checked={sel.has(k)} onChange={() => toggle(k)} />
-                  <div className="min-w-0 flex-1 space-y-1.5">
-                    <RowLine r={p.negative} />
-                    <RowLine r={p.positive} />
-                    <div className="text-[10px] text-gray-400">
-                      {p.sameMerchant ? 'Same merchant' : <span className="text-amber-600">Different merchant — check it's really the same purchase</span>} · {p.days} day{p.days === 1 ? '' : 's'} apart
-                    </div>
-                  </div>
-                </label>
-              )
-            })}
-          </div>
-          <div className="flex justify-end gap-2 mt-4 pt-3 border-t border-gray-100">
-            <button onClick={close} className="px-3 py-1.5 text-sm text-gray-600 hover:text-gray-900">Close</button>
-            <button
-              onClick={() => run.mutate()}
-              disabled={sel.size === 0 || run.isPending}
-              className="px-3 py-1.5 rounded-lg bg-gray-900 text-white text-sm font-medium hover:bg-gray-700 disabled:opacity-50"
-            >
-              {run.isPending ? 'Pairing…' : `Pair ${sel.size} selected`}
-            </button>
-          </div>
-        </>
-      )}
-    </Modal>
+      ))}
+      {unpair.isError && <div className="text-xs text-red-600">{(unpair.error as Error).message}</div>}
+    </div>
   )
 }

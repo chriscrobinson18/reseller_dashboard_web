@@ -677,14 +677,13 @@ export default function InventoryPage() {
   // ?lot=<id> deep link (lib/nav.ts): opens that lot's panel (funding + linked
   // records) and wins over a click until closed.
   const [deepLotId, clearDeepLot] = useDeepLink('lot')
-  const deepLot = useMemo(() => {
-    if (!deepLotId) return null
+  let deepLot: { lot: InventoryLot; itemName: string } | null = null
+  if (deepLotId) {
     for (const item of items) {
       const lot = (item.inventory_lots ?? []).find(l => l.id === deepLotId)
-      if (lot) return { lot, itemName: item.name }
+      if (lot) { deepLot = { lot, itemName: item.name }; break }
     }
-    return null
-  }, [deepLotId, items])
+  }
   const txLot = deepLotId ? deepLot : localTxLot
   const setTxLot = (v: { lot: InventoryLot; itemName: string } | null) => { clearDeepLot(); setLocalTxLot(v) }
   const { data: incompleteBreakdowns = [] } = useIncompleteBreakdowns()

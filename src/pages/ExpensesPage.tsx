@@ -25,7 +25,7 @@ import { useTrade, useCustomCategories } from '../lib/queries'
 import CategoryDropdown, { UNCATEGORIZED_SENTINEL } from '../components/CategoryDropdown'
 import type { Transaction } from '../lib/types'
 import { fetchAllRows } from '../lib/fetchAll'
-import { NetZeroCandidates, NetZeroFinderModal } from '../components/NetZeroMatch'
+import { NetZeroCandidates, NetZeroPairsView } from '../components/NetZeroMatch'
 import LinkedRecords from '../components/LinkedRecords'
 import { useDeepLink } from '../lib/nav'
 
@@ -536,7 +536,10 @@ export default function ExpensesPage() {
   const setSelectedId = (id: string | null) => { clearDeepTx(); setLocalSelectedId(id) }
   const [ddTxId, setDdTxId] = useState<string | null>(null)
   const [showAddTx, setShowAddTx] = useState(false)
-  const [showNetZero, setShowNetZero] = useState(false)
+  // Paired net-zero rows are listed by default; the toggle hides them.
+  const [showNetZeroRows, setShowNetZeroRows] = useState(true)
+  // 'pairs' swaps the table for the Net-zero pairs review list.
+  const [view, setView] = useState<'list' | 'pairs'>('list')
   const [openTradeId, setOpenTradeId] = useState<string | null>(null)
   const [showManage, setShowManage] = useState(false)
   const [showCatFilter, setShowCatFilter] = useState(false)
@@ -654,6 +657,7 @@ export default function ExpensesPage() {
       if (lotFilter !== 'all' && lotStatus.get(t.id) !== lotFilter) return false
       if (reviewFilter !== 'all' && (t.review_status ?? 'none') !== reviewFilter) return false
       if (!showSaleLinked && (t.related_sale_id || t.source === 'csv_import')) return false
+      if (!showNetZeroRows && t.net_zero_pair_id) return false
       if (catFilter === UNCATEGORIZED_SENTINEL) {
         if (t.schedule_c_category) return false
       } else if (catFilter) {
@@ -666,7 +670,7 @@ export default function ExpensesPage() {
       if (accountFilter && t.plaid_account_id !== accountFilter) return false
       return matchesSearch(t, terms, customsAll)
     })
-  }, [transactions, showSaleLinked, catFilter, dirFilter, sourceFilter, accountFilter, lotFilter, reviewFilter, lotStatus, search, customsAll])
+  }, [transactions, showSaleLinked, showNetZeroRows, catFilter, dirFilter, sourceFilter, accountFilter, lotFilter, reviewFilter, lotStatus, search, customsAll])
 
   // Sorted view of the filtered set. Default (date, desc) matches the
   // server's own `.order('date', { ascending: false })`, so leaving sort
@@ -699,7 +703,7 @@ export default function ExpensesPage() {
   // Clear any selection when the visible set changes, so a bulk action never
   // silently applies to rows the user can no longer see. Render-phase reset
   // (React's "storing info from previous renders" pattern) rather than an effect.
-  const filterSig = `${range.start}|${range.end}|${search}|${catFilter}|${showSaleLinked}|${dirFilter}|${sourceFilter}|${accountFilter}|${lotFilter}|${reviewFilter}`
+  const filterSig = `${range.start}|${range.end}|${search}|${catFilter}|${showSaleLinked}|${showNetZeroRows}|${dirFilter}|${sourceFilter}|${accountFilter}|${lotFilter}|${reviewFilter}`
   const [lastFilterSig, setLastFilterSig] = useState(filterSig)
   if (filterSig !== lastFilterSig) {
     setLastFilterSig(filterSig)
@@ -729,7 +733,7 @@ export default function ExpensesPage() {
   }, [ddTxId])
 
   const ddTx = ddTxId ? sorted.find(t => t.id === ddTxId) ?? null : null
-  const activeFilterCount = [catFilter, dirFilter !== 'all', sourceFilter !== 'all', accountFilter, lotFilter !== 'all', reviewFilter !== 'all', showSaleLinked].filter(Boolean).length
+  const activeFilterCount = [catFilter, dirFilter !== 'all', sourceFilter !== 'all', accountFilter, lotFilter !== 'all', reviewFilter !== 'all', showSaleLinked, !showNetZeroRows].filter(Boolean).length
 
   const allSelected = selectable.length > 0 && selectable.every(t => selectedIds.has(t.id))
   const someSelected = selectedIds.size > 0
@@ -788,11 +792,19 @@ export default function ExpensesPage() {
               )}
               <span className="text-green-600 font-medium tabular-nums whitespace-nowrap">{formatUSD(income)} in</span>
               <span className="text-red-500 font-medium tabular-nums whitespace-nowrap">{formatUSD(expenses)} out</span>
+              <button
+                onClick={() => setShowAddTx(true)}
+                className="flex items-center justify-center gap-1.5 bg-gray-900 text-white px-3 py-1.5 rounded-lg text-xs font-medium hover:bg-gray-700 transition-colors whitespace-nowrap"
+              >
+                <Plus size={13} /> Add
+              </button>
             </div>
           </div>
+          {/* Layer 1: dates */}
           <PeriodPicker value={period} onChange={setPeriod} />
-          <div className="flex flex-wrap md:flex-nowrap items-center gap-2">
-            <div className="relative flex-1 min-w-0 basis-full md:basis-auto order-1">
+          {/* Layer 2: search (+ the phone-only Filters toggle) */}
+          <div className="flex items-center gap-2">
+            <div className="relative flex-1 min-w-0">
               <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
               <input
                 value={search}
@@ -801,19 +813,21 @@ export default function ExpensesPage() {
                 className="w-full pl-8 pr-3 py-1.5 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-gray-900"
               />
             </div>
-            {/* Phones: Filters toggle + Add on one row under the search box. */}
+            {/* Phones: filters collapse behind this toggle. */}
             <button
               type="button"
               onClick={() => setShowFiltersMobile(v => !v)}
               aria-expanded={showFiltersMobile}
-              className={`md:hidden order-2 flex-1 flex items-center justify-center gap-1.5 border rounded-lg px-3 py-2 text-sm font-medium ${
+              className={`md:hidden shrink-0 flex items-center justify-center gap-1.5 border rounded-lg px-3 py-1.5 text-sm font-medium ${
                 showFiltersMobile || activeFilterCount > 0 ? 'border-gray-900 text-gray-900' : 'border-gray-200 text-gray-600'
               }`}
             >
               <Filter size={14} /> Filters{activeFilterCount > 0 && ` (${activeFilterCount})`}
               <ChevronDown size={14} className={`transition-transform ${showFiltersMobile ? 'rotate-180' : ''}`} />
             </button>
-            <div className={`${showFiltersMobile ? 'grid' : 'hidden'} order-3 basis-full grid-cols-2 gap-2 md:order-2 md:basis-auto md:flex md:items-center md:gap-2`}>
+          </div>
+          {/* Layer 3: everything else */}
+          <div className={`${showFiltersMobile ? 'grid' : 'hidden'} grid-cols-2 gap-2 md:flex md:flex-wrap md:items-center`}>
             <div className="relative min-w-0 col-span-2 md:col-span-1">
               <button
                 type="button"
@@ -917,25 +931,36 @@ export default function ExpensesPage() {
               <Filter size={12} /> Sale rows
             </button>
             <button
-              onClick={() => setShowNetZero(true)}
-              title="Find transactions whose amounts cancel exactly (charge + full refund) and pair them as net zero"
-              className="flex items-center justify-center gap-1.5 border border-gray-200 rounded-lg px-3 py-1.5 text-xs font-medium whitespace-nowrap text-gray-600 hover:border-gray-400 transition-colors"
+              onClick={() => setShowNetZeroRows(v => !v)}
+              aria-pressed={showNetZeroRows}
+              title={showNetZeroRows ? 'Net-zero paired rows are listed: click to hide them' : 'Net-zero paired rows are hidden: click to show them'}
+              className={`flex items-center justify-center gap-1.5 border rounded-lg px-3 py-1.5 text-xs font-medium whitespace-nowrap transition-colors ${
+                showNetZeroRows ? 'bg-gray-100 border-gray-300 text-gray-700' : 'border-gray-200 text-gray-400 line-through hover:border-gray-400'
+              }`}
             >
-              <Scale size={12} /> Net-zero matches
+              <Scale size={12} /> Net-zero rows
             </button>
+            {/* View switch: the transaction table, or the list of net-zero pairs */}
+            <div className="col-span-2 md:ml-auto inline-flex rounded-lg border border-gray-200 p-0.5 text-xs font-medium">
+              {([['list', 'Transactions'], ['pairs', 'Net-zero pairs']] as const).map(([v, label]) => (
+                <button
+                  key={v}
+                  type="button"
+                  onClick={() => setView(v)}
+                  className={`flex-1 px-3 py-1 rounded-md whitespace-nowrap transition-colors ${view === v ? 'bg-gray-900 text-white' : 'text-gray-600 hover:text-gray-900'}`}
+                >
+                  {label}
+                </button>
+              ))}
             </div>
-            <button
-              onClick={() => setShowAddTx(true)}
-              className="order-2 md:order-3 flex items-center justify-center gap-1.5 bg-gray-900 text-white px-4 md:px-3 py-2 md:py-1.5 rounded-lg text-sm md:text-xs font-medium hover:bg-gray-700 transition-colors whitespace-nowrap"
-            >
-              <Plus size={13} /> Add
-            </button>
           </div>
         </div>
 
-        {/* Table */}
+        {/* Table (or the net-zero pairs review list) */}
         <div className="md:flex-1 md:overflow-y-auto" onClick={() => setDdTxId(null)}>
-          {isLoading ? (
+          {view === 'pairs' ? (
+            <NetZeroPairsView start={range.start} end={range.end} search={search} onOpen={id => setSelectedId(id)} />
+          ) : isLoading ? (
             <div className="p-8 text-center text-gray-400 text-sm">Loading transactions…</div>
           ) : filtered.length === 0 ? (
             <div className="p-8 text-center text-gray-400 text-sm">No transactions found.</div>
@@ -1116,7 +1141,7 @@ export default function ExpensesPage() {
         </div>
 
         <div className="px-4 py-2 border-t border-gray-200 bg-white text-xs text-gray-400">
-          {filtered.length} transactions
+          {view === 'pairs' ? 'Net-zero pairs' : `${filtered.length} transactions`}
         </div>
 
         {/* Bulk action bar */}
@@ -1186,7 +1211,6 @@ export default function ExpensesPage() {
       </SlideOver>
 
       <AddTransactionModal open={showAddTx} onClose={() => setShowAddTx(false)} />
-      <NetZeroFinderModal open={showNetZero} onClose={() => setShowNetZero(false)} start={range.start} end={range.end} />
       <TradeDetailSlideOver tradeId={openTradeId} onClose={() => setOpenTradeId(null)} />
       <ManageCategoriesModal open={showManage} onClose={() => setShowManage(false)} />
     </div>
