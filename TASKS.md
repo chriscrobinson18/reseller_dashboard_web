@@ -28,7 +28,6 @@ Web is the primary client; it shares one Supabase project/schema with the iOS ap
   - Memberships recorded as inventory lots (several subscriptions): remove the lots and move that part of each charge out of cost of goods.
   - A possible second charge for a multi-unit order (same day and card, slightly below the order total): unused; one sale stays one unit short.
   - 22 orphaned `transfer` half-pairs carry a `net_zero_pair_id` whose partner no longer exists (no Schedule C effect): tidy when convenient. One of them is a merch charge tagged `transfer`: check it. (The cost-of-goods orphans are gone.)
-  - A 2025 full refund of a cost-of-goods order whose units were later sold (found in the 2026-11-20 refund review): confirm what was refunded. It is not paired; the refund currently offsets the purchase.
   - One inventory unit whose second purchase isn't in the bank data.
   - Two transfers on one day in March 2026 appear twice on both sides (duplicate copies from a reconnect; excluded, so no tax effect): delete the extra copies.
 - [ ] **Amazon purchase review (tabled):** split Amazon card charges into subscriptions / supplies / cost of goods using the order-history export, matched by date + amount.
