@@ -12,7 +12,7 @@ Rules — first match wins, anything that returns `bucket: null` is excluded:
 |---|---|
 | `record_type === 'settlement'` | `null` |
 | Sale-derived (`isSaleDerivedTransaction`: `related_sale_id` / `related_bundle_id` set, `source === 'csv_import'`, or a trade income leg) — except eBay store subscription report rows, which count | `null` |
-| `net_zero_pair_id` set | `null` |
+| `net_zero_pair_id` set | `null` (pair via Expenses → Net-zero matches; see features/expenses.md) |
 | `schedule_c_category` null/undefined | `null` |
 | Category `isExcluded === true` | `null` |
 | `scheduleLine === 'Part I'` | `'income'` |

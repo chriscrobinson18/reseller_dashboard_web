@@ -1,6 +1,6 @@
 import { useState, useMemo, useEffect } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { Search, Filter, ChevronDown, Plus, Pencil, Trash2, Tag, X, ExternalLink, ArrowUp, ArrowDown, Lock } from 'lucide-react'
+import { Search, Filter, ChevronDown, Plus, Pencil, Trash2, Tag, X, ExternalLink, ArrowUp, ArrowDown, Lock, Scale } from 'lucide-react'
 import { supabase } from '../lib/supabase'
 import { getPeriodRange, type PeriodPreset } from '../lib/periods'
 import { resolveCategory } from '../lib/categories'
@@ -25,6 +25,7 @@ import { useTrade, useCustomCategories } from '../lib/queries'
 import CategoryDropdown, { UNCATEGORIZED_SENTINEL } from '../components/CategoryDropdown'
 import type { Transaction } from '../lib/types'
 import { fetchAllRows } from '../lib/fetchAll'
+import { NetZeroCandidates, NetZeroFinderModal } from '../components/NetZeroMatch'
 
 // ─── Data ────────────────────────────────────────────────────────────────────
 
@@ -387,6 +388,9 @@ function TransactionDetail({ tx, onClose, onOpenTrade, onManage }: { tx: Transac
         )}
       </div>
 
+      {/* Net-zero match: exact opposite-amount lookup (unpaired, eligible rows only) */}
+      <NetZeroCandidates tx={tx} />
+
       {/* Notes */}
       <div>
         <div className="text-xs font-medium text-gray-500 mb-1.5">Notes</div>
@@ -524,6 +528,7 @@ export default function ExpensesPage() {
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [ddTxId, setDdTxId] = useState<string | null>(null)
   const [showAddTx, setShowAddTx] = useState(false)
+  const [showNetZero, setShowNetZero] = useState(false)
   const [openTradeId, setOpenTradeId] = useState<string | null>(null)
   const [showManage, setShowManage] = useState(false)
   const [showCatFilter, setShowCatFilter] = useState(false)
@@ -892,6 +897,13 @@ export default function ExpensesPage() {
             >
               <Filter size={12} /> Sale rows
             </button>
+            <button
+              onClick={() => setShowNetZero(true)}
+              title="Find transactions whose amounts cancel exactly (charge + full refund) and pair them as net zero"
+              className="flex items-center justify-center gap-1.5 border border-gray-200 rounded-lg px-3 py-1.5 text-xs font-medium whitespace-nowrap text-gray-600 hover:border-gray-400 transition-colors"
+            >
+              <Scale size={12} /> Net-zero matches
+            </button>
             </div>
             <button
               onClick={() => setShowAddTx(true)}
@@ -1155,6 +1167,7 @@ export default function ExpensesPage() {
       </SlideOver>
 
       <AddTransactionModal open={showAddTx} onClose={() => setShowAddTx(false)} />
+      <NetZeroFinderModal open={showNetZero} onClose={() => setShowNetZero(false)} start={range.start} end={range.end} />
       <TradeDetailSlideOver tradeId={openTradeId} onClose={() => setOpenTradeId(null)} />
       <ManageCategoriesModal open={showManage} onClose={() => setShowManage(false)} />
     </div>

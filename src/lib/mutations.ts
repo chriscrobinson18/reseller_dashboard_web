@@ -913,12 +913,43 @@ export async function getReceiptSignedUrl(path: string): Promise<string> {
 }
 
 /** Net-zero pairs two transactions by giving them a shared pair UUID. */
-export async function pairTransactions(id1: string, id2: string) {
+/**
+ * Pairs two transactions whose amounts cancel exactly (net zero): both get the
+ * same `net_zero_pair_id` and drop out of every Schedule C total. Guarded:
+ * refuses if the amounts don't cancel to the cent or either row is already
+ * paired, and undoes a half-applied pair (e.g. the other row was paired
+ * meanwhile) so no orphaned half-pair is left behind.
+ */
+export async function pairNetZero(id1: string, id2: string): Promise<void> {
+  if (id1 === id2) throw new Error('Pick two different transactions')
+  const { data: rows, error: readErr } = await supabase
+    .from('transactions').select('id, amount, net_zero_pair_id, trade_id').in('id', [id1, id2])
+  if (readErr) throw readErr
+  if (!rows || rows.length !== 2) throw new Error('One of the transactions no longer exists')
+  const [a, b] = rows
+  if (Math.round(Number(a.amount) * 100) + Math.round(Number(b.amount) * 100) !== 0) {
+    throw new Error('These amounts do not cancel out exactly')
+  }
+  if (a.net_zero_pair_id || b.net_zero_pair_id) throw new Error('One of these is already in a net-zero pair')
+  if (a.trade_id || b.trade_id) throw new Error('Trade transactions can\'t be paired')
+
   const pairId = crypto.randomUUID()
-  const { error: e1 } = await supabase.from('transactions').update({ net_zero_pair_id: pairId }).eq('id', id1)
-  if (e1) throw e1
-  const { error: e2 } = await supabase.from('transactions').update({ net_zero_pair_id: pairId }).eq('id', id2)
-  if (e2) throw e2
+  const { data: updated, error } = await supabase
+    .from('transactions')
+    .update({ net_zero_pair_id: pairId })
+    .in('id', [id1, id2])
+    .is('net_zero_pair_id', null)
+    .select('id')
+  if (error) throw error
+  if ((updated ?? []).length !== 2) {
+    await supabase.from('transactions').update({ net_zero_pair_id: null }).eq('net_zero_pair_id', pairId)
+    throw new Error('One of these was paired in the meantime — nothing changed')
+  }
+}
+
+/** @deprecated use pairNetZero (guarded). Kept for existing callers. */
+export async function pairTransactions(id1: string, id2: string) {
+  return pairNetZero(id1, id2)
 }
 
 /**

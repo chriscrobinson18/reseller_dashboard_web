@@ -84,6 +84,30 @@ Before this runs, `classifySettlement` marks incoming deposits as `record_type =
 - **When `schedule_c_category === 'cost_of_goods'`**, renders `TransactionInventorySection` — lets the user link this purchase transaction to one or more `inventory_lots` (see Inventory doc). This is the only place lot↔transaction linking happens outside the Inventory page's "Add Lot" flow.
 - Delete (`deleteTransaction`) is a hard delete with a confirm dialog; copy explicitly warns "inventory lots linked to it will be unlinked but kept" (FK `ON DELETE SET NULL`).
 
+## Net-zero matching (added 2026-11-20)
+
+Pairs a charge with the transaction that cancels it exactly (a full refund, or a transfer out and back). Both rows get the same `net_zero_pair_id` and drop out of every Schedule C total (`bucketTransaction`, see data-flows.md). The rules live in `src/lib/netZero.ts` and the UI in `src/components/NetZeroMatch.tsx`.
+
+- **Match rule:** the amounts are exact opposites, compared in whole cents (stored amounts are floats). Partial refunds never match. A refund with a restocking fee withheld is not net zero; see "Partial refunds" below.
+- **Eligible rows** (`isPairable`): not already paired, not a trade leg, not linked to a sale or bundle, not a marketplace report row (`source = 'csv_import'`), and not $0.
+- **Ranking:** same merchant first, then fewest days apart. "Same merchant" means identical after normalizing, or the same first word of 4 or more letters.
+- **Detail panel:** an unpaired, eligible row shows a "Net-zero match" section. It looks up every unpaired row with the exact opposite amount, from any date (up to 200), and shows the best 8, each with a **Pair** button.
+- **Toolbar "Net-zero matches":** scans unpaired rows in the selected period ±120 days. It builds one-to-one pairs per amount, greedily: same merchant first, then nearest date, and each row is used once. It lists every pair with at least one side in the period. Same-merchant pairs 90 or fewer days apart are pre-ticked; different-merchant pairs carry a warning. "Pair selected" pairs the ticked ones and reports any it couldn't pair.
+- **`pairNetZero(id1, id2)`** (`mutations.ts`) is guarded:
+  - it re-reads both rows and refuses unless the cents cancel and neither row is already paired or is a trade leg;
+  - it updates with `.is('net_zero_pair_id', null)`;
+  - if fewer than 2 rows changed (a race), it clears the new pair id again, so no half-pair is left.
+  - `pairTransactions` is now an alias for it.
+- **Inventory:** pairing does not touch lots. If the refunded charge funded an inventory lot, unlink or delete that lot as well (Inventory page), or the goods stay on hand at cost.
+
+### Partial refunds / restocking fees
+
+A return refunded minus a restocking fee does not cancel exactly, so it is not a net-zero pair. Book it as follows:
+
+1. The goods never became inventory. Delete the lot, or unlink the original charge from it, so the purchase is not carried at cost.
+2. Recategorize the refund (positive) to the **same category as the original charge**. The two then net to the fee inside that category.
+3. Step 2 alone gets the Schedule C total right: the fee stays as a net cost in the original category. To show the fee on its own line (Line 27a Other expenses, "restocking fee"), the original charge would have to be split. The app can't split a transaction yet (TASKS.md).
+
 ## Review markers (added 2026-11-13)
 
 See `docs/supabase-schema.md` → Review markers.

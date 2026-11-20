@@ -58,6 +58,7 @@ Web is the primary client; it shares one Supabase project/schema with the iOS ap
 
 ## 🟡 P3 — UX & dashboard polish
 
+- [ ] **Partial-refund / restocking-fee helper:** one action that unlinks or deletes the returned goods' lot, sets the refund's category to match the original charge, and optionally splits the remainder out as an Other expenses "restocking fee". Needs a transaction-split mutation. Interim method: docs/features/expenses.md → Partial refunds.
 - [ ] **Top selling items card** on the Dashboard
 - [ ] **Per-platform sales breakdown card** on the Dashboard + filter in the Sales table
 - [ ] **Plaid webhooks** — `TRANSACTIONS` webhook instead of relying on manual/cron sync, plus the `ITEM` family (`ERROR`, `PENDING_EXPIRATION`, `USER_PERMISSION_REVOKED`, `LOGIN_REPAIRED`); only an `ITEM` webhook catches an auth failure without a manual sync (today the stale badge catches it, reactively).
