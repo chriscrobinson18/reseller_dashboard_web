@@ -1,6 +1,6 @@
 ---
 name: add-cogs-lots
-description: Turn unlinked cost-of-goods charges into inventory lots by matching each charge to its order confirmation email in Gmail. Use when the owner asks to "add lots", "link COGS charges to inventory", "match charges to order emails", or runs /add-cogs-lots. Optional argument: a period such as "2026", "2026-10", "2026-10-01..2026-11-20" or "last 30 days" (default: year to date).
+description: Turn unlinked cost-of-goods charges into inventory lots by matching each charge to its order confirmation email in Gmail. Use when the owner asks to "add lots", "link COGS charges to inventory", "match charges to order emails", or runs /add-cogs-lots. Optional argument: a period such as "2026", "2026-10", "11/26" (month/2-digit year = Nov 2026), "2026-10-01..2026-11-20" or "last 30 days" (default: year to date).
 ---
 
 # Add inventory lots to cost-of-goods charges from order emails
@@ -37,7 +37,11 @@ If those docs disagree with this file, the docs win. Update this file in the sam
 
 ## Step 1: Find candidate charges (read-only)
 
-Turn the argument into `:start` / `:end`. With no argument, use Jan 1 of this year through today.
+Turn the argument into `:start` / `:end`:
+- `YYYY` is the whole year; `YYYY-MM`, `MM/YY` or `MM/YYYY` is that month;
+- `A..B` is an explicit range, and `last N days` ends today;
+- with no argument, use Jan 1 of this year through today;
+- if the argument is ambiguous (e.g. `11/26` could be a day), assume month/year and say so in the proposal.
 
 ```sql
 select t.id, t.date, round(t.amount*100)::bigint as cents, t.merchant, t.account_display, t.pending,
