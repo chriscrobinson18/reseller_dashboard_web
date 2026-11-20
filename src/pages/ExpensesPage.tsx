@@ -1,4 +1,4 @@
-import { useState, useMemo, useEffect, useDeferredValue } from 'react'
+import { useState, useMemo, useEffect, useDeferredValue, useRef } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { Search, Filter, ChevronDown, Plus, Pencil, Trash2, Tag, X, ExternalLink, ArrowUp, ArrowDown, Lock, Scale } from 'lucide-react'
 import { supabase } from '../lib/supabase'
@@ -512,8 +512,31 @@ function TransactionDetail({ tx, onClose, onOpenTrade, onManage }: { tx: Transac
 // Stable fallback so useMemo([transactions]) doesn't recompute every render
 // while the query is loading (data=undefined → [] creates a new ref each render).
 const EMPTY_TRANSACTIONS: Transaction[] = []
-/** Rows drawn per page in the list; more on "Show more". */
+/** Rows drawn per page in the list; more load automatically near the bottom. */
 const ROW_PAGE = 200
+
+/**
+ * Invisible marker under the list: calls `onVisible` once it comes within
+ * ~800px of view, so the next page loads before the bottom is reached. The
+ * implicit (viewport) root also respects the desktop scroll container's
+ * clipping, so it works for both layouts. Re-observing on each `pageKey`
+ * fires again immediately if the marker is still in range after a load.
+ */
+function LoadMoreSentinel({ onVisible, pageKey }: { onVisible: () => void; pageKey: number }) {
+  const ref = useRef<HTMLDivElement>(null)
+  const cb = useRef(onVisible)
+  useEffect(() => { cb.current = onVisible })
+  useEffect(() => {
+    const el = ref.current
+    if (!el || typeof IntersectionObserver === 'undefined') return
+    const io = new IntersectionObserver(entries => {
+      if (entries.some(e => e.isIntersecting)) cb.current()
+    }, { rootMargin: '800px 0px' })
+    io.observe(el)
+    return () => io.disconnect()
+  }, [pageKey])
+  return <div ref={ref} aria-hidden className="h-px" />
+}
 
 export default function ExpensesPage() {
   const [period, setPeriod] = useState<PeriodPreset>('ytd')
@@ -1150,12 +1173,13 @@ export default function ExpensesPage() {
             </table>
             {sorted.length > visibleRows.length && (
               <div className="p-3 text-center">
+                <LoadMoreSentinel pageKey={renderLimit} onVisible={() => setRenderLimit(n => n + ROW_PAGE)} />
                 <button
                   type="button"
-                  onClick={() => setRenderLimit(n => n + ROW_PAGE * 2)}
+                  onClick={() => setRenderLimit(n => n + ROW_PAGE)}
                   className="px-4 py-1.5 rounded-lg border border-gray-200 text-xs font-medium text-gray-600 hover:border-gray-400"
                 >
-                  Show more ({sorted.length - visibleRows.length} not shown)
+                  Loading more… ({sorted.length - visibleRows.length} left) · load now
                 </button>
               </div>
             )}
