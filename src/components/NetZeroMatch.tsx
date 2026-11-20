@@ -6,10 +6,11 @@ import { fetchAllRows } from '../lib/fetchAll'
 import { pairNetZero, unpairNetZero } from '../lib/mutations'
 import { formatUSD, formatShortDate } from '../lib/utils'
 import {
-  NET_ZERO_SELECT, isPairable, cancelsOut, rankNetZeroCandidates, daysApart,
-  type NetZeroRow,
+  NET_ZERO_SELECT, isPairable, cancelsOut, rankNetZeroCandidates, daysApart, proposeNetZeroPairs,
+  type NetZeroRow, type NetZeroProposal,
 } from '../lib/netZero'
 import CategoryBadge from './CategoryBadge'
+import Modal from './Modal'
 
 function RowLine({ r }: { r: NetZeroRow }) {
   return (
@@ -187,6 +188,7 @@ export function NetZeroPairsView({ start, end, search, onOpen }: {
   }, [rows, search])
 
   const [confirmId, setConfirmId] = useState<string | null>(null)
+  const [showFinder, setShowFinder] = useState(false)
   const unpair = useMutation({
     mutationFn: (pairId: string) => unpairNetZero(pairId),
     onSuccess: () => { setConfirmId(null); qc.invalidateQueries({ queryKey: ['transactions'] }) },
@@ -202,8 +204,16 @@ export function NetZeroPairsView({ start, end, search, onOpen }: {
       <div className="text-xs text-gray-500">
         {pairs.length} pair{pairs.length === 1 ? '' : 's'} · {formatUSD(gross)} of charges excluded from Schedule C
         {problems > 0 && <span className="text-amber-600"> · {problems} need attention</span>}
-        <div className="text-gray-400 mt-0.5">Pair a transaction from its detail panel (Net-zero match). Click a row to open it.</div>
+        <div className="text-gray-400 mt-0.5">Pair one transaction from its detail panel (Net-zero match), or find matches in bulk. Click a row to open it.</div>
       </div>
+      <button
+        type="button"
+        onClick={() => setShowFinder(true)}
+        className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-gray-900 text-white text-xs font-medium hover:bg-gray-700"
+      >
+        <Scale size={12} /> Find matches in bulk
+      </button>
+      <NetZeroFinderModal open={showFinder} onClose={() => setShowFinder(false)} start={start} end={end} />
       {pairs.length === 0 ? (
         <div className="p-8 text-center text-gray-400 text-sm">No net-zero pairs in this period.</div>
       ) : pairs.map(p => (
@@ -234,5 +244,114 @@ export function NetZeroPairsView({ start, end, search, onOpen }: {
       ))}
       {unpair.isError && <div className="text-xs text-red-600">{(unpair.error as Error).message}</div>}
     </div>
+  )
+}
+
+const shiftDays = (d: string, n: number) => {
+  const t = new Date(d + 'T00:00:00Z'); t.setUTCDate(t.getUTCDate() + n); return t.toISOString().slice(0, 10)
+}
+const keyOf = (p: NetZeroProposal) => `${p.negative.id}|${p.positive.id}`
+
+/**
+ * Bulk finder: scans unpaired rows in the period (± maxDays so a refund in
+ * the next month still matches), proposes one-to-one exact-opposite pairs,
+ * and pairs the ticked ones. Same-merchant pairs ≤ 90 days are pre-ticked.
+ */
+export function NetZeroFinderModal({ open, onClose, start, end }: { open: boolean; onClose: () => void; start: string | null; end: string | null }) {
+  const qc = useQueryClient()
+  const maxDays = 120
+  const { data: rows, isLoading, error } = useQuery({
+    queryKey: ['transactions', 'net-zero-scan', start, end],
+    enabled: open,
+    queryFn: () => fetchAllRows<NetZeroRow>((from, to) => {
+      // null start/end = "All time": no bound on that side.
+      let q = supabase.from('transactions').select(NET_ZERO_SELECT).is('net_zero_pair_id', null)
+      if (start) q = q.gte('date', shiftDays(start, -maxDays))
+      if (end) q = q.lte('date', shiftDays(end, maxDays))
+      return q.order('id').range(from, to)
+    }),
+  })
+  const proposals = useMemo(() => proposeNetZeroPairs(rows ?? [], {
+    maxDays, inScope: r => (!start || r.date >= start) && (!end || r.date <= end),
+  }), [rows, start, end])
+
+  const [ticked, setTicked] = useState<Set<string> | null>(null)
+  const defaultTicked = useMemo(() => new Set(proposals.filter(p => p.sameMerchant && p.days <= 90).map(keyOf)), [proposals])
+  const sel = ticked ?? defaultTicked
+  const toggle = (k: string) => { const s = new Set(sel); if (s.has(k)) s.delete(k); else s.add(k); setTicked(s) }
+
+  const [result, setResult] = useState<{ ok: number; failed: string[] } | null>(null)
+  const run = useMutation({
+    mutationFn: async () => {
+      let ok = 0; const failed: string[] = []
+      for (const p of proposals) {
+        if (!sel.has(keyOf(p))) continue
+        try { await pairNetZero(p.negative.id, p.positive.id); ok++ }
+        catch (e) { failed.push(`${p.negative.merchant ?? '—'} ${formatUSD(p.negative.amount)}: ${(e as Error).message}`) }
+      }
+      return { ok, failed }
+    },
+    onSuccess: r => { setResult(r); setTicked(null); qc.invalidateQueries({ queryKey: ['transactions'] }) },
+  })
+
+  const close = () => { setResult(null); setTicked(null); onClose() }
+
+  return (
+    <Modal open={open} onClose={close} title="Net-zero matches" width="max-w-2xl">
+      <p className="text-xs text-gray-500 mb-3">
+        Unpaired transactions in this period whose amount is cancelled exactly (to the cent) by another
+        transaction within {maxDays} days. Pairing removes both from Schedule C (e.g. a charge and its full refund).
+        Partial refunds don't match: those stay as separate rows. Marketplace report rows, trades and sale-linked rows are never proposed.
+      </p>
+      {result && (
+        <div className={`text-xs rounded-lg p-2.5 mb-3 ${result.failed.length ? 'bg-amber-50 text-amber-800' : 'bg-emerald-50 text-emerald-800'}`}>
+          Paired {result.ok}.{result.failed.length > 0 && <> Not paired: {result.failed.join('; ')}</>}
+        </div>
+      )}
+      {isLoading ? (
+        <div className="text-sm text-gray-400 py-6 text-center">Scanning…</div>
+      ) : error ? (
+        <div className="text-sm text-red-600">{(error as Error).message}</div>
+      ) : proposals.length === 0 ? (
+        <div className="text-sm text-gray-400 py-6 text-center">No exact opposite-amount matches found.</div>
+      ) : (
+        <>
+          <div className="flex items-center justify-between text-xs text-gray-500 mb-2">
+            <span>{proposals.length} possible pair{proposals.length === 1 ? '' : 's'} · {sel.size} selected</span>
+            <span className="space-x-3">
+              <button className="text-blue-600 hover:underline" onClick={() => setTicked(new Set(proposals.map(keyOf)))}>All</button>
+              <button className="text-blue-600 hover:underline" onClick={() => setTicked(new Set())}>None</button>
+            </span>
+          </div>
+          <div className="space-y-2">
+            {proposals.map(p => {
+              const k = keyOf(p)
+              return (
+                <label key={k} className={`flex gap-2.5 border rounded-lg p-2.5 cursor-pointer ${sel.has(k) ? 'border-gray-900 bg-gray-50' : 'border-gray-200'}`}>
+                  <input type="checkbox" className="mt-1" checked={sel.has(k)} onChange={() => toggle(k)} />
+                  <div className="min-w-0 flex-1 space-y-1.5">
+                    <RowLine r={p.negative} />
+                    <RowLine r={p.positive} />
+                    <div className="text-[10px] text-gray-400">
+                      {p.sameMerchant ? 'Same merchant' : <span className="text-amber-600">Different merchant — check it's really the same purchase</span>} · {p.days} day{p.days === 1 ? '' : 's'} apart
+                    </div>
+                  </div>
+                </label>
+              )
+            })}
+          </div>
+          <div className="flex justify-end gap-2 mt-4 pt-3 border-t border-gray-100">
+            <button onClick={close} className="px-3 py-1.5 text-sm text-gray-600 hover:text-gray-900">Close</button>
+            <button
+              onClick={() => run.mutate()}
+              disabled={sel.size === 0 || run.isPending}
+              className="px-3 py-1.5 rounded-lg bg-gray-900 text-white text-sm font-medium hover:bg-gray-700 disabled:opacity-50"
+            >
+              {run.isPending ? 'Pairing…' : `Pair ${sel.size} selected`}
+            </button>
+          </div>
+        </>
+      )}
+    </Modal>
   )
 }
