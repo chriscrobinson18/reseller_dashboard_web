@@ -6,15 +6,16 @@ The relational centerpiece of the app — every sale here can cascade into `tran
 
 - `fetchSales(start, end)` joins `items(id,name,category)` and `inventory_movements(id,quantity,inventory_lots(unit_cost,item_id))`, excludes soft-deleted, `.limit(2000)`. It also issues a second query for every `transactions` row with `related_sale_id` in the visible sale IDs and sums by sale, returning `{ sales, netPayoutBySale }`.
 - Search filters client-side over item name, `external_order_id`, and `platform`.
-- Header shows total revenue (net of partial-return refunds, full returns excluded — same formula as Dashboard) and a "needs inventory link" count (`!s.item_id`).
-- Unlinked sales (`item_id` null — typically arrive via CSV import) show an inline "Link to inventory item" action directly in the table row instead of the item name.
+- Header shows total revenue (net of partial-return refunds, full returns excluded — same formula as Dashboard) and a "needs inventory link" count (`needsInventoryLink`).
+- **`needsInventoryLink(sale)`** (2026-11-23): true when the sale has no `inventory_movements` and isn't fully returned. It used to be `!sale.item_id`, which hid the link action on sales linked before 2026-11-12 (when linking only set `item_id` and took no lot units). Fully returned sales are excluded because the return already reversed their movements; linking one would take units that came back.
+- Sales with no item show an inline "Link to inventory item" action in place of the item name. Sales with an item but no lot units show the item name plus "Link to inventory lots". Both open `LinkSaleToItemModal`, which preselects the sale's current item.
 - Status badges per row: `inventory_status` (`ok`/`oversold`/`reconciled`) and `return_status` (`none` renders nothing, `partial`/`full`).
 - **Net Payout column** (`netPayoutFor(sale, netPayoutBySale)`) — the sum of every `transactions` row linked to the sale via `related_sale_id` (payout, fees, shipping, refund, return-shipping), which is the true cash impact including any return. Falls back to `sale.net_payout ?? sale_price - fees` when a sale has no linked transactions (e.g. CSV-imported sales). Renders in red when negative — common once a return's refund + return-shipping cost exceed the original payout.
 
 ## Detail panel (`SaleDetail`, inside a `SlideOver`)
 
 - Profit math goes through the shared `saleProfit(sale)` helper in [`src/lib/saleProfit.ts`](../../src/lib/saleProfit.ts) (extracted 2026-06-23): COGS from `inventory_movements` (FIFO), `netRevenue` (return-adjusted), `profit = netRevenue - cogs - fees - shipping`. Unit-tested in `src/lib/__tests__/saleProfit.test.ts` (no return / partial / full / oversold / missing fees).
-- "Link to inventory item" CTA shown when `!sale.item_id`.
+- "Link to inventory item" / "Link to inventory lots" CTA shown when `needsInventoryLink(sale)`.
 - Inventory Used (FIFO) table: one row per `inventory_movements` entry (qty, unit cost, line COGS). If empty and `inventory_status === 'oversold'`, shows "Sale was oversold."
 - Return info box shown whenever `return_status !== 'none'` (qty + amount refunded).
 - "Process Return" / "Edit Return" action button shown whenever the sale isn't trade-linked (label switches to "Edit Return" once `return_status !== 'none'`); opens `ProcessReturnModal`.
