@@ -47,6 +47,16 @@ async function fetchSaleById(id: string): Promise<{ sale: Sale | null; netPayout
   return { sale: r.sales.find(s => s.id === id) ?? null, netPayoutBySale: r.netPayoutBySale }
 }
 
+/**
+ * A sale needs an inventory link when no lot units were taken for it. Gating on
+ * item_id alone missed sales linked before 2026-11-12, when linking only set
+ * item_id and never depleted lots. A fully returned sale has had its movements
+ * reversed on purpose, so it doesn't need one.
+ */
+function needsInventoryLink(sale: Sale): boolean {
+  return (sale.inventory_movements?.length ?? 0) === 0 && sale.return_status !== 'full'
+}
+
 async function fetchSales(start: string | null, end: string | null, narrow?: { id?: string; bundleId?: string }): Promise<{
   sales: Sale[]
   netPayoutBySale: Record<string, number>
@@ -273,13 +283,13 @@ function SaleDetail({ sale, netPayoutBySale, onLinkItem, onEdit, onDelete, onPro
         </div>
       </div>
 
-      {/* Link to item CTA when unlinked */}
-      {!sale.item_id && (
+      {/* Link to item CTA when no lot units were taken for the sale */}
+      {needsInventoryLink(sale) && (
         <button
           onClick={onLinkItem}
           className="w-full flex items-center justify-center gap-1.5 border border-amber-300 bg-amber-50 text-amber-700 rounded-lg py-2 text-sm font-medium hover:bg-amber-100 transition-colors"
         >
-          <Link2 size={14} /> Link to inventory item
+          <Link2 size={14} /> {sale.item_id ? 'Link to inventory lots' : 'Link to inventory item'}
         </button>
       )}
 
@@ -474,7 +484,7 @@ export default function SalesPage() {
       return sum + s.sale_price - refund
     }, 0)
 
-  const needsLink = filtered.filter(s => !s.item_id).length
+  const needsLink = filtered.filter(needsInventoryLink).length
 
   const [shortcutBannerOpen, setShortcutBannerOpen] = useState(true)
   const shortcutSales = useMemo(
@@ -617,7 +627,7 @@ export default function SalesPage() {
                           <StatusBadge status={sale.return_status} type="return" />
                           <ReviewBadge status={sale.review_status} compact />
                         </div>
-                        {!sale.item_id && (
+                        {needsInventoryLink(sale) && (
                           <button
                             onClick={e => { e.stopPropagation(); setLinkSale(sale) }}
                             className="mt-1 flex items-center gap-1 text-amber-600 text-xs font-medium"
@@ -666,6 +676,14 @@ export default function SalesPage() {
                           <div className="font-medium text-gray-900 truncate max-w-xs">{sale.items.name}</div>
                           {sale.items.category && (
                             <div className="text-xs text-gray-400">{sale.items.category}</div>
+                          )}
+                          {needsInventoryLink(sale) && (
+                            <button
+                              onClick={e => { e.stopPropagation(); setLinkSale(sale) }}
+                              className="flex items-center gap-1 text-amber-600 hover:text-amber-800 text-xs font-medium mt-0.5"
+                            >
+                              <Link2 size={12} /> Link to inventory lots
+                            </button>
                           )}
                         </>
                       ) : sale.item_name ? (

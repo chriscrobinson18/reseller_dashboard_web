@@ -14,23 +14,25 @@ interface Props {
 
 export default function LinkSaleToItemModal({ open, onClose, sale }: Props) {
   const qc = useQueryClient()
-  const [item, setItem] = useState<ItemWithLots | null>(null)
+  // A sale linked before 2026-11-12 has item_id but no lot units taken;
+  // start from that item so relinking it is one click.
+  const [itemId, setItemId] = useState<string | null>(sale.item_id ?? null)
   const [error, setError] = useState<string | null>(null)
 
   const mutation = useMutation({
-    mutationFn: () => linkSaleToItem(sale.id, item!.id),
+    mutationFn: () => linkSaleToItem(sale.id, itemId!),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['sales'] })
       qc.invalidateQueries({ queryKey: ['items'] })
-      setItem(null)
+      setItemId(null)
       onClose()
     },
     onError: (e: Error) => setError(e.message),
   })
 
   return (
-    <Modal open={open} onClose={() => { setItem(null); onClose() }} title="Link Sale to Inventory Item">
-      <form onSubmit={e => { e.preventDefault(); if (item) mutation.mutate() }}>
+    <Modal open={open} onClose={() => { setItemId(null); onClose() }} title="Link Sale to Inventory Item">
+      <form onSubmit={e => { e.preventDefault(); if (itemId) mutation.mutate() }}>
         <div className="bg-gray-50 rounded-lg p-3 mb-4 text-xs">
           <div className="text-gray-400 mb-0.5">Sale</div>
           <div className="text-gray-800 font-medium">
@@ -40,7 +42,7 @@ export default function LinkSaleToItemModal({ open, onClose, sale }: Props) {
         </div>
 
         <div className="mb-2 text-xs font-medium text-gray-700">Choose the inventory item this sale is for:</div>
-        <ItemPicker selectedId={item?.id ?? null} onSelect={setItem} />
+        <ItemPicker selectedId={itemId} onSelect={(i: ItemWithLots) => setItemId(i.id)} />
 
         <p className="text-xs text-gray-400 mt-3">
           Linking assigns the item and takes the units from its inventory lots, oldest purchase first (lots bought on
@@ -49,10 +51,10 @@ export default function LinkSaleToItemModal({ open, onClose, sale }: Props) {
 
         {error && <div className="text-xs text-red-600 bg-red-50 border border-red-200 rounded-lg px-3 py-2 mt-2">{error}</div>}
         <ModalActions
-          onCancel={() => { setItem(null); onClose() }}
+          onCancel={() => { setItemId(null); onClose() }}
           submitLabel="Link Item"
           loading={mutation.isPending}
-          disabled={!item}
+          disabled={!itemId}
         />
       </form>
     </Modal>
