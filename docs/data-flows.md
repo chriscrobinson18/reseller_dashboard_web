@@ -153,50 +153,43 @@ See [`docs/superpowers/specs/2026-06-23-trades-design.md`](superpowers/specs/202
 
 A barter trade creates:
 - 1 `trades` row
-- N given-side `sales` rows (FIFO-depletes inventory via the `record_sale` edge function; no `createSaleTransactions` call). **Since 2026-11-09 (sales-based income) these sales carry the trade's income on Schedule C** (Line 1 at FMV); the trade's income transactions (positive `trade_id` rows: non-cash income + boot received, which sum to the given-side sales) are treated as sale-derived and skipped by `isSaleDerivedTransaction`. The COGS legs below still count, so every worked example's net is unchanged.
+- N given-side `sales` rows (FIFO-depletes inventory via the `record_sale` edge function; no `createSaleTransactions` call). **These sales carry the trade's income on Schedule C** (Line 1 at FMV, since 2026-11-09 sales-based income).
 - M `inventory_lots` rows for received-side items (basis = allocated FMV per line)
-- 2 non-cash `transactions` rows (income + COGS, always a wash; `is_non_cash = true`)
-- 0 or 1 cash boot `transaction` row (`is_non_cash = false`; only when `cash_boot ≠ 0`)
+- 2 non-cash `transactions` rows (`is_non_cash = true`): a **settlement** leg (`+`, `schedule_c_category = 'settlement'`) and a COGS leg (`−`, `cost_of_goods`)
+- 0 or 1 cash boot `transaction` row (`is_non_cash = false`; only when `cash_boot ≠ 0`): `settlement` if you received cash, `cost_of_goods` if you paid it
+
+**Settlement, not income (2026-11-20).** The positive trade rows (non-cash settlement + cash received) sum exactly to the given-side sales: they record *how* the sale was paid, like a marketplace payout settling its orders. Rows written before 2026-11-20 were tagged `payout`; they were re-tagged, and `isSaleDerivedTransaction` skips any positive `trade_id` row regardless of tag, so neither label ever reaches Line 1. The settlement-deposit queries in the Year-End Tie-Out exclude `trade_id` rows (they are not bank deposits).
 
 ### Canonical Schedule C rule
 
-For a trade with `given_FMV`, `received_FMV`, and signed `cash_boot` (positive = you received cash, negative = you paid cash):
+For a trade with `given_FMV`, `received_FMV`, and signed `cash_boot` (positive = you received cash, negative = you paid cash). Balance: `given_FMV + cash_paid = received_FMV + cash_received`.
 
-| Component | Amount | `is_non_cash` |
+| What | Row(s) | Schedule C |
 |---|---|---|
-| Non-cash income | `given_FMV − max(boot_received, 0)` | `true` |
-| Non-cash COGS | same as non-cash income (always a wash) | `true` |
-| Cash boot | `cash_boot` (signed; absent if 0) | `false` |
+| Items you give | `sales` at `given_FMV` | Line 1 |
+| Items you receive | non-cash COGS leg `−(given_FMV − cash_received)` + cash paid | Part III purchases (= `received_FMV`) |
+| How the sale was paid | non-cash settlement leg `+(given_FMV − cash_received)` + cash received | not counted |
 
-The two non-cash legs always wash each other. **The cash boot leg carries the entire Schedule C impact of the trade event.** If there's no boot, the trade is Schedule-C-neutral at the time it happens; economic gain materializes later when received lots are sold.
+The received lots' basis is `received_FMV`, matching the Part III purchase. The given items' cost leaves inventory through Part III (ending inventory), so the trade's profit is `given_FMV − cost of given items`, recognised at the trade date.
 
 ### Worked examples
 
-All examples assume the given item was previously bought for $2,000 (already deducted as `cost_of_goods` at purchase).
+All examples assume the given item cost $2,000 and was in inventory.
 
-**Pure swap.** Give 1 box (FMV $3,000); receive 10 boxes (FMV $3,000); no cash. (`given_FMV == received_FMV` — the trade sets both.)
-- Non-cash income: +$3,000 (`payout`, `is_non_cash = true`)
-- Non-cash COGS: −$3,000 (`cost_of_goods`, `is_non_cash = true`)
-- Cash boot: none
-- Net Schedule C from trade: **$0**
-- New lots: 10 lots totaling $3,000 basis
-- Future $5,000 sale of received boxes: +$5,000 revenue, no COGS. Total chain profit: $5,000 − $2,000 = $3,000. ✓
+**Pure swap.** Give 1 box (FMV $3,000); receive 10 boxes (FMV $3,000); no cash.
+- Line 1: +$3,000 (given-side sale). Settlement leg +$3,000 (not counted).
+- Part III purchases: +$3,000 (non-cash COGS leg). New lots: $3,000 basis.
+- Profit at trade: $3,000 − $2,000 = $1,000. Future $5,000 sale of the received boxes: $5,000 − $3,000 = $2,000. Chain: $3,000. ✓
 
 **Paid boot.** Give 1 box (FMV $2,500); receive 10 boxes (FMV $3,000); pay $500 cash.
-- Non-cash income: +$2,500 (`payout`, `is_non_cash = true`)
-- Non-cash COGS: −$2,500 (`cost_of_goods`, `is_non_cash = true`)
-- Cash boot: −$500 (`cost_of_goods`, `is_non_cash = false` — normal bank txn)
-- Net Schedule C from trade: **−$500**
-- New lots: 10 lots totaling $3,000 basis ($2,500 non-cash + $500 cash)
-- Future $5,000 sale: total chain profit: $5,000 − $2,000 − $500 = $2,500. ✓
+- Line 1: +$2,500. Settlement leg +$2,500 (not counted).
+- Part III purchases: $2,500 (non-cash COGS) + $500 (cash boot, `cost_of_goods`) = $3,000. New lots: $3,000 basis.
+- Profit at trade: $2,500 − $2,000 = $500. Future $5,000 sale: $2,000. Chain: $2,500 = $5,000 − $2,000 − $500. ✓
 
 **Received boot.** Give 1 box (FMV $3,000); receive 10 boxes (FMV $2,500) + $500 cash.
-- Non-cash income: +$2,500 (`payout`, `is_non_cash = true`)
-- Non-cash COGS: −$2,500 (`cost_of_goods`, `is_non_cash = true`)
-- Cash boot: +$500 (`payout`, `is_non_cash = false` — normal bank txn)
-- Net Schedule C from trade: **+$500**
-- New lots: 10 lots totaling $2,500 basis (no cash portion — cash was received, not paid)
-- Future $5,000 sale: total chain profit: $5,000 − $2,000 + $500 = $3,500. ✓
+- Line 1: +$3,000. Settlement legs: non-cash +$2,500 and cash +$500 (`settlement`; not counted — the cash is already inside the $3,000 sale).
+- Part III purchases: $2,500. New lots: $2,500 basis.
+- Profit at trade: $3,000 − $2,000 = $1,000. Future $5,000 sale: $2,500. Chain: $3,500 = $5,000 − $2,000 + $500. ✓
 
 ### Profitability dashboard
 

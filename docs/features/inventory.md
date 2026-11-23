@@ -229,6 +229,7 @@ Rules the owner set on 2026-11-12 for building lots from historical data and lin
 - Create lots only when each item's subtotal can be read or derived from the email (a foreign-currency order counts: its prices still give the ratio). Otherwise skip; the charge stays visible under Expenses → **"Cost of goods without lots"** (e.g. emails that list items without prices, several candidate orders, totals that don't match).
 - One lot per distinct item. Lot costs sum **exactly** to the charge: split across items by price ratio (tax, shipping and FX included proportionally), then penny-split per unit as `splitLotCost` does.
 - A single-shipment partial charge that is clearly one item's subtotal may be used. For multi-order drops, only delivered orders get lots; cancelled orders are handled as charge/refund net-zero pairs.
+- **Net-zero pairs are skipped** (owner, 2026-11-20): a charge that is already paired, or has an exact same-merchant refund within 90 days (even a pending one), gets no lots and no pairing from the `/add-cogs-lots` run. It is listed for the owner; pairing is done separately in Expenses → Net-zero pairs.
 - All units stay on hand until a sale is linked. Lots created from the Expenses panel take the charge's date as `purchase_date`.
 - Memberships and subscriptions are never inventory (category "Memberships", Line 27a).
 
