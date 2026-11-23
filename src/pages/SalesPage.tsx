@@ -317,12 +317,19 @@ function SaleDetail({ sale, netPayoutBySale, onLinkItem, onEdit, onDelete, onPro
       </div>
 
       {/* Return info */}
-      {sale.return_status !== 'none' && (
+      {(sale.return_status === 'full' || sale.return_status === 'partial') && (
         <div className="bg-red-50 border border-red-100 rounded-xl p-3 text-xs">
           <div className="font-semibold text-red-700 mb-1">Return</div>
           <div className="text-red-600">
-            Qty: {sale.refunded_quantity} · Amount: {formatUSD(sale.refunded_amount ?? 0)}
+            {/* Platform imports set the refund but not a quantity (no in-app return row). */}
+            Qty: {sale.refunded_quantity
+              ? sale.refunded_quantity
+              : sale.return_status === 'full' ? `${sale.quantity} (all, from platform report)` : 'not recorded (from platform report)'}
+            {' · '}Amount: {formatUSD(sale.refunded_amount ?? 0)}
           </div>
+          {(sale.refunded_amount ?? 0) > sale.sale_price + 0.005 && (
+            <div className="text-red-700 font-medium mt-1">Refund is more than the sale price: check it isn't counted twice.</div>
+          )}
         </div>
       )}
 
@@ -468,8 +475,10 @@ export default function SalesPage() {
   const filtered = useMemo(() => {
     return sales.filter(s => {
       if (platformFilter && s.platform !== platformFilter) return false
-      if (returnFilter === 'none' && s.return_status != null) return false
-      if (returnFilter === 'has_return' && s.return_status == null) return false
+      // Sales without a return are stored as 'none' (never null); treat both as "no return".
+      const hasReturn = s.return_status === 'full' || s.return_status === 'partial'
+      if (returnFilter === 'none' && hasReturn) return false
+      if (returnFilter === 'has_return' && !hasReturn) return false
       if (!search) return true
       const q = search.toLowerCase()
       return (

@@ -36,6 +36,7 @@
 
 import { serve } from "https://deno.land/std@0.224.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { nextReturnTotals, type ReturnTotals } from "../_shared/returnTotals.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -140,11 +141,20 @@ serve(async (req) => {
       return json(404, { error: "Sale not found" });
     }
 
-    const refundedSoFar = sale.refunded_quantity ?? 0;
-    const refundableQty = sale.quantity - refundedSoFar;
+    /* Totals from the in-app returns rows, reconciled with a refund the
+       platform import already recorded (see _shared/returnTotals.ts). */
+    const { data: priorReturns, error: priorErr } = await supabase
+      .from("returns")
+      .select("quantity, refund_amount")
+      .eq("sale_id", sale_id)
+      .eq("user_id", user.id);
+    if (priorErr) return json(500, { error: priorErr.message });
 
-    if (quantity > refundableQty) {
-      return json(400, { error: "Refund exceeds sold quantity" });
+    let totals: ReturnTotals;
+    try {
+      totals = nextReturnTotals(sale, priorReturns ?? [], quantity, refund_amount);
+    } catch (e) {
+      return json(400, { error: (e as Error).message });
     }
 
     /* Insert return record */
@@ -160,16 +170,15 @@ serve(async (req) => {
     });
 
     /* Update sale totals */
-    const newRefundedQty = refundedSoFar + quantity;
-    const newRefundedAmt = (sale.refunded_amount ?? 0) + refund_amount;
+    const newRefundedQty = totals.refundedQty;
+    const newRefundedAmt = totals.refundedAmt;
 
     await supabase
       .from("sales")
       .update({
         refunded_quantity: newRefundedQty,
         refunded_amount: newRefundedAmt,
-        return_status:
-          newRefundedQty === sale.quantity ? "full" : "partial",
+        return_status: totals.status,
         inventory_status: "reconciled",
       })
       .eq("id", sale_id);

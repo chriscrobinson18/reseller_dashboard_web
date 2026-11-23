@@ -21,6 +21,7 @@ The relational centerpiece of the app — every sale here can cascade into `tran
 - "Process Return" / "Edit Return" action button shown whenever the sale isn't trade-linked (label switches to "Edit Return" once `return_status !== 'none'`); opens `ProcessReturnModal`.
 - Metrics grid's "Net Payout" field uses the same linked-transactions sum as the table column (see List view above), shown in red when negative.
 - Profitability breakdown only renders when there's at least one inventory movement (`hasCogsData`) — an unlinked or zero-COGS sale shows the metrics grid but not the profit card.
+- **Return info (2026-11-23):** shown only for `full`/`partial`. Sales without a return are stored as `'none'`, never null, so the list's return filter now treats both as "no return"; before, "No returns" showed nothing and "Has a return" showed everything. Platform imports record a refund without a quantity, so the panel shows "all, from platform report" instead of "Qty: 0", and warns when the refund exceeds the sale price.
 - **Paid directly (2026-11-23):** charges attributed to the sale from Expenses (`transactions.profit_sale_id`, e.g. a label paid with your own card) are loaded by `fetchDirectCosts` into `sale.direct_costs`, subtracted in `saleProfit`, and shown as a "Paid directly (bank/card)" line. Net payout is unchanged, because it's what the platform paid you; Schedule C is unchanged too.
 
 ## Review markers (added 2026-11-13)
