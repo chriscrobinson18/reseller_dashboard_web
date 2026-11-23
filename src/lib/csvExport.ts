@@ -257,9 +257,9 @@ export function computeScheduleCSummary(
   perLine['Line 27a'] = (perLine['Line 27a'] ?? 0) - sales.platformShipping
 
   const grossReceipts = perLine['Part I'] ?? 0
-  const returns = Math.abs(returnsSigned)
+  const returns = 0 - returnsSigned // signed: a net credit stays negative
   const netReceipts = grossReceipts - returns
-  const purchases = Math.abs(perLine['Part III'] ?? 0)
+  const purchases = 0 - (perLine['Part III'] ?? 0)
   const partIII = partIIIOpts ? computePartIII(partIIIOpts.taxYear, purchases, partIIIOpts.valuations) : null
   const cogs = partIII ? partIII.cogs : purchases
   const grossProfit = netReceipts - cogs
@@ -268,7 +268,7 @@ export function computeScheduleCSummary(
   const expensesByLine: Record<string, number> = {}
   let totalExpenses = 0
   for (const { line } of PART_II_LINES) {
-    const amt = Math.abs(perLine[line] ?? 0)
+    const amt = 0 - (perLine[line] ?? 0) // a net-credit line reduces total expenses
     if (amt !== 0) {
       expensesByLine[line] = amt
       totalExpenses += amt
@@ -276,7 +276,7 @@ export function computeScheduleCSummary(
   }
 
   const tentativeProfit = grossIncome - totalExpenses
-  const homeOffice = Math.abs(perLine['Line 30'] ?? 0)
+  const homeOffice = 0 - (perLine['Line 30'] ?? 0)
   const netProfit = tentativeProfit - homeOffice
 
   return {

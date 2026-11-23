@@ -219,8 +219,10 @@ export default function DashboardPage() {
   const scheduleC = useMemo(() => computeScheduleC(transactions, customs, salesIncome), [transactions, customs, salesIncome])
 
   // Note: scheduleC values are SIGNED. For Part I, positive = income (display as is).
-  // For Part II/III (expenses/COGS), values are negative; we display the absolute value
-  // and let the section total show as a positive expense magnitude.
+  // For Part II/III (expenses/COGS), values are normally negative; we display the
+  // NEGATED value so expenses read positive and a net-credit category (e.g. card
+  // cash-back, refunds exceeding charges) reads negative and REDUCES the section
+  // total. (Math.abs here once added credits as expenses: 2026-11-23 fix.)
   // Sales income is merged in (payout = Line 1 gross, returns_allowances = Line 2 refunds,
   // commissions_fees / shipping_postage = Line 10 / 27a); sale-derived transactions are
   // excluded by bucketTransaction so nothing is counted twice.
@@ -239,12 +241,12 @@ export default function DashboardPage() {
   const partIII = allCategories
     .filter(c => c.scheduleLine === 'Part III'
       && scheduleC[c.value] !== undefined && scheduleC[c.value] !== 0)
-    .map(c => ({ label: c.label, value: Math.abs(scheduleC[c.value] ?? 0) }))
+    .map(c => ({ label: c.label, value: 0 - (scheduleC[c.value] ?? 0) }))
 
   const partII = allCategories
     .filter(c => c.scheduleLine?.startsWith('Line')
       && scheduleC[c.value] !== undefined && scheduleC[c.value] !== 0)
-    .map(c => ({ label: c.label, value: Math.abs(scheduleC[c.value] ?? 0), line: c.scheduleLine }))
+    .map(c => ({ label: c.label, value: 0 - (scheduleC[c.value] ?? 0), line: c.scheduleLine }))
 
   const uncategorized = transactions.filter(t =>
     !t.schedule_c_category &&

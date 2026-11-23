@@ -192,6 +192,17 @@ describe('computeScheduleCSummary', () => {
     expect(s.expensesByLine['Line 27a']).toBeCloseTo(sum('Line 27a', 'Expense')) // 5 platform + 12 card postage
   })
 
+  it('a line that nets to a credit reduces total expenses instead of adding to it', () => {
+    // Line 10 expense of 100; Line 25 (utilities) only a 40 credit, e.g. a refund larger than the charges.
+    const s = computeScheduleCSummary([
+      tx({ amount: -100, schedule_c_category: 'commissions_fees' }),
+      tx({ amount: 40, schedule_c_category: 'utilities' }),
+    ], [])
+    expect(s.expensesByLine['Line 10']).toBe(100)
+    expect(s.expensesByLine['Line 25']).toBe(-40)
+    expect(s.totalExpenses).toBe(60)
+  })
+
   it('takes COGS from cost_of_goods transactions (purchases), as a positive magnitude', () => {
     const s = computeScheduleCSummary([tx({ amount: -300, schedule_c_category: 'cost_of_goods' })], [])
     expect(s.cogs).toBe(300)

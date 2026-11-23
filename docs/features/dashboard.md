@@ -29,6 +29,21 @@ All three transaction-aggregating functions (KPI row, Schedule C breakdown, mont
 4. **Monthly bar chart** (`computeMonthlyChart`, Recharts) — same `bucketTransaction` rules as KPIs, summed per `monthKey(date)` (`'yyyy-MM'`). Three bars: Income, **Cost of goods sold** (that month's purchases − that month's inventory change, from `inventoryChangeByMonth`), and Expenses (operating only). Months run contiguously from the period start (or earliest activity for All time) to the period end, so the monthly COGS sum to the KPI figure (the changes telescope; verified on live 2026 data). A month can show negative COGS if lots were entered with a purchase date in a different month than the purchase transaction.
 5. **Uncategorized warning banner** — count of transactions with no `schedule_c_category` that aren't settlements/sale-linked/csv_import; links the user to Expenses to fix it (no direct categorize-from-Dashboard action).
 
+## How the cards relate (why the numbers differ)
+
+The cards answer different questions, so some totals differ on purpose:
+
+- **Expenses KPI** and the **Part II total** are the same signed sum and must match. Before 2026-11-23, Part II took `Math.abs` of each category, so a category that nets to a credit (e.g. "Credit Card Rewards" cash-back) was **added** to Part II as an expense instead of subtracted, overstating it by twice that credit. Now Part II/III rows show the negated signed sum: a credit reads as a negative and reduces the total. `computeScheduleCSummary` (CSV) was made signed the same way per IRS line.
+- **Income KPI** (Part I) = gross receipts (`sale_price + shipping_charged`, every sale including fully returned ones) − returns (`refunded_amount`). **Sales Profitability → Gross Revenue** = `sale_price` of sales that weren't fully returned, minus partial refunds. They differ by the shipping charged plus any difference between the refunds and the sale prices of fully returned sales (a refund can exceed the item price).
+- **Cost of goods sold KPI** = purchases − (ending − beginning lot inventory). **Sales Profitability → COGS** = the lot cost of the units that linked sales consumed. The KPI is larger by:
+  - cost-of-goods charges with **no lots**: fully expensed, never inventory;
+  - minus lots with **no funding charge** (inventory with no purchase);
+  - minus refunds tagged cost of goods;
+  - plus units consumed by breakdowns;
+  - plus or minus lots funded across the period boundary.
+  Unlinked sales understate **both** (their units still count as on hand).
+- **Line 10** = sale fees (all sales) + bundle order fees + fee rows outside sales (e.g. the eBay store subscription). Profitability's "Platform Fees" counts sale fees of sales that weren't fully returned only.
+
 ## Period control
 
 `PeriodPicker` drives a single `period` state (`PeriodPreset`, default `'ytd'`); both queries key off `getPeriodRange(period)` so changing the period refetches both transactions and sales.
