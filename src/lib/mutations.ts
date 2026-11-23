@@ -1188,6 +1188,29 @@ export async function attributeTransactionToSale(txId: string, saleId: string | 
   if (error) throw error
 }
 
+export type RefundOutcome = 'back' | 'kept'
+export interface ResolveRefundResult {
+  outcome: RefundOutcome
+  units_restored?: number
+  returns_added?: number
+  units_taken?: number
+  unfulfilled?: number
+  returns_removed?: number
+}
+
+/**
+ * Resolves a fully refunded sale in one step, whatever its history
+ * (resolve_sale_refund RPC, migration 20261123140000):
+ *  - 'back' (came back / never shipped): every unit back on its lot, return recorded once.
+ *  - 'kept' (buyer kept it / lost): the sale holds its units (from itemId or the sale's item).
+ * The refund amount (Line 2) is never changed. Idempotent.
+ */
+export async function resolveSaleRefund(saleId: string, outcome: RefundOutcome, itemId?: string | null): Promise<ResolveRefundResult> {
+  const { data, error } = await supabase.rpc('resolve_sale_refund', { p_sale_id: saleId, p_outcome: outcome, p_item_id: itemId ?? null })
+  if (error) throw error
+  return data as ResolveRefundResult
+}
+
 /**
  * Links an unlinked sale to an inventory item and FIFO-depletes that item's
  * lots (inventory_movements + quantity_remaining), via the link_sale_to_item

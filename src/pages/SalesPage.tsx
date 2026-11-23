@@ -3,8 +3,8 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { Plus, Link2, Pencil, Trash2, RotateCcw } from 'lucide-react'
 import { supabase } from '../lib/supabase'
 import { getPeriodRange, type PeriodPreset } from '../lib/periods'
-import { formatUSD, formatDate } from '../lib/utils'
-import { deleteSale } from '../lib/mutations'
+import { formatUSD, formatDate, selectRange } from '../lib/utils'
+import { deleteSale, resolveSaleRefund, type RefundOutcome } from '../lib/mutations'
 import PeriodPicker from '../components/PeriodPicker'
 import SlideOver from '../components/SlideOver'
 import { ReviewBadge, ReviewControl } from '../components/ReviewMarker'
@@ -20,6 +20,7 @@ import type { Sale } from '../lib/types'
 import { fetchAllRows } from '../lib/fetchAll'
 import { fetchDirectCosts } from '../lib/directCosts'
 import SaleInventoryBox from '../components/SaleInventoryBox'
+import { unitsTaken } from '../lib/saleInventory'
 import LinkedRecords from '../components/LinkedRecords'
 import { useDeepLink } from '../lib/nav'
 import TradeDetailSlideOver from '../components/TradeDetailSlideOver'
@@ -422,7 +423,11 @@ export default function SalesPage() {
   const [period, setPeriod] = useState<PeriodPreset>('ytd')
   const [search, setSearch] = useState('')
   const [platformFilter, setPlatformFilter] = useState<string | null>(null)
-  const [returnFilter, setReturnFilter] = useState<'all' | 'none' | 'has_return'>('all')
+  const [returnFilter, setReturnFilter] = useState<'all' | 'none' | 'has_return' | 'units_out'>('all')
+  // Bulk "what happened?" on fully refunded sales (resolve_sale_refund).
+  const [pickedIds, setPickedIds] = useState<Set<string>>(new Set())
+  const [pickAnchor, setPickAnchor] = useState<string | null>(null)
+  const [bulkResult, setBulkResult] = useState<string | null>(null)
   const [localSelected, setLocalSelected] = useState<Sale | null>(null)
   // ?sale=<id> deep link (lib/nav.ts) wins over a row click until closed.
   const [deepSaleId, clearDeepSale] = useDeepLink('sale')
@@ -474,6 +479,7 @@ export default function SalesPage() {
       const hasReturn = s.return_status === 'full' || s.return_status === 'partial'
       if (returnFilter === 'none' && hasReturn) return false
       if (returnFilter === 'has_return' && !hasReturn) return false
+      if (returnFilter === 'units_out' && !(s.return_status === 'full' && unitsTaken(s) > 0)) return false
       if (!search) return true
       const q = search.toLowerCase()
       return (
@@ -496,6 +502,40 @@ export default function SalesPage() {
 
   const needsLink = filtered.filter(needsInventoryLink).length
 
+  // Bulk resolve: only fully refunded, non-trade sales can be picked.
+  const pickable = useMemo(() => filtered.filter(s => s.return_status === 'full' && !s.trade_id), [filtered])
+  const pickSig = `${range.start}|${range.end}|${search}|${platformFilter}|${returnFilter}`
+  const [lastPickSig, setLastPickSig] = useState(pickSig)
+  if (pickSig !== lastPickSig) { setLastPickSig(pickSig); setPickedIds(new Set()); setPickAnchor(null) }
+  function togglePick(id: string, shiftKey: boolean) {
+    const pickableIds = new Set(pickable.map(s => s.id))
+    setPickedIds(prev => selectRange(filtered.map(s => s.id), prev, shiftKey ? pickAnchor : null, id, rid => pickableIds.has(rid)))
+    setPickAnchor(id)
+  }
+  const allPicked = pickable.length > 0 && pickable.every(s => pickedIds.has(s.id))
+  const bulkResolve = useMutation({
+    mutationFn: async (outcome: RefundOutcome) => {
+      let ok = 0, units = 0; const failed: string[] = []
+      for (const id of pickedIds) {
+        try {
+          const r = await resolveSaleRefund(id, outcome)
+          ok++; units += (r.units_restored ?? 0) + (r.units_taken ?? 0)
+        } catch (e) {
+          const sale = sales.find(x => x.id === id)
+          failed.push(`${(sale?.items?.name ?? sale?.item_name ?? 'Sale').slice(0, 40)}: ${(e as Error).message}`)
+        }
+      }
+      return { outcome, ok, units, failed }
+    },
+    onSuccess: r => {
+      setBulkResult(`${r.ok} sale${r.ok === 1 ? '' : 's'} resolved as "${r.outcome === 'back' ? 'came back / never shipped' : 'buyer kept it'}" · ${r.units} unit${r.units === 1 ? '' : 's'} ${r.outcome === 'back' ? 'put back' : 'taken'}${r.failed.length ? ` · not done: ${r.failed.join('; ')}` : ''}`)
+      setPickedIds(new Set())
+      qc.invalidateQueries({ queryKey: ['sales'] })
+      qc.invalidateQueries({ queryKey: ['items'] })
+      qc.invalidateQueries({ queryKey: ['linked-records'] })
+    },
+  })
+
   const [shortcutBannerOpen, setShortcutBannerOpen] = useState(true)
   const shortcutSales = useMemo(
     () => (sales ?? []).filter(s => !s.item_id && s.item_name),
@@ -504,7 +544,7 @@ export default function SalesPage() {
 
   return (
     <div className="flex h-full">
-      <div className="flex-1 flex flex-col overflow-hidden">
+      <div className="relative flex-1 flex flex-col overflow-hidden">
         <div className="p-4 md:p-6 border-b border-gray-200 bg-white space-y-3">
           <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1">
             <h1 className="text-lg font-semibold text-gray-900">Sales</h1>
@@ -537,12 +577,13 @@ export default function SalesPage() {
             </select>
             <select
               value={returnFilter}
-              onChange={e => setReturnFilter(e.target.value as 'all' | 'none' | 'has_return')}
+              onChange={e => setReturnFilter(e.target.value as 'all' | 'none' | 'has_return' | 'units_out')}
               className="min-w-0 border border-gray-200 rounded-lg px-2 py-1.5 text-sm text-gray-700 bg-white focus:outline-none focus:ring-2 focus:ring-gray-900"
             >
               <option value="all">All returns</option>
               <option value="none">No returns</option>
               <option value="has_return">Has return</option>
+              <option value="units_out">Refunded, units still out</option>
             </select>
             <div className="hidden md:block md:flex-1" />
             <button
@@ -604,6 +645,10 @@ export default function SalesPage() {
                     onClick={() => setSelected(sale)}
                   >
                     <div className="flex items-start justify-between gap-3">
+                      {sale.return_status === 'full' && !sale.trade_id && (
+                        <input type="checkbox" className="mt-1 shrink-0" checked={pickedIds.has(sale.id)} aria-label="Select refunded sale"
+                          onClick={e => { e.stopPropagation(); togglePick(sale.id, e.shiftKey) }} readOnly />
+                      )}
                       <div className="min-w-0 flex-1">
                         <div className="font-medium text-gray-900 text-sm leading-snug line-clamp-2 break-words">
                           {!sale.items?.name && sale.item_name && '⚠️ '}
@@ -661,6 +706,13 @@ export default function SalesPage() {
             <table className="hidden md:table w-full text-sm">
               <thead className="sticky top-0 bg-gray-50 border-b border-gray-200 z-10">
                 <tr>
+                  <th className="w-8 pl-3">
+                    {pickable.length > 0 && (
+                      <input type="checkbox" checked={allPicked} aria-label="Select all refunded sales"
+                        title="Select all fully refunded sales shown"
+                        onChange={() => setPickedIds(allPicked ? new Set() : new Set(pickable.map(s => s.id)))} />
+                    )}
+                  </th>
                   <th className="text-left px-4 py-2.5 text-xs font-medium text-gray-500 w-24">Date</th>
                   <th className="text-left px-4 py-2.5 text-xs font-medium text-gray-500">Item</th>
                   <th className="text-left px-4 py-2.5 text-xs font-medium text-gray-500 w-24">Platform</th>
@@ -677,6 +729,12 @@ export default function SalesPage() {
                     className={`data-row border-b border-gray-100 ${selected?.id === sale.id ? 'selected' : ''}`}
                     onClick={() => setSelected(sale)}
                   >
+                    <td className="w-8 pl-3" onClick={e => e.stopPropagation()}>
+                      {sale.return_status === 'full' && !sale.trade_id && (
+                        <input type="checkbox" checked={pickedIds.has(sale.id)} aria-label="Select refunded sale"
+                          onClick={e => { e.stopPropagation(); togglePick(sale.id, e.shiftKey) }} readOnly />
+                      )}
+                    </td>
                     <td className="px-4 py-2.5 text-xs text-gray-500 whitespace-nowrap">
                       {sale.sold_at.slice(0, 10)}
                     </td>
@@ -753,6 +811,9 @@ export default function SalesPage() {
                       <div className="flex gap-1 flex-wrap">
                         <StatusBadge status={sale.inventory_status} type="inventory" />
                         <StatusBadge status={sale.return_status} type="return" />
+                        {sale.return_status === 'full' && unitsTaken(sale) > 0 && (
+                          <span className="text-[10px] px-1.5 py-0.5 rounded bg-amber-100 text-amber-800 font-medium" title="Refunded but units still counted as gone: right only if the buyer kept it">{unitsTaken(sale)} out</span>
+                        )}
                         <ReviewBadge status={sale.review_status} compact />
                       </div>
                     </td>
@@ -766,7 +827,27 @@ export default function SalesPage() {
 
         <div className="px-4 py-2 border-t border-gray-200 bg-white text-xs text-gray-400">
           {filtered.length} sales
+          {bulkResult && <span className="ml-3 text-gray-600">{bulkResult} <button type="button" className="text-blue-600" onClick={() => setBulkResult(null)}>dismiss</button></span>}
         </div>
+
+        {/* Bulk "what happened?" for picked fully refunded sales */}
+        {pickedIds.size > 0 && (
+          <div className="fixed bottom-[calc(4.75rem+env(safe-area-inset-bottom,0px))] md:absolute md:bottom-6 left-1/2 -translate-x-1/2 z-40 max-w-[calc(100%-1.5rem)]">
+            <div className="flex flex-wrap items-center gap-2 bg-gray-900 text-white rounded-2xl shadow-xl px-4 py-2 text-sm">
+              <span className="font-medium whitespace-nowrap">{pickedIds.size} refunded</span>
+              <button type="button" disabled={bulkResolve.isPending} onClick={() => bulkResolve.mutate('back')}
+                className="px-3 py-1 rounded-full bg-white text-gray-900 font-medium hover:bg-gray-100 disabled:opacity-50 whitespace-nowrap">
+                Came back / never shipped
+              </button>
+              <button type="button" disabled={bulkResolve.isPending} onClick={() => bulkResolve.mutate('kept')}
+                className="px-3 py-1 rounded-full border border-white/40 font-medium hover:bg-white/10 disabled:opacity-50 whitespace-nowrap">
+                Buyer kept it / lost
+              </button>
+              <button type="button" onClick={() => setPickedIds(new Set())} className="px-2 py-1 text-white/70 hover:text-white">Clear</button>
+              {bulkResolve.isPending && <span className="text-white/70">Working…</span>}
+            </div>
+          </div>
+        )}
       </div>
 
       <SlideOver open={!!selected} onClose={() => setSelected(null)} title="Sale Detail">

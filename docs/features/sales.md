@@ -36,10 +36,16 @@ The detail panel opens with a Review section ("Mark reviewed by me" / "Unlock to
 |---|---|---|
 | Linked | "N units taken from inventory" (plus "oversold" if short) | — |
 | Needs a link | Amber; up to 3 **suggested items** | **Link** on a suggestion, or "Choose an item…" |
-| Full refund, no units out | "Nothing left inventory: right if it came back or never shipped" | "Buyer kept it or it was lost? Take it out of inventory…" (link) |
-| Full refund, units out | "N units counted as gone: right if the buyer kept it or it was lost" | "It came back / never shipped: put it back" (one click: `recordReturn` with the same refund, which reconciles instead of doubling). If an in-app return already exists, opens Edit Return instead |
+| Full refund, no units out | "Nothing left inventory: right if it came back or never shipped" | "Buyer kept it or it was lost?…": take the units from the sale's item, a suggestion, or a chosen item (`resolve_sale_refund('kept')`) |
+| Full refund, units out | "N units counted as gone: right if the buyer kept it or it was lost" | "It came back / never shipped: put it back" (`resolve_sale_refund('back')`, whatever the sale's history) |
 | Partial refund | Refund, units out, units returned | "Some units came back? Record them…" / "No units came back? Link to inventory…" |
 
+- **One operation, `resolve_sale_refund(sale, 'back' | 'kept', item?)`** (migration `20261123140000`, `resolveSaleRefund` in `mutations.ts`), for fully refunded sales only. It is atomic and idempotent, and never changes the refund amount (Line 2).
+  - **'back':** every unit the sale holds returns to its own lot (refused if a lot would exceed its purchased quantity), the `returns` rows are topped up to cover the full quantity without adding to the refund, `refunded_quantity` becomes the quantity, and the status becomes `reconciled` (clears `oversold`).
+  - **'kept':** in-app return rows with no linked transaction are removed, the missing units are taken oldest-first (as `link_sale_to_item` does), `refunded_quantity` becomes 0, and the status becomes `ok` or `oversold`.
+
+  It replaces choosing between Put back, Edit Return and Link by history. That choice once left a unit stuck when a sale was linked after its return.
+- **Bulk on the Sales list:** fully refunded rows have a checkbox (shift-click selects a range; the header box selects all shown). The action bar offers **Came back / never shipped** and **Buyer kept it / lost**, and the footer reports how many sales and units changed and lists any failures (e.g. "Choose the inventory item first"). The Returns filter has **"Refunded, units still out"**, and those rows carry an amber **"N out"** badge.
 - **No stored answer:** the state is inferred from the sale (units taken or not), so both outcomes of a refund are valid end states and the box offers the switch.
 - **Suggestions** (`suggestItems`): words are weighted by rarity across your items (IDF), so brand words like "pokemon" or "lego" don't decide. A match needs at least 80% of the item name's weight and at least one distinctive word (in 3 or fewer items, or a 3+ digit model number). **Single cards** (a collector number, a condition such as "Near Mint", or a frame variant such as "(Borderless)") get no sealed-product suggestion; the box points to Breakdowns instead. With no match it says the purchase may have no lot yet.
 - The return button reads **"Record return details"** when the refund came from a platform import (no in-app return yet).

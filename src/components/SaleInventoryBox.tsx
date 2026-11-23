@@ -2,7 +2,7 @@ import { useMemo, useState } from 'react'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { Package, Check, Link2, RotateCcw } from 'lucide-react'
 import { useItems, itemUnitsInStock } from '../lib/queries'
-import { linkSaleToItem, recordReturn } from '../lib/mutations'
+import { linkSaleToItem, resolveSaleRefund } from '../lib/mutations'
 import { saleInventoryState, suggestItems, looksLikeSingleCard } from '../lib/saleInventory'
 import { formatUSD } from '../lib/utils'
 import type { Sale } from '../lib/types'
@@ -39,20 +39,30 @@ export default function SaleInventoryBox({ sale, onChooseItem, onProcessReturn }
     qc.invalidateQueries({ queryKey: ['items'] })
     qc.invalidateQueries({ queryKey: ['linked-records'] })
   }
+  // Ordinary sale: link_sale_to_item. Fully refunded sale: resolve_sale_refund
+  // ('kept'), which also clears any return recorded by mistake. Both take the
+  // oldest units first.
+  const refunded = sale.return_status === 'full'
   const link = useMutation({
-    mutationFn: (itemId: string) => linkSaleToItem(sale.id, itemId),
+    mutationFn: async (itemId: string | null) => {
+      if (refunded) {
+        const r = await resolveSaleRefund(sale.id, 'kept', itemId)
+        return { consumed: r.units_taken ?? 0, unfulfilled: r.unfulfilled ?? 0 }
+      }
+      return linkSaleToItem(sale.id, itemId!)
+    },
     onSuccess: r => {
       setErr(null)
-      setMsg(r.unfulfilled > 0 ? `Linked: ${r.consumed} unit(s) taken; ${r.unfulfilled} not in stock (oversold).` : `Linked: ${r.consumed} unit(s) taken from inventory.`)
+      setMsg(r.unfulfilled > 0 ? `Linked: ${r.consumed} unit(s) taken; ${r.unfulfilled} not in stock (oversold).` : `${r.consumed} unit(s) taken from inventory.`)
       invalidate()
     },
     onError: (e: Error) => setErr(e.message),
   })
+  // Came back / never shipped: resolve_sale_refund('back') puts every unit back
+  // on its lot and records the return once, whatever the sale's history.
   const restore = useMutation({
-    // Same refund as already recorded: record_return reconciles with an imported
-    // refund instead of adding to it, and puts the units back on their lots.
-    mutationFn: (units: number) => recordReturn({ saleId: sale.id, quantity: units, refundAmount: Number(sale.refunded_amount ?? 0), reason: 'Item came back / never shipped' }),
-    onSuccess: () => { setErr(null); setMsg('Units put back in inventory. Refund unchanged.'); invalidate() },
+    mutationFn: () => resolveSaleRefund(sale.id, 'back'),
+    onSuccess: r => { setErr(null); setMsg(`${r.units_restored ?? 0} unit(s) put back in inventory. Refund unchanged.`); invalidate() },
     onError: (e: Error) => setErr(e.message),
   })
   const busy = link.isPending || restore.isPending
@@ -120,6 +130,15 @@ export default function SaleInventoryBox({ sale, onChooseItem, onProcessReturn }
             <button type="button" onClick={() => setExpanded(true)} className="text-blue-600 hover:text-blue-800 font-medium">
               Buyer kept it or it was lost? Take it out of inventory…
             </button>
+          ) : sale.item_id ? (
+            <div className="space-y-1.5">
+              <div className="text-gray-500">The unit is gone, so its cost counts.</div>
+              <button type="button" disabled={busy} onClick={() => link.mutate(null)}
+                className="px-2.5 py-1 rounded-md bg-gray-900 text-white font-medium disabled:opacity-50">
+                Take {sale.quantity === 1 ? 'it' : `${sale.quantity} units`} from {sale.items?.name ? `“${sale.items.name.slice(0, 40)}”` : 'its item'}
+              </button>
+              <button type="button" onClick={onChooseItem} className="block text-blue-600 hover:text-blue-800 font-medium">Choose a different item…</button>
+            </div>
           ) : (
             <>
               <div className="text-gray-500">The unit is gone, so its cost counts. Link the item it came from:</div>
@@ -136,16 +155,10 @@ export default function SaleInventoryBox({ sale, onChooseItem, onProcessReturn }
           <div className="text-gray-700">
             Refunded {formatUSD(state.refunded)}. <b>{state.units} unit{state.units === 1 ? '' : 's'} counted as gone</b>: right if the buyer <b>kept it</b> or it was <b>lost</b>.
           </div>
-          {state.canRestore ? (
-            <button type="button" disabled={busy} onClick={() => restore.mutate(state.units)}
-              className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md border border-gray-300 bg-white font-medium text-gray-700 hover:border-gray-500 disabled:opacity-50">
-              <RotateCcw size={12} /> It came back / never shipped: put {state.units === 1 ? 'it' : `${state.units} units`} back in inventory
-            </button>
-          ) : (
-            <button type="button" onClick={onProcessReturn} className="text-blue-600 hover:text-blue-800 font-medium">
-              It came back / never shipped? Edit the return…
-            </button>
-          )}
+          <button type="button" disabled={busy} onClick={() => restore.mutate()}
+            className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md border border-gray-300 bg-white font-medium text-gray-700 hover:border-gray-500 disabled:opacity-50">
+            <RotateCcw size={12} /> It came back / never shipped: put {state.units === 1 ? 'it' : `${state.units} units`} back in inventory
+          </button>
         </div>
       )
       break
