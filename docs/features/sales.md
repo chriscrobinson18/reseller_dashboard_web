@@ -28,6 +28,21 @@ The relational centerpiece of the app — every sale here can cascade into `tran
 
 The detail panel opens with a Review section ("Mark reviewed by me" / "Unlock to edit"); list rows show a compact badge. An owner-reviewed sale's item link, money fields and date are locked against AI and imports. Its sale↔lot movements are locked against AI. See `docs/supabase-schema.md` → Review markers.
 
+## Returns & refunds workflow (2026-11-23)
+
+Taxes: Line 1 counts every sale and Line 2 counts `refunded_amount`, so a full refund nets income to $0 whether or not inventory is linked. Inventory linking decides only whether the unit's cost becomes cost of goods sold.
+
+| Scenario | Imported sale (eBay / TCGplayer / Amazon) | Manual sale |
+|---|---|---|
+| **Normal sale** | Import, then **Link to inventory** | Record Sale (pick the item, so units are taken), or link afterwards |
+| **Shipped, then returned** (item back) | The refund arrives with the import as a full return. **Don't link.** If it was linked, use **Edit Return** with the same refund to restore the units | Process Return (quantity + refund): the units go back to their lot at the original cost |
+| **Refunded before shipping** (cancelled) | Arrives as a full return. **Don't link** | Process Return (full). If no money ever moved, deleting the sale is fine |
+| **Refunded, buyer kept it / lost** | Use the sale panel's "Buyer kept it / lost in transit? Link to inventory" | Keep the link. **Gap:** a refund with no units back can't be recorded yet (`record_return` requires quantity ≥ 1), so Line 2 misses it (TASKS.md) |
+| **Partial return** | Link, then Process Return for the units that came back (the refund reconciles with the imported one) | Link, then Process Return for those units |
+
+- **Return label you paid with your card:** leave the **Return Shipping Cost** field blank. The bank charge stays a Shipping & Postage expense (Line 27a); use Expenses → **Sale profit** to attribute it to the sale. A figure typed into that field doesn't reach Schedule C yet (TASKS.md).
+- **Returned item is damaged or unsellable:** there's no write-off action yet. Delete that unit's lot, or reduce it, so it isn't carried as inventory.
+
 ## Modals
 
 - **RecordSaleModal** → `recordSale` (item + qty + price + platform + date + optional fees/shipping/order ID). See [data-flows.md](../data-flows.md) for what this fans out into.

@@ -298,6 +298,18 @@ function SaleDetail({ sale, netPayoutBySale, onLinkItem, onEdit, onDelete, onPro
         </button>
       )}
 
+      {/* Full returns are not prompted (item came back or never shipped), but a
+          refund where the buyer KEPT the item (or it was lost) still used a unit. */}
+      {sale.return_status === 'full' && !sale.trade_id && (sale.inventory_movements?.length ?? 0) === 0 && (
+        <button
+          onClick={onLinkItem}
+          className="w-full flex items-center justify-center gap-1.5 border border-gray-200 text-gray-600 rounded-lg py-2 text-xs font-medium hover:border-gray-400 transition-colors"
+          title="Only if the buyer kept the item or it was lost: the unit is gone, so its cost counts. Leave unlinked if it came back or never shipped."
+        >
+          <Link2 size={13} /> Buyer kept it / lost in transit? Link to inventory
+        </button>
+      )}
+
       {/* Sale metrics */}
       <div className="grid grid-cols-2 gap-2 text-xs">
         {[

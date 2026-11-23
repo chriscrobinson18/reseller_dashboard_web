@@ -121,7 +121,7 @@ function ReturnForm({ sale, isEditing, activeReturn, onClose }: {
           />
         </Field>
       </div>
-      <Field label="Return Shipping Cost" hint="What you paid to ship the item back, if any">
+      <Field label="Return Shipping Cost" hint="Leave blank if the label was a bank/card charge: keep that charge as a Shipping &amp; Postage expense and attribute it to this sale in Expenses (Sale profit). An amount entered here is not yet counted on Schedule C.">
         <input
           type="number"
           step="0.01"
