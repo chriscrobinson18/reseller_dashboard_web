@@ -33,13 +33,14 @@ describe('saleProfit', () => {
     expect(result.profit).toBe(15)
   })
 
-  it('ignores refunded_amount for full returns (sale is excluded upstream)', () => {
+  it('subtracts refunded_amount for full returns too (a refunded sale earns nothing)', () => {
     const result = saleProfit(sale({
       return_status: 'full',
       refunded_amount: 100,
     }))
-    expect(result.netRevenue).toBe(100)
-    expect(result.profit).toBe(55)
+    expect(result.netRevenue).toBe(0)
+    // 100 - 100 refund - 30 cogs - 10 fees - 5 shipping: the units are still out (buyer kept it)
+    expect(result.profit).toBe(-45)
   })
 
   it('handles missing inventory_movements (oversold) as cogs = 0', () => {

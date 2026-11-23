@@ -19,6 +19,7 @@ import { paymentMethodLabel, formatPaymentSplits } from '../lib/paymentMethods'
 import type { Sale } from '../lib/types'
 import { fetchAllRows } from '../lib/fetchAll'
 import { fetchDirectCosts } from '../lib/directCosts'
+import SaleInventoryBox from '../components/SaleInventoryBox'
 import LinkedRecords from '../components/LinkedRecords'
 import { useDeepLink } from '../lib/nav'
 import TradeDetailSlideOver from '../components/TradeDetailSlideOver'
@@ -263,7 +264,7 @@ function SaleDetail({ sale, netPayoutBySale, onLinkItem, onEdit, onDelete, onPro
           onClick={onProcessReturn}
           className="w-full flex items-center justify-center gap-1.5 border border-amber-200 text-amber-700 rounded-lg py-2 text-sm font-medium hover:bg-amber-50 transition-colors"
         >
-          <RotateCcw size={13} /> {sale.return_status === 'none' ? 'Process Return' : 'Edit Return'}
+          <RotateCcw size={13} /> {sale.return_status === 'none' ? 'Process Return' : sale.refunded_quantity ? 'Edit Return' : 'Record return details'}
         </button>
       )}
 
@@ -288,27 +289,9 @@ function SaleDetail({ sale, netPayoutBySale, onLinkItem, onEdit, onDelete, onPro
         </div>
       </div>
 
-      {/* Link to item CTA when no lot units were taken for the sale */}
-      {needsInventoryLink(sale) && (
-        <button
-          onClick={onLinkItem}
-          className="w-full flex items-center justify-center gap-1.5 border border-amber-300 bg-amber-50 text-amber-700 rounded-lg py-2 text-sm font-medium hover:bg-amber-100 transition-colors"
-        >
-          <Link2 size={14} /> {sale.item_id ? 'Link to inventory lots' : 'Link to inventory item'}
-        </button>
-      )}
-
-      {/* Full returns are not prompted (item came back or never shipped), but a
-          refund where the buyer KEPT the item (or it was lost) still used a unit. */}
-      {sale.return_status === 'full' && !sale.trade_id && (sale.inventory_movements?.length ?? 0) === 0 && (
-        <button
-          onClick={onLinkItem}
-          className="w-full flex items-center justify-center gap-1.5 border border-gray-200 text-gray-600 rounded-lg py-2 text-xs font-medium hover:border-gray-400 transition-colors"
-          title="Only if the buyer kept the item or it was lost: the unit is gone, so its cost counts. Leave unlinked if it came back or never shipped."
-        >
-          <Link2 size={13} /> Buyer kept it / lost in transit? Link to inventory
-        </button>
-      )}
+      {/* Inventory: what this sale did to stock, and the one action that fits
+          (link / buyer kept it / put units back). src/lib/saleInventory.ts */}
+      <SaleInventoryBox sale={sale} onChooseItem={onLinkItem} onProcessReturn={onProcessReturn} />
 
       {/* Sale metrics */}
       <div className="grid grid-cols-2 gap-2 text-xs">
@@ -339,11 +322,6 @@ function SaleDetail({ sale, netPayoutBySale, onLinkItem, onEdit, onDelete, onPro
               : sale.return_status === 'full' ? `${sale.quantity} (all, from platform report)` : 'not recorded (from platform report)'}
             {' · '}Amount: {formatUSD(sale.refunded_amount ?? 0)}
           </div>
-          {sale.return_status === 'full' && (sale.inventory_movements?.length ?? 0) > 0 && (
-            <div className="text-red-700 mt-1">
-              Units are still counted as sold. If the item came back or never shipped, use <b>Edit Return</b> (same refund amount) to put them back in inventory. If the buyer kept it, leave this as is.
-            </div>
-          )}
           {(sale.refunded_amount ?? 0) > sale.sale_price + 0.005 && (
             <div className="text-red-700 font-medium mt-1">Refund is more than the sale price: check it isn't counted twice.</div>
           )}

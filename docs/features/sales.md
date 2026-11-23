@@ -30,6 +30,21 @@ The detail panel opens with a Review section ("Mark reviewed by me" / "Unlock to
 
 ## Returns & refunds workflow (2026-11-23)
 
+**In the app, the sale panel's "Inventory" box does this for you** (`SaleInventoryBox`, rules in `src/lib/saleInventory.ts`). It shows what the sale did to inventory and offers the one action that fits:
+
+| Box state | Shown | Action |
+|---|---|---|
+| Linked | "N units taken from inventory" (plus "oversold" if short) | — |
+| Needs a link | Amber; up to 3 **suggested items** | **Link** on a suggestion, or "Choose an item…" |
+| Full refund, no units out | "Nothing left inventory: right if it came back or never shipped" | "Buyer kept it or it was lost? Take it out of inventory…" (link) |
+| Full refund, units out | "N units counted as gone: right if the buyer kept it or it was lost" | "It came back / never shipped: put it back" (one click: `recordReturn` with the same refund, which reconciles instead of doubling). If an in-app return already exists, opens Edit Return instead |
+| Partial refund | Refund, units out, units returned | "Some units came back? Record them…" / "No units came back? Link to inventory…" |
+
+- **No stored answer:** the state is inferred from the sale (units taken or not), so both outcomes of a refund are valid end states and the box offers the switch.
+- **Suggestions** (`suggestItems`): words are weighted by rarity across your items (IDF), so brand words like "pokemon" or "lego" don't decide. A match needs at least 80% of the item name's weight and at least one distinctive word (in 3 or fewer items, or a 3+ digit model number). **Single cards** (a collector number, a condition such as "Near Mint", or a frame variant such as "(Borderless)") get no sealed-product suggestion; the box points to Breakdowns instead. With no match it says the purchase may have no lot yet.
+- The return button reads **"Record return details"** when the refund came from a platform import (no in-app return yet).
+- Sale profitability now subtracts the refund for **full** returns too (`saleProfit`), so a refunded sale shows its real result.
+
 Taxes: Line 1 counts every sale and Line 2 counts `refunded_amount`, so a full refund nets income to $0 whether or not inventory is linked. Inventory linking decides only whether the unit's cost becomes cost of goods sold.
 
 | Scenario | Imported sale (eBay / TCGplayer / Amazon) | Manual sale |
