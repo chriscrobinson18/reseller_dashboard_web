@@ -201,9 +201,15 @@ export default function DashboardPage() {
     () => computeKPIs(transactions, customs, salesIncome, periodInventory?.change ?? 0),
     [transactions, customs, salesIncome, periodInventory],
   )
-  // Sales with no inventory link never deplete a lot, so their units still
+  // Sales that took no lot units never deplete a lot, so their units still
   // count as on hand — ending inventory (and Net) is overstated by their cost.
-  const unlinkedSales = useMemo(() => sales.filter(s => !s.item_id && !s.trade_id), [sales])
+  // Same rule as the Sales tab's needsInventoryLink: fully returned sales
+  // (item came back, or the order was cancelled before shipping) shouldn't be
+  // linked, and trade legs are handled by the trade.
+  const unlinkedSales = useMemo(
+    () => sales.filter(s => (s.inventory_movements?.length ?? 0) === 0 && s.return_status !== 'full' && !s.trade_id),
+    [sales],
+  )
   const profitability = useMemo(() => computeProfitability(sales), [sales])
   // Per-month inventory change, so each month's bar shows cost of goods SOLD
   // rather than purchases. Contiguous months from the period start (or the

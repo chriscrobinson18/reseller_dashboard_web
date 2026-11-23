@@ -327,6 +327,11 @@ function SaleDetail({ sale, netPayoutBySale, onLinkItem, onEdit, onDelete, onPro
               : sale.return_status === 'full' ? `${sale.quantity} (all, from platform report)` : 'not recorded (from platform report)'}
             {' · '}Amount: {formatUSD(sale.refunded_amount ?? 0)}
           </div>
+          {sale.return_status === 'full' && (sale.inventory_movements?.length ?? 0) > 0 && (
+            <div className="text-red-700 mt-1">
+              Units are still counted as sold. If the item came back or never shipped, use <b>Edit Return</b> (same refund amount) to put them back in inventory. If the buyer kept it, leave this as is.
+            </div>
+          )}
           {(sale.refunded_amount ?? 0) > sale.sale_price + 0.005 && (
             <div className="text-red-700 font-medium mt-1">Refund is more than the sale price: check it isn't counted twice.</div>
           )}

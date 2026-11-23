@@ -238,7 +238,16 @@ Rules the owner set on 2026-11-12 for building lots from historical data and lin
 **Linking sales to lots**
 - Only when the sale title and the item clearly refer to the same product (model/set number, or near-identical wording, or a confident same-product judgment), only one item plausibly matches, and the sale is a sealed/whole product (singles, packs and slabs need a breakdown first).
 - Units are taken oldest-first via `inventory_movements`, as `record_sale` / `link_sale_to_item` do; a lot bought after the sale is allowed only within a 60-day presale window.
-- **Fully refunded sales are never linked** (no unit left inventory). Titles whose quantity disagrees with the sale's quantity are skipped.
+- **Returns and inventory (2026-11-23):**
+
+  | Scenario | Link the sale? |
+  |---|---|
+  | Shipped, then returned (item back on the shelf) | No, if the import already marked it a full return: the unit never left in the books, which matches reality. If it was linked, use **Edit Return** with the same refund to restore the units |
+  | Refunded before shipping (cancelled) | No: the unit never left |
+  | Refunded but the buyer kept it (or it was lost in transit) | **Yes**: the unit is gone, so its cost is cost of goods sold |
+  | Partial return | Link the sale, then record the return for the units that came back |
+
+  Titles whose quantity disagrees with the sale's quantity are skipped. The Dashboard's "not linked" warning and the Sales tab's link prompt both leave full returns out.
 - Verify after each round: units and costs match the plan, no lot below 0 or above its purchased quantity, every movement on the sale's own item.
 
 **Duplicate items.** Merge two items only when they are the same product (wording differences only, comparable unit cost) **and their lots come from distinct charges** (no charge shared or over-allocated). Different formats or variants stay separate. The duplicate is soft-deleted after its lots and sales move.
