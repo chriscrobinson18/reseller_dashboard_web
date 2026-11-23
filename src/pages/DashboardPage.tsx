@@ -18,6 +18,7 @@ import { buildScheduleCTransactionsCSV, buildScheduleCSummaryCSV, downloadCSV } 
 import { Download } from 'lucide-react'
 import PeriodPicker from '../components/PeriodPicker'
 import { fetchAllRows } from '../lib/fetchAll'
+import { fetchDirectCosts } from '../lib/directCosts'
 import type { Transaction, Sale } from '../lib/types'
 
 // ─── Data fetching ────────────────────────────────────────────────────────────
@@ -38,7 +39,7 @@ async function fetchTransactions(start: string | null, end: string | null): Prom
 }
 
 async function fetchSales(start: string | null, end: string | null): Promise<Sale[]> {
-  return fetchAllRows<Sale>((from, to) => {
+  const sales = await fetchAllRows<Sale>((from, to) => {
     let q = supabase
       .from('sales')
       .select('*, items(id,name,category), inventory_movements(id,quantity,inventory_lots(unit_cost,item_id))')
@@ -49,6 +50,10 @@ async function fetchSales(start: string | null, end: string | null): Promise<Sal
     if (end) q = q.lte('sold_at', end + 'T23:59:59Z')
     return q.range(from, to)
   })
+  // Charges paid directly and attributed to a sale (profit only; never Schedule C).
+  const direct = await fetchDirectCosts(sales.map(s => s.id))
+  for (const s of sales) { const d = direct.get(s.id); if (d) s.direct_costs = d }
+  return sales
 }
 
 type BundleRow = BundleIncomeInput & { id: string; platform: string | null; external_order_id: string | null }
@@ -91,7 +96,9 @@ function computeProfitability(sales: Sale[]) {
   }, 0)
   const fees = active.reduce((s, sale) => s + (sale.fees ?? 0), 0)
   const shipping = active.reduce((s, sale) => s + (sale.shipping_cost ?? 0), 0)
-  return { revenue, cogs, grossProfit: revenue - cogs, fees, shipping, sellingMargin: revenue - cogs - fees - shipping }
+  // Charges you paid directly (bank/card) and attributed to a sale: profit view only.
+  const direct = active.reduce((s, sale) => s + (sale.direct_costs ?? 0), 0)
+  return { revenue, cogs, grossProfit: revenue - cogs, fees, shipping, direct, sellingMargin: revenue - cogs - fees - shipping - direct }
 }
 
 
@@ -365,6 +372,7 @@ export default function DashboardPage() {
           <ProfitRow label="Gross Profit" value={profitability.grossProfit} />
           <ProfitRow label="Platform Fees" value={-profitability.fees} muted />
           <ProfitRow label="Shipping Cost" value={-profitability.shipping} muted />
+          {profitability.direct !== 0 && <ProfitRow label="Paid directly (bank/card)" value={-profitability.direct} muted />}
           <div className="mt-2 pt-2 border-t border-gray-200 flex justify-between">
             <span className="text-sm font-semibold text-gray-900">Selling Margin</span>
             <span className={`text-sm font-semibold tabular-nums ${profitability.sellingMargin < 0 ? 'text-red-500' : 'text-green-600'}`}>

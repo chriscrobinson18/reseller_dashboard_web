@@ -74,4 +74,12 @@ describe('saleProfit', () => {
     }))
     expect(result.profit).toBe(100 - 30)
   })
+
+  it('subtracts charges paid directly and attributed to the sale (profit only)', () => {
+    const base = saleProfit(sale())
+    const withDirect = saleProfit(sale({ direct_costs: 7.5 }))
+    expect(withDirect.directCosts).toBe(7.5)
+    expect(base.directCosts).toBe(0)
+    expect(withDirect.profit).toBeCloseTo(base.profit - 7.5, 10)
+  })
 })

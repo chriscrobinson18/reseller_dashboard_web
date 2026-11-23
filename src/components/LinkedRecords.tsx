@@ -11,7 +11,7 @@ import { recordHref, type RecordKind } from '../lib/nav'
  *
  *   lot         → purchase transactions, cost-adjustment transactions, sales
  *                 that consumed it, trade, breakdown it came from / went into
- *   sale        → lots it consumed, its transactions, bundle, trade
+ *   sale        → lots it consumed, its transactions, charges paid directly, bundle, trade
  *   transaction → lots it funds or adjusts, sale, bundle, trade, breakdown,
  *                 net-zero partner
  *   bundle      → its sales, their lots, its transactions
@@ -94,19 +94,21 @@ async function loadGroups(kind: RecordKind, id: string): Promise<Group[]> {
     const [sale] = await salesByIds([id])
     add('Inventory lots used', (await lotsByIds(await lotIdsForSales([id]))).map(lotEntry))
     add('Transactions', (await rows<TxRow>(supabase.from('transactions').select('id, date, amount, merchant, schedule_c_category').eq('related_sale_id', id).order('date'))).map(txEntry))
+    add('Paid directly (profit only)', (await rows<TxRow>(supabase.from('transactions').select('id, date, amount, merchant, schedule_c_category').eq('profit_sale_id', id).order('date'))).map(txEntry))
     if (sale?.bundle_id) add('Bundle', [{ kind: 'bundle', id: sale.bundle_id, label: 'Part of a bundle sale' }])
     if (sale?.trade_id) add('Trade', [{ kind: 'trade', id: sale.trade_id, label: 'Given in a trade' }])
   }
 
   if (kind === 'transaction') {
-    const [tx] = await rows<{ related_sale_id: string | null; related_bundle_id: string | null; trade_id: string | null; net_zero_pair_id: string | null }>(
-      supabase.from('transactions').select('related_sale_id, related_bundle_id, trade_id, net_zero_pair_id').eq('id', id))
+    const [tx] = await rows<{ related_sale_id: string | null; related_bundle_id: string | null; trade_id: string | null; net_zero_pair_id: string | null; profit_sale_id: string | null }>(
+      supabase.from('transactions').select('related_sale_id, related_bundle_id, trade_id, net_zero_pair_id, profit_sale_id').eq('id', id))
     const links = await rows<{ lot_id: string }>(supabase.from('inventory_lot_transactions').select('lot_id').eq('transaction_id', id))
     const adj = await rows<{ lot_id: string }>(supabase.from('lot_cost_adjustments').select('lot_id').eq('transaction_id', id).is('deleted_at', null))
     const boxes = await rows<{ id: string; opened_at: string | null; box_name: string | null }>(supabase.from('box_openings').select('id, opened_at, box_name').eq('transaction_id', id).is('deleted_at', null))
     add('Funds inventory lots', (await lotsByIds(uniq(links.map(l => l.lot_id)))).map(lotEntry))
     add('Cost adjustment on lots', (await lotsByIds(uniq(adj.map(a => a.lot_id)))).map(lotEntry))
     if (tx?.related_sale_id) add('Sale', (await salesByIds([tx.related_sale_id])).map(saleEntry))
+    if (tx?.profit_sale_id) add('Sale (profit only)', (await salesByIds([tx.profit_sale_id])).map(saleEntry))
     if (tx?.related_bundle_id) add('Bundle', [{ kind: 'bundle', id: tx.related_bundle_id, label: 'Bundle sale' }])
     if (tx?.trade_id) add('Trade', [{ kind: 'trade', id: tx.trade_id, label: 'Trade' }])
     add('Breakdowns', boxes.map(b => ({ kind: 'breakdown' as const, id: b.id, label: b.box_name ?? 'Breakdown', sub: b.opened_at ? formatShortDate(b.opened_at) : undefined })))

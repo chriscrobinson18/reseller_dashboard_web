@@ -30,6 +30,7 @@ Bank/manual/CSV-sourced money movements — the Schedule C source of truth for i
 | `schedule_c_category` | FK-ish string into `CATEGORIES` (see categories.md); nullable = uncategorized |
 | `net_zero_pair_id` | shared UUID across two rows that cancel out (e.g. transfer pairs) — see `pairTransactions`/`unpairTransactions` |
 | `related_sale_id`, `related_bundle_id` | set on the payout/fee/shipping (and return) rows created by `recordSale` / `recordBundleSale` / `record_return` — links the row to the sale or bundle whose money it duplicates; such rows are excluded from Schedule C (`isSaleDerivedTransaction`) |
+| `profit_sale_id` | nullable FK → `sales(id)`, `ON DELETE SET NULL`, partial index. Added 2026-11-23 (`20261123120000_transactions_profit_sale_id.sql`). **Profit attribution only:** a charge paid directly from your own account (e.g. a label bought with your card) counted as a cost of that sale for profitability. It is **never read by Schedule C code** (`bucketTransaction`, `salesIncome`, Part III, exports); the row stays an ordinary expense. This differs from `related_sale_id`, which makes a row part of the sale's payout and excludes it from Schedule C. Cleared automatically when the sale is soft-deleted (trigger `clear_profit_attribution_on_sale_delete` on `sales.deleted_at`). It is a locked field on owner-reviewed rows. Rows that Plaid hard-deletes (removed transactions, a replaced bank connection) lose it, the same as their category and notes. |
 | `csv_transaction_id`, `csv_group_id`, `parent_settlement_id` | marketplace CSV import keys: `csv_transaction_id` is unique per user (index `transactions_csv_transaction_id_idx`), so re-imports insert only missing rows; `csv_group_id` is the payout/settlement group; for eBay/Amazon the order number is in `notes` |
 | `plaid_transaction_id`, `plaid_category` | Plaid-sourced rows only; read-only in the UI (`TransactionDetail` blocks editing date/amount/merchant/direction when `source === 'plaid'`) |
 | `receipt_url` | storage path of the attached receipt (upload UI in the Expenses detail panel; see Storage below) |
@@ -257,8 +258,8 @@ Migration `20261113120000_review_status.sql`. Purpose: show which records an AI 
 | Anything else (direct SQL, admin scripts, AI assistants) | Error on any protected-field change or delete |
 
 - Only the owner can set `owner_reviewed` or move a row off it.
-- Protected fields (`owner_review_locked_fields()`) are the reviewed decisions:
-  - transactions: category, record type, net-zero pair, sale/bundle/trade/settlement links, non-cash flag.
+- Protected fields (`owner_review_locked_fields()`) are the reviewed decisions (`transactions.profit_sale_id` added 2026-11-23):
+  - transactions: category, record type, net-zero pair, sale/bundle/trade/settlement links, profit-sale attribution, non-cash flag.
   - sales: item link, bundle/trade, quantity, price, fees, shipping, discount, net payout, sold date, platform, deleted_at.
   - lots: item, funding transaction, trade, box opening, quantities purchased, unit cost, initial unit cost, purchase date, deleted_at.
 

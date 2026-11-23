@@ -21,6 +21,12 @@ export interface Transaction {
   notes?: string
   net_zero_pair_id?: string
   related_sale_id?: string
+  /**
+   * Profit attribution only (2026-11-23): this charge (e.g. a label paid with
+   * your own card) is a cost of that sale for profitability. NEVER read by any
+   * Schedule C code: unlike related_sale_id, the row stays an ordinary expense.
+   */
+  profit_sale_id?: string | null
   /** Set on the payout/fee/shipping transactions auto-created by a bundle sale — see SaleBundle. */
   related_bundle_id?: string
   parent_settlement_id?: string
@@ -90,6 +96,11 @@ export interface Sale {
    */
   allocated_fees?: number
   allocated_shipping?: number
+  /**
+   * Client-side: total of bank/card charges attributed to this sale for profit
+   * only (transactions.profit_sale_id), positive = cost. Not stored on the row.
+   */
+  direct_costs?: number
   inventory_status: 'ok' | 'oversold' | 'reconciled'
   return_status: null | 'none' | 'partial' | 'full'
   refunded_quantity: number

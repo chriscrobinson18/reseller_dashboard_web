@@ -119,6 +119,15 @@ A return refunded minus a restocking fee does not cancel exactly, so it is not a
 2. Recategorize the refund (positive) to the **same category as the original charge**. The two then net to the fee inside that category.
 3. Step 2 alone gets the Schedule C total right: the fee stays as a net cost in the original category. To show the fee on its own line (Line 27a Other expenses, "restocking fee"), the original charge would have to be split. The app can't split a transaction yet (TASKS.md).
 
+## Attribute a charge to a sale (profit only; added 2026-11-23)
+
+For a cost you paid **directly** for one sale, e.g. a shipping label bought with your own card rather than deducted by the platform. The transaction panel's **"Sale profit"** section (`ProfitSaleSection`) searches sales from 90 days before to 14 days after the charge, by item, order number, price or date, and sets `transactions.profit_sale_id` through `attributeTransactionToSale`. **Remove** clears it.
+
+- **Taxes are unchanged:** the row stays an ordinary Schedule C expense on its own line. Only that sale's profit includes it: the Sales detail shows a "Paid directly (bank/card)" line, and the Dashboard's Sales Profitability card does too (`fetchDirectCosts`, `saleProfit`).
+- Refused for rows that are already part of a sale's payout (`related_sale_id` / `related_bundle_id`), marketplace report rows, trade legs and net-zero pairs. A row that gets net-zero paired later drops out of the sale's costs automatically.
+- A positive row (a refund of that label) attributed to the same sale nets against the cost.
+- Don't confuse it with `related_sale_id`: that link removes a row from Schedule C because the sale's own fees and shipping carry the amount. Never use that for a charge you paid yourself.
+
 ## Review markers (added 2026-11-13)
 
 See `docs/supabase-schema.md` → Review markers.

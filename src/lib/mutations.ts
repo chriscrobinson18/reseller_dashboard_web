@@ -1163,6 +1163,32 @@ export async function createSaleTransactions(params: {
 }
 
 /**
+ * Attributes a charge to a sale for PROFIT ONLY (transactions.profit_sale_id),
+ * or removes the attribution (saleId = null). The charge stays an ordinary
+ * Schedule C expense on its own row; only the sale's profit includes it.
+ * Refuses rows that are already part of a sale's payout (related_sale_id /
+ * related_bundle_id), marketplace report rows, trade legs and net-zero pairs.
+ */
+export async function attributeTransactionToSale(txId: string, saleId: string | null): Promise<void> {
+  const { data: tx, error: txErr } = await supabase.from('transactions')
+    .select('id, related_sale_id, related_bundle_id, trade_id, net_zero_pair_id, source')
+    .eq('id', txId).maybeSingle()
+  if (txErr) throw txErr
+  if (!tx) throw new Error('Transaction not found')
+  if (saleId) {
+    if (tx.related_sale_id || tx.related_bundle_id) throw new Error('This row is already part of a sale\'s payout')
+    if (tx.source === 'csv_import' || tx.trade_id || tx.net_zero_pair_id) {
+      throw new Error('Marketplace report rows, trade legs and net-zero pairs can\'t be attributed to a sale')
+    }
+    const { data: sale, error: sErr } = await supabase.from('sales').select('id, deleted_at').eq('id', saleId).maybeSingle()
+    if (sErr) throw sErr
+    if (!sale || sale.deleted_at) throw new Error('Sale not found')
+  }
+  const { error } = await supabase.from('transactions').update({ profit_sale_id: saleId }).eq('id', txId)
+  if (error) throw error
+}
+
+/**
  * Links an unlinked sale to an inventory item and FIFO-depletes that item's
  * lots (inventory_movements + quantity_remaining), via the link_sale_to_item
  * RPC (migration 20261112120000). Lots bought on/before the sale date are used

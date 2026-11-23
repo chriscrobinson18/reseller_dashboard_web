@@ -121,4 +121,11 @@ describe('eBay store subscription: the one report row that counts (2026-11-13)',
     ]
     for (const o of others) expect(bucketTransaction(report(o), []).bucket).toBeNull()
   })
+
+  it('a charge attributed to a sale for profit only still counts on Schedule C (profit_sale_id is never a tax link)', () => {
+    const plain = bucketTransaction(tx({ amount: -12.5, schedule_c_category: 'shipping_postage' }), [])
+    const attributed = bucketTransaction(tx({ amount: -12.5, schedule_c_category: 'shipping_postage', profit_sale_id: 'sale-1' }), [])
+    expect(attributed).toEqual(plain)
+    expect(attributed.bucket).toBe('expense')
+  })
 })

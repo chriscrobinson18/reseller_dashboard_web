@@ -18,6 +18,7 @@ import { saleProfit } from '../lib/saleProfit'
 import { paymentMethodLabel, formatPaymentSplits } from '../lib/paymentMethods'
 import type { Sale } from '../lib/types'
 import { fetchAllRows } from '../lib/fetchAll'
+import { fetchDirectCosts } from '../lib/directCosts'
 import LinkedRecords from '../components/LinkedRecords'
 import { useDeepLink } from '../lib/nav'
 import TradeDetailSlideOver from '../components/TradeDetailSlideOver'
@@ -121,6 +122,10 @@ async function fetchSales(start: string | null, end: string | null, narrow?: { i
     }
   }
 
+  // Charges paid directly and attributed to a sale (profit only).
+  const direct = await fetchDirectCosts(sales.map(s => s.id))
+  for (const s of sales) { const d = direct.get(s.id); if (d) s.direct_costs = d }
+
   return { sales, netPayoutBySale }
 }
 
@@ -179,7 +184,7 @@ function SaleDetail({ sale, netPayoutBySale, onLinkItem, onEdit, onDelete, onPro
   onOpenBundle: (id: string) => void
   onNavigate: () => void
 }) {
-  const { cogs, netRevenue, profit } = saleProfit(sale)
+  const { cogs, netRevenue, directCosts, profit } = saleProfit(sale)
   const hasCogsData = (sale.inventory_movements?.length ?? 0) > 0
   const canReturn = !sale.trade_id
   const netPayout = netPayoutFor(sale, netPayoutBySale)
@@ -365,6 +370,7 @@ function SaleDetail({ sale, netPayoutBySale, onLinkItem, onEdit, onDelete, onPro
           ...feeLines,
           ...(displayShipping != null && displayShipping !== 0 ? [{ label: 'Shipping Label', value: -displayShipping }] : []),
           ...(sale.discount ? [{ label: 'Discount', value: -sale.discount }] : []),
+          ...(directCosts !== 0 ? [{ label: 'Paid directly (bank/card)', value: -directCosts }] : []),
         ]
 
         return (

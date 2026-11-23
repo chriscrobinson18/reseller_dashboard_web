@@ -27,6 +27,7 @@ import type { Transaction } from '../lib/types'
 import { fetchAllRows } from '../lib/fetchAll'
 import { NetZeroCandidates, NetZeroPairsView } from '../components/NetZeroMatch'
 import LinkedRecords from '../components/LinkedRecords'
+import ProfitSaleSection from '../components/ProfitSaleSection'
 import { useDeepLink } from '../lib/nav'
 
 // ─── Data ────────────────────────────────────────────────────────────────────
@@ -392,6 +393,8 @@ function TransactionDetail({ tx, onClose, onOpenTrade, onManage }: { tx: Transac
 
       {/* Net-zero match: exact opposite-amount lookup (unpaired, eligible rows only) */}
       <NetZeroCandidates tx={tx} />
+
+      <ProfitSaleSection tx={tx} />
 
       <LinkedRecords kind="transaction" id={tx.id} onNavigate={onClose} />
 

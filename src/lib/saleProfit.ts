@@ -3,7 +3,9 @@ import type { Sale } from './types'
 export interface SaleProfit {
   cogs: number        // sum of movement.quantity * lot.unit_cost
   netRevenue: number  // sale_price minus refund (partial returns only)
-  profit: number      // netRevenue - cogs - fees - shipping
+  /** Charges paid directly and attributed to the sale (transactions.profit_sale_id). */
+  directCosts: number
+  profit: number      // netRevenue - cogs - fees - shipping - directCosts
 }
 
 /**
@@ -27,6 +29,9 @@ export function saleProfit(sale: Sale): SaleProfit {
   // profit as though the order were free to sell.
   const fees = sale.allocated_fees ?? sale.fees ?? 0
   const shipping = sale.allocated_shipping ?? sale.shipping_cost ?? 0
-  const profit = netRevenue - cogs - fees - shipping
-  return { cogs, netRevenue, profit }
+  // Costs paid directly from your own account (not deducted by the platform),
+  // attributed via transactions.profit_sale_id. Profit view only.
+  const directCosts = sale.direct_costs ?? 0
+  const profit = netRevenue - cogs - fees - shipping - directCosts
+  return { cogs, netRevenue, directCosts, profit }
 }
