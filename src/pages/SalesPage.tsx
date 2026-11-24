@@ -539,7 +539,9 @@ export default function SalesPage() {
 
   const [shortcutBannerOpen, setShortcutBannerOpen] = useState(true)
   const shortcutSales = useMemo(
-    () => (sales ?? []).filter(s => !s.item_id && s.item_name),
+    // Same rule as everywhere else (needsInventoryLink): a fully refunded sale
+    // (cancelled / came back) never needs a link, even without an item.
+    () => (sales ?? []).filter(s => !s.item_id && s.item_name && needsInventoryLink(s)),
     [sales]
   )
 
@@ -653,7 +655,7 @@ export default function SalesPage() {
                       )}
                       <div className="min-w-0 flex-1">
                         <div className="font-medium text-gray-900 text-sm leading-snug line-clamp-2 break-words">
-                          {!sale.items?.name && sale.item_name && '⚠️ '}
+                          {!sale.items?.name && sale.item_name && needsInventoryLink(sale) && '⚠️ '}
                           {name ?? <span className="text-gray-400">No item linked</span>}
                         </div>
                         <div className="mt-0.5 flex flex-wrap items-center gap-x-1.5 gap-y-1 text-xs text-gray-500">
@@ -758,21 +760,25 @@ export default function SalesPage() {
                         </>
                       ) : sale.item_name ? (
                         <div>
-                          <div className="font-medium text-gray-900 truncate max-w-xs">⚠️ {sale.item_name}</div>
-                          <button
-                            onClick={e => { e.stopPropagation(); setLinkSale(sale) }}
-                            className="flex items-center gap-1 text-amber-600 hover:text-amber-800 text-xs font-medium mt-0.5"
-                          >
-                            <Link2 size={12} /> Link to inventory
-                          </button>
+                          <div className="font-medium text-gray-900 truncate max-w-xs">{needsInventoryLink(sale) && '⚠️ '}{sale.item_name}</div>
+                          {needsInventoryLink(sale) && (
+                            <button
+                              onClick={e => { e.stopPropagation(); setLinkSale(sale) }}
+                              className="flex items-center gap-1 text-amber-600 hover:text-amber-800 text-xs font-medium mt-0.5"
+                            >
+                              <Link2 size={12} /> Link to inventory
+                            </button>
+                          )}
                         </div>
-                      ) : (
+                      ) : needsInventoryLink(sale) ? (
                         <button
                           onClick={e => { e.stopPropagation(); setLinkSale(sale) }}
                           className="flex items-center gap-1 text-amber-600 hover:text-amber-800 text-xs font-medium"
                         >
                           <Link2 size={12} /> Link to inventory item
                         </button>
+                      ) : (
+                        <span className="text-gray-400 text-xs">No item (refunded)</span>
                       )}
                     </td>
                     <td className="px-4 py-2.5">
