@@ -62,7 +62,7 @@ export default function SaleInventoryBox({ sale, onChooseItem, onProcessReturn }
   // on its lot and records the return once, whatever the sale's history.
   const restore = useMutation({
     mutationFn: () => resolveSaleRefund(sale.id, 'back'),
-    onSuccess: r => { setErr(null); setMsg(`${r.units_restored ?? 0} unit(s) put back in inventory. Refund unchanged.`); invalidate() },
+    onSuccess: r => { setErr(null); setMsg(r.units_restored ? `${r.units_restored} unit(s) put back in inventory. Refund unchanged.` : 'Confirmed: cancelled / came back. Refund unchanged.'); invalidate() },
     onError: (e: Error) => setErr(e.message),
   })
   const busy = link.isPending || restore.isPending
@@ -123,12 +123,25 @@ export default function SaleInventoryBox({ sale, onChooseItem, onProcessReturn }
     case 'refund_not_out':
       body = (
         <div className="space-y-2">
-          <div className="text-gray-700">
-            Refunded {formatUSD(state.refunded)}. <b>Nothing left inventory</b>: right if the item <b>came back</b> or <b>never shipped</b>.
-          </div>
+          {state.confirmed ? (
+            <div className="flex items-center gap-1.5 text-gray-700">
+              <Check size={13} className="text-emerald-600" />
+              Refunded {formatUSD(state.refunded)} · <b>confirmed: cancelled / came back</b>. Nothing left inventory.
+            </div>
+          ) : (
+            <>
+              <div className="text-gray-700">
+                Refunded {formatUSD(state.refunded)}. Nothing has left inventory. What happened?
+              </div>
+              <button type="button" disabled={busy} onClick={() => restore.mutate()}
+                className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-gray-900 text-white font-medium disabled:opacity-50">
+                <Check size={12} /> Cancelled before shipping / came back: confirm
+              </button>
+            </>
+          )}
           {!expanded ? (
-            <button type="button" onClick={() => setExpanded(true)} className="text-blue-600 hover:text-blue-800 font-medium">
-              Buyer kept it or it was lost? Take it out of inventory…
+            <button type="button" onClick={() => setExpanded(true)} className="block text-blue-600 hover:text-blue-800 font-medium">
+              {state.confirmed ? 'Actually the buyer kept it or it was lost?…' : 'Buyer kept it or it was lost? Take it out of inventory…'}
             </button>
           ) : sale.item_id ? (
             <div className="space-y-1.5">

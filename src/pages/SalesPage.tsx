@@ -423,7 +423,7 @@ export default function SalesPage() {
   const [period, setPeriod] = useState<PeriodPreset>('ytd')
   const [search, setSearch] = useState('')
   const [platformFilter, setPlatformFilter] = useState<string | null>(null)
-  const [returnFilter, setReturnFilter] = useState<'all' | 'none' | 'has_return' | 'units_out'>('all')
+  const [returnFilter, setReturnFilter] = useState<'all' | 'none' | 'has_return' | 'units_out' | 'unconfirmed'>('all')
   // Bulk "what happened?" on fully refunded sales (resolve_sale_refund).
   const [pickedIds, setPickedIds] = useState<Set<string>>(new Set())
   const [pickAnchor, setPickAnchor] = useState<string | null>(null)
@@ -480,6 +480,7 @@ export default function SalesPage() {
       if (returnFilter === 'none' && hasReturn) return false
       if (returnFilter === 'has_return' && !hasReturn) return false
       if (returnFilter === 'units_out' && !(s.return_status === 'full' && unitsTaken(s) > 0)) return false
+      if (returnFilter === 'unconfirmed' && !(s.return_status === 'full' && !s.trade_id && unitsTaken(s) === 0 && s.inventory_status !== 'reconciled')) return false
       if (!search) return true
       const q = search.toLowerCase()
       return (
@@ -577,13 +578,14 @@ export default function SalesPage() {
             </select>
             <select
               value={returnFilter}
-              onChange={e => setReturnFilter(e.target.value as 'all' | 'none' | 'has_return' | 'units_out')}
+              onChange={e => setReturnFilter(e.target.value as 'all' | 'none' | 'has_return' | 'units_out' | 'unconfirmed')}
               className="min-w-0 border border-gray-200 rounded-lg px-2 py-1.5 text-sm text-gray-700 bg-white focus:outline-none focus:ring-2 focus:ring-gray-900"
             >
               <option value="all">All returns</option>
               <option value="none">No returns</option>
               <option value="has_return">Has return</option>
               <option value="units_out">Refunded, units still out</option>
+              <option value="unconfirmed">Refunded, not yet confirmed</option>
             </select>
             <div className="hidden md:block md:flex-1" />
             <button

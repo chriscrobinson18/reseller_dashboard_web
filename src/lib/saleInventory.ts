@@ -15,7 +15,7 @@ export type SaleInventoryState =
   | { kind: 'trade' }                                   // handled by the trade
   | { kind: 'linked'; units: number }                   // ordinary sale, units taken
   | { kind: 'needs_link' }                              // ordinary sale, nothing taken
-  | { kind: 'refund_not_out'; refunded: number }        // full refund, no units out (came back / never shipped)
+  | { kind: 'refund_not_out'; refunded: number; confirmed: boolean } // full refund, no units out (came back / never shipped); confirmed = resolved 'back' (inventory_status 'reconciled')
   | { kind: 'refund_out'; refunded: number; units: number; canRestore: boolean } // full refund, units out (kept / lost)
   | { kind: 'partial'; refunded: number; units: number; returnedUnits: number }   // partial refund
 
@@ -32,7 +32,7 @@ export function saleInventoryState(sale: Sale): SaleInventoryState {
     // an import-only refund can be reconciled in one click (no stacking).
     return units > 0
       ? { kind: 'refund_out', refunded, units, canRestore: !sale.refunded_quantity }
-      : { kind: 'refund_not_out', refunded }
+      : { kind: 'refund_not_out', refunded, confirmed: sale.inventory_status === 'reconciled' }
   }
   if (sale.return_status === 'partial') {
     return { kind: 'partial', refunded, units, returnedUnits: Number(sale.refunded_quantity ?? 0) }
