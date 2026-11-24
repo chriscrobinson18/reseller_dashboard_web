@@ -50,11 +50,17 @@ describe('aggregateCsvOrders (sync_csv_orders_to_sales v6)', () => {
   })
 })
 
-describe('csvOrderSaleFields (semantics unchanged since v4)', () => {
-  it('sale_price = gross − refunds; net = price − fees − postage; return status from refunds', () => {
+describe('csvOrderSaleFields (sync v7: gross price, refunds on refunded_amount)', () => {
+  it('sale_price = gross; refunded_amount = refunds; net = gross − refunds − fees − postage; status from refunds', () => {
     const f = (gross: number, refunded: number) => csvOrderSaleFields({ grossRevenue: gross, refundedAmount: refunded, fees: 10, shippingCost: 5, date: '2025-01-01', productName: null })
-    expect(f(100, 0)).toEqual({ sale_price: 100, fees: 10, shipping_cost: 5, net_payout: 85, return_status: 'none' })
-    expect(f(100, 40).return_status).toBe('partial')
-    expect(f(100, 100)).toMatchObject({ sale_price: 0, net_payout: -15, return_status: 'full' })
+    expect(f(100, 0)).toEqual({ sale_price: 100, refunded_amount: 0, fees: 10, shipping_cost: 5, net_payout: 85, return_status: 'none' })
+    expect(f(100, 40)).toMatchObject({ sale_price: 100, refunded_amount: 40, net_payout: 45, return_status: 'partial' })
+    // a fully refunded order keeps its gross price (Line 1) with the refund on Line 2, instead of a $0 price
+    expect(f(100, 100)).toMatchObject({ sale_price: 100, refunded_amount: 100, net_payout: -15, return_status: 'full' })
+  })
+
+  it('real Amazon case: $90.88 order with a $13.63 partial refund keeps the gross on Line 1 and the refund visible', () => {
+    const f = csvOrderSaleFields({ grossRevenue: 90.88, refundedAmount: 13.63, fees: 13.39, shippingCost: 10.6, date: '2026-08-07', productName: 'LP' })
+    expect(f).toMatchObject({ sale_price: 90.88, refunded_amount: 13.63, return_status: 'partial', net_payout: 53.26 })
   })
 })

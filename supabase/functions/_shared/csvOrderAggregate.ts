@@ -65,15 +65,26 @@ export function aggregateCsvOrders(rows: CsvOrderRow[]): Map<string, CsvOrderEnt
   return orderMap
 }
 
-/** Money fields written to `sales` for one order (semantics unchanged since v4:
- *  sale_price = gross − refunds). */
+/**
+ * Money fields written to `sales` for one order.
+ *
+ * 2026-11-23 (sync v7): sale_price is the GROSS and the refunds go to
+ * refunded_amount, the same shape as eBay / TCGplayer / manual sales, so
+ * Schedule C shows gross on Line 1 and the refund on Line 2 (matching the
+ * 1099-K) and a refunded sale shows its refund. v4–v6 wrote
+ * sale_price = gross − refunds and never set refunded_amount: income was
+ * right in total, but Line 1/2 were split wrong and fully refunded sales
+ * showed a $0 price. net_payout (money actually received) is unchanged:
+ * gross − refunds − fees − postage.
+ */
 export function csvOrderSaleFields(e: CsvOrderEntry) {
-  const salePrice = e.grossRevenue - e.refundedAmount
+  const cents = (n: number) => Math.round(n * 100) / 100
   return {
-    sale_price: salePrice,
+    sale_price: cents(e.grossRevenue),
+    refunded_amount: cents(e.refundedAmount),
     fees: e.fees,
     shipping_cost: e.shippingCost,
-    net_payout: salePrice - e.fees - e.shippingCost,
+    net_payout: cents(e.grossRevenue - e.refundedAmount - e.fees - e.shippingCost),
     return_status: e.refundedAmount === 0 ? 'none' : e.refundedAmount >= e.grossRevenue ? 'full' : 'partial',
   }
 }

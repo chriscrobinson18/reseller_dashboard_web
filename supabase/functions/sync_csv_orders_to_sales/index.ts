@@ -1,4 +1,9 @@
-// sync_csv_orders_to_sales v6 (2026-11-10)
+// sync_csv_orders_to_sales v7 (2026-11-23)
+// Fix: refunds no longer netted into sale_price. sale_price = gross and
+//      refunded_amount = refunds (csvOrderSaleFields), so Line 1 is gross and
+//      Line 2 the refund, as for eBay / TCGplayer. v4–v6 hid refunds inside
+//      the price and left refunded_amount at 0 (fully refunded orders showed $0).
+// Prior: sync_csv_orders_to_sales v6 (2026-11-10)
 // Fix: shipping_postage rows are summed signed (a positive postage refund /
 //      credit now reduces shipping_cost; v1–v5 added it as more postage).
 //      Per-order math moved to _shared/csvOrderAggregate.ts (unit-tested).
@@ -13,7 +18,7 @@
 //   - NEVER resets inventory_status / refunded_quantity (v4 wrote 'ok' / 0);
 //   - NEVER soft-deletes sales whose order is missing from the CSV rows
 //     (v4 did); they are only counted in `orphans` for review.
-// Money semantics are unchanged from v4 (sale_price = gross − refunds).
+// Money semantics (v7): sale_price = gross, refunded_amount = refunds.
 // Client is now service-role (the shared helper requires it); every query is
 // filtered by the caller's user_id.
 // Prior: sync_csv_orders_to_sales v4
