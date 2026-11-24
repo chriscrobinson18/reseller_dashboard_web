@@ -20,7 +20,7 @@ import type { Sale } from '../lib/types'
 import { fetchAllRows } from '../lib/fetchAll'
 import { fetchDirectCosts } from '../lib/directCosts'
 import SaleInventoryBox from '../components/SaleInventoryBox'
-import { unitsTaken } from '../lib/saleInventory'
+import { unitsTaken, needsInventoryLink, isKeptLinkNeeded } from '../lib/saleInventory'
 import LinkedRecords from '../components/LinkedRecords'
 import { useDeepLink } from '../lib/nav'
 import TradeDetailSlideOver from '../components/TradeDetailSlideOver'
@@ -48,16 +48,6 @@ async function fetchSaleById(id: string): Promise<{ sale: Sale | null; netPayout
   if (!data) return { sale: null, netPayoutBySale: {} }
   const r = await fetchSales(null, null, data.bundle_id ? { bundleId: data.bundle_id } : { id })
   return { sale: r.sales.find(s => s.id === id) ?? null, netPayoutBySale: r.netPayoutBySale }
-}
-
-/**
- * A sale needs an inventory link when no lot units were taken for it. Gating on
- * item_id alone missed sales linked before 2026-11-12, when linking only set
- * item_id and never depleted lots. A fully returned sale has had its movements
- * reversed on purpose, so it doesn't need one.
- */
-function needsInventoryLink(sale: Sale): boolean {
-  return (sale.inventory_movements?.length ?? 0) === 0 && sale.return_status !== 'full'
 }
 
 async function fetchSales(start: string | null, end: string | null, narrow?: { id?: string; bundleId?: string }): Promise<{
@@ -285,7 +275,9 @@ function SaleDetail({ sale, netPayoutBySale, onLinkItem, onEdit, onDelete, onPro
           {sale.bundle_id && (
             <span className="text-xs px-2 py-0.5 rounded-full bg-blue-100 text-blue-700">Bundle</span>
           )}
-          <StatusBadge status={sale.inventory_status} type="inventory" />
+          {isKeptLinkNeeded(sale)
+            ? <span className="text-xs px-2 py-0.5 rounded-full bg-amber-100 text-amber-800 font-medium">Kept · link needed</span>
+            : <StatusBadge status={sale.inventory_status} type="inventory" />}
           <StatusBadge status={sale.return_status} type="return" />
         </div>
       </div>
@@ -516,20 +508,20 @@ export default function SalesPage() {
   const allPicked = pickable.length > 0 && pickable.every(s => pickedIds.has(s.id))
   const bulkResolve = useMutation({
     mutationFn: async (outcome: RefundOutcome) => {
-      let ok = 0, units = 0; const failed: string[] = []
+      let ok = 0, units = 0, needItem = 0; const failed: string[] = []
       for (const id of pickedIds) {
         try {
           const r = await resolveSaleRefund(id, outcome)
-          ok++; units += (r.units_restored ?? 0) + (r.units_taken ?? 0)
+          ok++; units += (r.units_restored ?? 0) + (r.units_taken ?? 0); if (r.needs_item) needItem++
         } catch (e) {
           const sale = sales.find(x => x.id === id)
           failed.push(`${(sale?.items?.name ?? sale?.item_name ?? 'Sale').slice(0, 40)}: ${(e as Error).message}`)
         }
       }
-      return { outcome, ok, units, failed }
+      return { outcome, ok, units, needItem, failed }
     },
     onSuccess: r => {
-      setBulkResult(`${r.ok} sale${r.ok === 1 ? '' : 's'} resolved as "${r.outcome === 'back' ? 'came back / never shipped' : 'buyer kept it'}" · ${r.units} unit${r.units === 1 ? '' : 's'} ${r.outcome === 'back' ? 'put back' : 'taken'}${r.failed.length ? ` · not done: ${r.failed.join('; ')}` : ''}`)
+      setBulkResult(`${r.ok} sale${r.ok === 1 ? '' : 's'} resolved as "${r.outcome === 'back' ? 'came back / never shipped' : 'buyer kept it'}" · ${r.units} unit${r.units === 1 ? '' : 's'} ${r.outcome === 'back' ? 'put back' : 'taken'}${r.needItem ? ` · ${r.needItem} need their item linked (shown as "Kept · link needed")` : ''}${r.failed.length ? ` · not done: ${r.failed.join('; ')}` : ''}`)
       setPickedIds(new Set())
       qc.invalidateQueries({ queryKey: ['sales'] })
       qc.invalidateQueries({ queryKey: ['items'] })
@@ -682,7 +674,9 @@ export default function SalesPage() {
                             </>
                           )}
                           {/* "OK" on every card is noise on a small screen — only flag problems. */}
-                          {sale.inventory_status !== 'ok' && <StatusBadge status={sale.inventory_status} type="inventory" />}
+                          {isKeptLinkNeeded(sale)
+                            ? <span className="text-[10px] px-1.5 py-0.5 rounded bg-amber-100 text-amber-800 font-medium">Kept · link needed</span>
+                            : sale.inventory_status !== 'ok' && <StatusBadge status={sale.inventory_status} type="inventory" />}
                           <StatusBadge status={sale.return_status} type="return" />
                           <ReviewBadge status={sale.review_status} compact />
                         </div>
@@ -817,7 +811,9 @@ export default function SalesPage() {
                     </td>
                     <td className="px-4 py-2.5">
                       <div className="flex gap-1 flex-wrap">
-                        <StatusBadge status={sale.inventory_status} type="inventory" />
+                        {isKeptLinkNeeded(sale)
+                          ? <span className="text-[10px] px-1.5 py-0.5 rounded bg-amber-100 text-amber-800 font-medium" title="Refunded, buyer kept it / lost: link the item it came from">Kept · link needed</span>
+                          : <StatusBadge status={sale.inventory_status} type="inventory" />}
                         <StatusBadge status={sale.return_status} type="return" />
                         {sale.return_status === 'full' && unitsTaken(sale) > 0 && (
                           <span className="text-[10px] px-1.5 py-0.5 rounded bg-amber-100 text-amber-800 font-medium" title="Refunded but units still counted as gone: right only if the buyer kept it">{unitsTaken(sale)} out</span>

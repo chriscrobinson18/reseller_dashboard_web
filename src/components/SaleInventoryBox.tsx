@@ -25,7 +25,7 @@ export default function SaleInventoryBox({ sale, onChooseItem, onProcessReturn }
   const [msg, setMsg] = useState<string | null>(null)
   const [err, setErr] = useState<string | null>(null)
 
-  const wantsSuggestions = state.kind === 'needs_link'
+  const wantsSuggestions = state.kind === 'needs_link' || state.kind === 'refund_kept_unlinked'
     || ((state.kind === 'refund_not_out' || (state.kind === 'partial' && state.units === 0)) && expanded)
   const { data: items = [] } = useItems()
   const title = sale.items?.name ?? sale.item_name ?? ''
@@ -47,13 +47,16 @@ export default function SaleInventoryBox({ sale, onChooseItem, onProcessReturn }
     mutationFn: async (itemId: string | null) => {
       if (refunded) {
         const r = await resolveSaleRefund(sale.id, 'kept', itemId)
+        if (r.needs_item) return { consumed: 0, unfulfilled: r.unfulfilled ?? 0, needsItem: true }
         return { consumed: r.units_taken ?? 0, unfulfilled: r.unfulfilled ?? 0 }
       }
       return linkSaleToItem(sale.id, itemId!)
     },
     onSuccess: r => {
       setErr(null)
-      setMsg(r.unfulfilled > 0 ? `Linked: ${r.consumed} unit(s) taken; ${r.unfulfilled} not in stock (oversold).` : `${r.consumed} unit(s) taken from inventory.`)
+      setMsg('needsItem' in r && r.needsItem
+        ? 'Saved: buyer kept it / lost. Link the item it came from (the sale now shows "Link to inventory").'
+        : r.unfulfilled > 0 ? `Linked: ${r.consumed} unit(s) taken; ${r.unfulfilled} not in stock (oversold).` : `${r.consumed} unit(s) taken from inventory.`)
       invalidate()
     },
     onError: (e: Error) => setErr(e.message),
@@ -154,10 +157,29 @@ export default function SaleInventoryBox({ sale, onChooseItem, onProcessReturn }
             </div>
           ) : (
             <>
-              <div className="text-gray-500">The unit is gone, so its cost counts. Link the item it came from:</div>
+              <div className="text-gray-500">The unit is gone, so its cost counts.</div>
+              <button type="button" disabled={busy} onClick={() => link.mutate(null)}
+                className="px-2.5 py-1 rounded-md bg-gray-900 text-white font-medium disabled:opacity-50">
+                Confirm: buyer kept it / lost (link the item later)
+              </button>
+              <div className="text-gray-500">…or link the item it came from now:</div>
               {suggestionsList}
             </>
           )}
+        </div>
+      )
+      break
+    case 'refund_kept_unlinked':
+      tone = 'border-amber-300 bg-amber-50'
+      body = (
+        <div className="space-y-2">
+          <div className="text-amber-800">
+            Refunded {formatUSD(state.refunded)} · <b>buyer kept it / lost</b>. Link the item it came from so its cost counts.
+          </div>
+          {suggestionsList}
+          <button type="button" disabled={busy} onClick={() => restore.mutate()} className="block text-blue-600 hover:text-blue-800 font-medium disabled:opacity-50">
+            Actually cancelled / came back? Confirm that instead
+          </button>
         </div>
       )
       break

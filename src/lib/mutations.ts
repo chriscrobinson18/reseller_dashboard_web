@@ -1196,6 +1196,8 @@ export interface ResolveRefundResult {
   units_taken?: number
   unfulfilled?: number
   returns_removed?: number
+  /** 'kept' with no item: decision saved, sale marked "kept, link needed". */
+  needs_item?: boolean
 }
 
 /**

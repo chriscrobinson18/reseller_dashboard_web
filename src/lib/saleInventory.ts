@@ -17,7 +17,29 @@ export type SaleInventoryState =
   | { kind: 'needs_link' }                              // ordinary sale, nothing taken
   | { kind: 'refund_not_out'; refunded: number; confirmed: boolean } // full refund, no units out (came back / never shipped); confirmed = resolved 'back' (inventory_status 'reconciled')
   | { kind: 'refund_out'; refunded: number; units: number; canRestore: boolean } // full refund, units out (kept / lost)
+  | { kind: 'refund_kept_unlinked'; refunded: number }  // full refund, owner said kept / lost, item not linked yet
   | { kind: 'partial'; refunded: number; units: number; returnedUnits: number }   // partial refund
+
+/**
+ * "Buyer kept it / lost, link the item later": resolve_sale_refund('kept') with
+ * no item stores a full refund with inventory_status 'oversold' and no units.
+ */
+export function isKeptLinkNeeded(sale: Pick<Sale, 'return_status' | 'inventory_status' | 'inventory_movements' | 'trade_id'>): boolean {
+  return sale.return_status === 'full' && !sale.trade_id && sale.inventory_status === 'oversold' && unitsTaken(sale) === 0
+}
+
+/**
+ * The one "needs an inventory link" rule (Sales list, banner, row buttons,
+ * Inventory box, Dashboard warning): no lot units taken, not a trade leg, and
+ * either not fully refunded, or fully refunded but the buyer kept it / it was
+ * lost (isKeptLinkNeeded). A refund that came back / was cancelled never does.
+ */
+export function needsInventoryLink(sale: Sale): boolean {
+  if (sale.trade_id) return false
+  if (unitsTaken(sale) > 0) return false
+  if (sale.return_status === 'full') return isKeptLinkNeeded(sale)
+  return true
+}
 
 export function unitsTaken(sale: Pick<Sale, 'inventory_movements'>): number {
   return (sale.inventory_movements ?? []).reduce((t, m) => t + Number(m.quantity ?? 0), 0)
@@ -28,6 +50,7 @@ export function saleInventoryState(sale: Sale): SaleInventoryState {
   const units = unitsTaken(sale)
   const refunded = Number(sale.refunded_amount ?? 0)
   if (sale.return_status === 'full') {
+    if (units === 0 && isKeptLinkNeeded(sale)) return { kind: 'refund_kept_unlinked', refunded }
     // An in-app return records refunded_quantity; an import never does. Only
     // an import-only refund can be reconciled in one click (no stacking).
     return units > 0
