@@ -34,7 +34,6 @@ Web is the primary client; it shares one Supabase project/schema with the iOS ap
 - [ ] **Check the Tie-Out card layout** on a phone (no sideways scroll at 320–430px) and on desktop.
 
 **Code follow-ups**
-- [ ] **Amazon refunds are netted into Line 1:** fixed in code 2026-11-23 (`csvOrderSaleFields`: gross price + `refunded_amount`; sync v7). Pending owner approval: deploy `sync_csv_orders_to_sales` v7 and correct the 4 existing sales.
 - [ ] **TCGplayer import ignores `refunds[]`:** set `refunded_amount`, reduce `fees` by the refunded fee, and treat canceled-after-import orders as full returns ([reconciliation.md](docs/reconciliation.md#tcgplayer)). Existing cases were fixed by hand.
 - [ ] **`record_return` refund / return-shipping rows never insert:** both use `type: 'refund'`, which `transactions_type_check` rejects (allowed: inventory, fee, shipping, other), and the insert errors are not checked. So no in-app return has a refund row (Schedule C is unaffected: Line 2 reads `sales.refunded_amount`), and the return-shipping cost is lost entirely. Fix: `type: 'other'` / `'shipping'`, check errors, and decide whether those rows should count on Line 27a.
 - [ ] **Refund-only returns (buyer keeps the item) on manual sales:** `record_return` requires quantity ≥ 1, so a refund where no unit comes back can't be recorded and Line 2 misses it. Add a "refund only" option (quantity 0, no units restored).
